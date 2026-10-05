@@ -106,11 +106,7 @@ export default function MemoryScreen() {
         subtitle="What Anomaly keeps between chats"
         right={
           <View className="flex-row gap-2">
-            <HeaderButton
-              icon="download-outline"
-              label="Export all memories"
-              onPress={exportAll}
-            />
+            <HeaderButton icon="download-outline" label="Export all memories" onPress={exportAll} />
             <HeaderButton
               icon="add"
               label="Add memory"
@@ -119,7 +115,6 @@ export default function MemoryScreen() {
           </View>
         }
       >
-
         <Group footer="Only durable facts are saved. High-confidence ones save automatically with an undo; others ask first. Incognito chats never read or write memory.">
           <View className="flex-row items-center gap-3 px-4 py-3.5">
             <Icon name="sparkles" size={20} color={enabled ? colors.primary : colors.textMuted} />
@@ -181,8 +176,8 @@ export default function MemoryScreen() {
         {shown.length === 0 ? (
           <View className="items-center gap-3 py-12">
             <Text muted className="text-center text-[15px]">
-              Nothing here yet. Tell Anomaly something like “Remember that I’m vegetarian”, or add one
-              yourself.
+              Nothing here yet. Tell Anomaly something like “Remember that I’m vegetarian”, or add
+              one yourself.
             </Text>
             <ActionButton
               size="sm"
@@ -204,32 +199,32 @@ export default function MemoryScreen() {
               const cat = categories.find((c) => c.value === m.category)!;
               return (
                 <Animated.View key={m.id} entering={fadeIn} exiting={fadeOut} layout={reflow}>
-                <Tap
-                  accessibilityRole="button"
-                  accessibilityHint="Edit memory"
-                  onPress={() =>
-                    setDraft({ id: m.id, text: m.text, category: m.category, scope: m.scope })
-                  }
-                  className={`flex-row items-start gap-3 px-4 py-3.5 ${i < shown.length - 1 ? "border-b border-hairline" : ""}`}
-                >
-                  <View className="pt-0.5">
-                    <Icon name={cat.icon} size={18} color={colors.textMuted} />
-                  </View>
-                  <View className="flex-1">
-                    <Text weight="medium" className="text-base leading-[22px]">
-                      {m.text}
-                    </Text>
-                    <Text className="mt-0.5 text-xs text-ink-faint">
-                      {m.scope === "global" ? "All chats" : "One chat"},{" "}
-                      {Math.round(m.confidence * 100)}% confidence,{" "}
-                      {new Date(m.createdAt).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </Text>
-                  </View>
-                  <Icon name="chevron-forward" size={16} color={colors.textFaint} />
-                </Tap>
+                  <Tap
+                    accessibilityRole="button"
+                    accessibilityHint="Edit memory"
+                    onPress={() =>
+                      setDraft({ id: m.id, text: m.text, category: m.category, scope: m.scope })
+                    }
+                    className={`flex-row items-start gap-3 px-4 py-3.5 ${i < shown.length - 1 ? "border-b border-hairline" : ""}`}
+                  >
+                    <View className="pt-0.5">
+                      <Icon name={cat.icon} size={18} color={colors.textMuted} />
+                    </View>
+                    <View className="flex-1">
+                      <Text weight="medium" className="text-base leading-[22px]">
+                        {m.text}
+                      </Text>
+                      <Text className="mt-0.5 text-xs text-ink-faint">
+                        {m.scope === "global" ? "All chats" : "One chat"},{" "}
+                        {Math.round(m.confidence * 100)}% confidence,{" "}
+                        {new Date(m.createdAt).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </Text>
+                    </View>
+                    <Icon name="chevron-forward" size={16} color={colors.textFaint} />
+                  </Tap>
                 </Animated.View>
               );
             })}

@@ -86,12 +86,37 @@ export function Orb({
   );
 }
 
-function Band({ frame, band, d, color }: { frame: SharedValue<OrbFrame>; band: number; d: string; color: string }) {
+function Band({
+  frame,
+  band,
+  d,
+  color,
+}: {
+  frame: SharedValue<OrbFrame>;
+  band: number;
+  d: string;
+  color: string;
+}) {
   const animatedProps = useAnimatedProps(() => ({ d: frame.get().paths[band] }));
-  return <AnimatedPath d={d} animatedProps={animatedProps} fill={color} fillOpacity={(band + 1) / BANDS} />;
+  return (
+    <AnimatedPath
+      d={d}
+      animatedProps={animatedProps}
+      fill={color}
+      fillOpacity={(band + 1) / BANDS}
+    />
+  );
 }
 
-function Anomaly({ frame, initial, color }: { frame: SharedValue<OrbFrame>; initial: OrbFrame; color: string }) {
+function Anomaly({
+  frame,
+  initial,
+  color,
+}: {
+  frame: SharedValue<OrbFrame>;
+  initial: OrbFrame;
+  color: string;
+}) {
   const animatedProps = useAnimatedProps(() => {
     const f = frame.get();
     return { cx: f.ax, cy: f.ay, r: f.ar, fillOpacity: f.aa };

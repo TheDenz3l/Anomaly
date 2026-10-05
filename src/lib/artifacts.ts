@@ -64,7 +64,9 @@ export function collectSources(message: Message): Source[] {
  * before it is "workers are running…" narration), keeping text and tables.
  */
 export function reportParts(message: Message): Part[] {
-  const start = message.parts.findIndex((p) => p.type === "text" && p.text.trimStart().startsWith("### "));
+  const start = message.parts.findIndex(
+    (p) => p.type === "text" && p.text.trimStart().startsWith("### ")
+  );
   return message.parts
     .slice(Math.max(0, start))
     .filter((p) => p.type === "text" || (p.type === "component" && p.name === "Table"));
@@ -78,7 +80,10 @@ export function reportText(message: Message): string {
     .join("\n\n");
 }
 
-export function collectArtifacts(threads: Record<string, Thread>, messages: Record<string, Message[]>): Artifact[] {
+export function collectArtifacts(
+  threads: Record<string, Thread>,
+  messages: Record<string, Message[]>
+): Artifact[] {
   const out: Artifact[] = [];
   for (const thread of Object.values(threads)) {
     if (thread.incognito) continue;
@@ -120,7 +125,11 @@ export function collectArtifacts(threads: Record<string, Thread>, messages: Reco
   return out.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export const groupLabels: Record<ArtifactGroup, string> = { apps: "Apps", reports: "Reports", data: "Data" };
+export const groupLabels: Record<ArtifactGroup, string> = {
+  apps: "Apps",
+  reports: "Reports",
+  data: "Data",
+};
 
 /** "Today", "Yesterday", a weekday within the week, otherwise a short date. */
 export function ago(ts: number): string {

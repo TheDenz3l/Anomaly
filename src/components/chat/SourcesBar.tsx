@@ -28,7 +28,6 @@ export function plainText(message: Message): string {
     .join("\n\n");
 }
 
-
 function ActionIcon({
   icon,
   label,

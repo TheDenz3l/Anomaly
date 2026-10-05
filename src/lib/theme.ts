@@ -9,6 +9,7 @@ export const colors = {
   primary: "#3B82F6",
   primarySoft: "rgba(59, 130, 246, 0.15)",
   primaryStrong: "#60A5FA",
+  bubble: "#1D5FD8",
   text: "#FAFAFA",
   textMuted: "#A1A1AA",
   textFaint: "#71717A",
@@ -25,7 +26,7 @@ export const fonts = {
   display: "Moderniz",
 } as const;
 
-/** Deterministic hue from a string — used for generated posters, favicons and avatars (no network images in mock mode). */
+/** Deterministic hue from a string — used for generated posters, favicons and avatars (stable fallback when no image is available). */
 export function hueFrom(input: string): number {
   let h = 0;
   for (let i = 0; i < input.length; i++) h = (h * 31 + input.charCodeAt(i)) % 360;

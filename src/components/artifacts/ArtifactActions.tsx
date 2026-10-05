@@ -6,12 +6,23 @@ import { artifactText, type Artifact } from "@/lib/artifacts";
 import { useApp } from "@/lib/store";
 
 /** Long-press menu for an artifact: pin, go back to the chat that made it, share. */
-export function ArtifactActions({ artifact, onClose }: { artifact: Artifact | null; onClose: () => void }) {
+export function ArtifactActions({
+  artifact,
+  onClose,
+}: {
+  artifact: Artifact | null;
+  onClose: () => void;
+}) {
   const pinned = useApp((s) => (artifact ? s.pinnedArtifacts.includes(artifact.id) : false));
   const togglePin = useApp((s) => s.togglePin);
   const openThread = useApp((s) => s.openThread);
   return (
-    <Sheet open={artifact !== null} onClose={onClose} title={artifact?.title} subtitle={artifact?.kind}>
+    <Sheet
+      open={artifact !== null}
+      onClose={onClose}
+      title={artifact?.title}
+      subtitle={artifact?.kind}
+    >
       {artifact ? (
         <View className="gap-2">
           <ActionButton

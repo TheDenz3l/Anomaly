@@ -26,7 +26,10 @@ export function Segmented<T extends string>({
   onChange: (v: T) => void;
   accessibilityLabel?: string;
 }) {
-  const index = Math.max(0, options.findIndex((o) => o.value === value));
+  const index = Math.max(
+    0,
+    options.findIndex((o) => o.value === value)
+  );
   const [width, setWidth] = useState(0);
   const position = useSharedValue(index);
   const reduced = useReducedMotion();
@@ -51,7 +54,17 @@ export function Segmented<T extends string>({
       {segment > 0 ? (
         <Animated.View
           pointerEvents="none"
-          style={[{ position: "absolute", top: PAD, bottom: PAD, left: PAD, borderRadius: 999, backgroundColor: "#3F3F46" }, thumb]}
+          style={[
+            {
+              position: "absolute",
+              top: PAD,
+              bottom: PAD,
+              left: PAD,
+              borderRadius: 999,
+              backgroundColor: "#3F3F46",
+            },
+            thumb,
+          ]}
         />
       ) : null}
       {options.map((o) => {
@@ -65,7 +78,12 @@ export function Segmented<T extends string>({
             onPress={() => onChange(o.value)}
             className={`flex-1 items-center rounded-full px-1 py-1.5 ${active && segment === 0 ? "bg-[#3F3F46]" : ""}`}
           >
-            <Text weight={active ? "bold" : "medium"} muted={!active} className="text-sm" numberOfLines={1}>
+            <Text
+              weight={active ? "bold" : "medium"}
+              muted={!active}
+              className="text-sm"
+              numberOfLines={1}
+            >
               {o.label}
             </Text>
           </Tap>

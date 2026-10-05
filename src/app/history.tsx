@@ -63,7 +63,7 @@ export default function HistoryScreen() {
         (t) =>
           !q ||
           t.title.toLowerCase().includes(q) ||
-          preview(messages[t.id]).toLowerCase().includes(q)
+          (preview(messages[t.id]) || t.preview || "").toLowerCase().includes(q)
       )
       .sort((a, b) => b.updatedAt - a.updatedAt);
     const out: { label: string; items: Thread[] }[] = [];
@@ -150,37 +150,37 @@ export default function HistoryScreen() {
                     : "chatbubble-outline";
               return (
                 <Animated.View key={t.id} entering={fadeIn} exiting={fadeOut} layout={reflow}>
-                <Tap
-                  accessibilityRole="button"
-                  accessibilityLabel={`${t.title}${t.id === activeId ? ", open" : ""}`}
-                  onPress={() => open(t.id)}
-                  onLongPress={() => setMenuFor(t)}
-                  className={`flex-row items-center gap-3 px-4 py-3.5 ${i < g.items.length - 1 ? "border-b border-hairline" : ""}`}
-                >
-                  <Icon
-                    name={icon}
-                    size={18}
-                    color={t.id === activeId ? colors.primary : colors.textMuted}
-                  />
-                  <View className="flex-1">
-                    <View className="flex-row items-baseline gap-2">
-                      <Text weight="bold" className="flex-1 text-base" numberOfLines={1}>
-                        {t.title}
-                      </Text>
-                      <Text className="text-xs text-ink-faint">{when(t.updatedAt)}</Text>
-                    </View>
-                    <Text muted className="mt-0.5 text-sm leading-5" numberOfLines={1}>
-                      {preview(messages[t.id]) || model.name}
-                    </Text>
-                  </View>
                   <Tap
-                    accessibilityLabel={`Options for ${t.title}`}
-                    hitSlop={8}
-                    onPress={() => setMenuFor(t)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t.title}${t.id === activeId ? ", open" : ""}`}
+                    onPress={() => open(t.id)}
+                    onLongPress={() => setMenuFor(t)}
+                    className={`flex-row items-center gap-3 px-4 py-3.5 ${i < g.items.length - 1 ? "border-b border-hairline" : ""}`}
                   >
-                    <Icon name="ellipsis-horizontal" size={16} color={colors.textFaint} />
+                    <Icon
+                      name={icon}
+                      size={18}
+                      color={t.id === activeId ? colors.primary : colors.textMuted}
+                    />
+                    <View className="flex-1">
+                      <View className="flex-row items-baseline gap-2">
+                        <Text weight="bold" className="flex-1 text-base" numberOfLines={1}>
+                          {t.title}
+                        </Text>
+                        <Text className="text-xs text-ink-faint">{when(t.updatedAt)}</Text>
+                      </View>
+                      <Text muted className="mt-0.5 text-sm leading-5" numberOfLines={1}>
+                        {preview(messages[t.id]) || t.preview || model.name}
+                      </Text>
+                    </View>
+                    <Tap
+                      accessibilityLabel={`Options for ${t.title}`}
+                      hitSlop={8}
+                      onPress={() => setMenuFor(t)}
+                    >
+                      <Icon name="ellipsis-horizontal" size={16} color={colors.textFaint} />
+                    </Tap>
                   </Tap>
-                </Tap>
                 </Animated.View>
               );
             })}
@@ -194,7 +194,7 @@ export default function HistoryScreen() {
         title={menuFor?.title}
         subtitle={
           menuFor
-            ? `${findModel(models, menuFor.modelRef).name}, ${messages[menuFor.id]?.length ?? 0} messages`
+            ? `${findModel(models, menuFor.modelRef).name}${messages[menuFor.id]?.length ? `, ${messages[menuFor.id].length} messages` : ""}`
             : undefined
         }
       >

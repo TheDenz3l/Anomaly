@@ -11,7 +11,6 @@ export function ThinkingBlock({ part }: { part: ThinkingPart }) {
   const [open, setOpen] = useState(false);
   const secs = Math.max(1, Math.round((part.durationMs ?? 0) / 1000));
   const live = !part.done;
-  const preview = part.text.slice(-120);
 
   return (
     <View>
@@ -22,18 +21,16 @@ export function ThinkingBlock({ part }: { part: ThinkingPart }) {
         expanded={open}
         onToggle={() => setOpen((o) => !o)}
       />
+      {/* Reasoning stays behind the toggle while it streams: a preview line that pops in and out
+          moved everything below it, and short reasoning made it flash. */}
       {open ? (
         <Animated.View entering={fadeIn} exiting={fadeOut}>
           <Rail>
-            <Text className="py-1 text-sm leading-[21px] text-ink-faint">{part.text}</Text>
+            <Text className="py-1 text-sm leading-[21px] text-ink-faint">
+              {part.text || "Reasoning will appear here as the model shares it."}
+            </Text>
           </Rail>
         </Animated.View>
-      ) : live && preview ? (
-        <Rail>
-          <Text numberOfLines={1} className="py-0.5 text-[13px] text-ink-faint">
-            {preview}
-          </Text>
-        </Rail>
       ) : null}
     </View>
   );

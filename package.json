@@ -12,12 +12,18 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "convex": "convex dev",
+    "convex:deploy": "convex deploy",
+    "setup:convex": "node scripts/setup-convex-env.mjs"
   },
   "dependencies": {
+    "@auth/core": "^0.41.3",
+    "@convex-dev/auth": "^0.0.96",
     "@expo/metro-runtime": "~57.0.16",
     "@expo/vector-icons": "^15.1.1",
     "@gorhom/bottom-sheet": "^5.2.14",
+    "convex": "^1.46.0",
     "expo": "~57.0.24",
     "expo-blur": "~57.0.3",
     "expo-clipboard": "~57.0.2",
@@ -28,11 +34,15 @@
     "expo-image": "~57.0.5",
     "expo-image-picker": "~57.0.20",
     "expo-linking": "~57.0.10",
+    "expo-location": "~57.0.20",
     "expo-router": "~57.0.22",
+    "expo-secure-store": "~57.0.4",
     "expo-speech": "~57.0.3",
+    "expo-speech-recognition": "^57.1.0",
     "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "heroui-native": "^1.0.10",
+    "pi-web-access": "0.36.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
@@ -51,6 +61,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/react": "~19.2.15",
     "eslint": "^9.39.4",
     "eslint-config-expo": "~57.0.2",

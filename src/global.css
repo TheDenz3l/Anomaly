@@ -12,6 +12,8 @@
   --color-primary: #3b82f6;
   --color-primary-soft: rgba(59, 130, 246, 0.15);
   --color-primary-strong: #60a5fa;
+  /* Your messages: deep enough for white text to read at AA contrast. */
+  --color-bubble: #1d5fd8;
   --color-raised: #27272a;
   --color-hairline: rgba(39, 39, 42, 0.6);
   --color-ink: #fafafa;

@@ -1,6 +1,11 @@
 import { useEffect, type ReactNode } from "react";
 import { View } from "react-native";
-import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from "react-native-reanimated";
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import { Orb, type OrbState } from "@/components/orb/Orb";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { ShimmerText } from "@/components/ui/ShimmerText";
@@ -80,9 +85,5 @@ export function ActivityRow({
 
 /** The thread hanging off an activity row: a hairline under the glyph, details indented beside it. */
 export function Rail({ children }: { children: ReactNode }) {
-  return (
-    <View className="ml-[9.5px] mt-1 border-l border-raised pb-1 pl-[20px]">
-      {children}
-    </View>
-  );
+  return <View className="ml-[9.5px] mt-1 border-l border-raised pb-1 pl-[20px]">{children}</View>;
 }

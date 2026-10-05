@@ -1,3 +1,4 @@
+import { Image } from "expo-image";
 import { useState } from "react";
 import { ScrollView, View } from "react-native";
 import { GeneratedArt } from "@/components/ui/GeneratedArt";
@@ -58,14 +59,24 @@ export function MovieShowtimes({ props, emit, events, busy }: GenProps<"MovieSho
                 padding: 2,
               }}
             >
-              <GeneratedArt
-                seed={m.id}
-                width={100}
-                height={146}
-                title={m.title}
-                caption={m.genres.join(", ")}
-                radius={14}
-              />
+              {m.poster ? (
+                <Image
+                  source={{ uri: m.poster }}
+                  accessibilityLabel={`${m.title} poster`}
+                  cachePolicy="memory-disk"
+                  transition={150}
+                  style={{ width: 100, height: 146, borderRadius: 14 }}
+                />
+              ) : (
+                <GeneratedArt
+                  seed={m.id}
+                  width={100}
+                  height={146}
+                  title={m.title}
+                  caption={m.genres.join(", ")}
+                  radius={14}
+                />
+              )}
             </Tap>
           );
         })}

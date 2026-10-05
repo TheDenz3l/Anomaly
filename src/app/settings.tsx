@@ -83,10 +83,7 @@ export default function SettingsScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <Page
-        title="Settings"
-      >
-
+      <Page title="Settings">
         <Group
           label="Providers"
           footer="Bring your own OpenAI-compatible endpoints. Keys stay on the server."
@@ -201,7 +198,7 @@ export default function SettingsScreen() {
             />
             <Text muted className="text-[13px] leading-[18px]">
               {settings.webMode === "auto"
-                ? "Uses the model's own web search when it has one, otherwise Anomaly fetches pages itself."
+                ? "Uses the model's own web search when it has one, and Anomaly's search tools so every model can browse."
                 : settings.webMode === "native"
                   ? "Only the model's built-in search. Costs go to your key; models without it can't browse."
                   : "Anomaly always fetches pages itself, even when the model could search."}
@@ -213,7 +210,7 @@ export default function SettingsScreen() {
               value={settings.searchProvider}
               onChange={(searchProvider) => update({ searchProvider })}
               options={[
-                { value: "none", label: "Free only" },
+                { value: "none", label: "Default" },
                 { value: "brave", label: "Brave" },
                 { value: "tavily", label: "Tavily" },
                 { value: "searxng", label: "SearXNG" },
@@ -224,7 +221,9 @@ export default function SettingsScreen() {
                 value={settings.searchKeyHint}
                 onChangeText={(searchKeyHint) => update({ searchKeyHint })}
                 placeholder={
-                  settings.searchProvider === "searxng" ? "https://searx.example.org" : "API key"
+                  settings.searchProvider === "searxng"
+                    ? "Your SearXNG URL (blank uses the built-in pool)"
+                    : "API key"
                 }
                 placeholderTextColor={colors.textFaint}
                 secureTextEntry={settings.searchProvider !== "searxng"}
@@ -242,7 +241,7 @@ export default function SettingsScreen() {
               />
             ) : (
               <Text muted className="text-[13px]">
-                Wikipedia and Hacker News only.
+                Built-in SearXNG pool, then Exa and DuckDuckGo. No key needed.
               </Text>
             )}
           </Stack>
@@ -305,7 +304,14 @@ export default function SettingsScreen() {
 
         <Group label="About">
           <Row label="Version" value="0.1.0" />
-          <Row label="Data" value="Mock, no backend" />
+          <Row
+            label="Backend"
+            value={
+              (process.env.EXPO_PUBLIC_CONVEX_URL ?? "")
+                .replace(/^https?:\/\//, "")
+                .split(".")[0] || "Convex"
+            }
+          />
           <Row label="Decisions" value="Heuristic (Jev later)" last />
         </Group>
       </Page>

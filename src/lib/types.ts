@@ -52,7 +52,8 @@ export type SearchPart = {
   durationMs?: number;
 };
 
-export type Part = TextPart | ThinkingPart | SearchPart | ComponentPart | ImagePart | SourcesPart | UiEventPart;
+export type Part =
+  TextPart | ThinkingPart | SearchPart | ComponentPart | ImagePart | SourcesPart | UiEventPart;
 
 export type ReplyMeta = {
   modelRef: string;
@@ -66,6 +67,8 @@ export type MessageStatus = "streaming" | "done" | "stopped" | "error";
 
 export type Message = {
   id: string;
+  /** Stable React key: the optimistic id this message replaced, so it never remounts mid-reply. */
+  key?: string;
   threadId: string;
   role: Role;
   parts: Part[];
@@ -78,6 +81,8 @@ export type ThreadMode = "chat" | "research";
 
 export type Thread = {
   id: string;
+  /** Client-only: the optimistic id a new chat started with, kept as a stable React key. */
+  key?: string;
   title: string;
   modelRef: string;
   mode: ThreadMode;
@@ -85,6 +90,10 @@ export type Thread = {
   incognito: boolean;
   createdAt: number;
   updatedAt: number;
+  /** Latest user prompt (server-provided) for History rows. */
+  preview?: string;
+  /** Set while the chat is pinned to the top of Recents. */
+  pinnedAt?: number;
 };
 
 export type ReasoningStyle = "effort" | "budget" | "toggle" | "none";
@@ -129,6 +138,7 @@ export type Provider = {
   keyHint: string;
   headers: { key: string; value: string }[];
   status: ProviderStatus;
+  lastError?: string;
 };
 
 export type MemoryCategory = "preference" | "fact" | "person" | "place" | "work";

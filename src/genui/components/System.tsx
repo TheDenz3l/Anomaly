@@ -1,9 +1,7 @@
-import { useEffect, useRef } from "react";
 import { View } from "react-native";
 import { Icon } from "@/components/ui/Icon";
 import { Text } from "@/components/ui/Text";
 import { ActionButton, Pill, type GenProps } from "@/genui/kit";
-import { useApp } from "@/lib/store";
 import { colors } from "@/lib/theme";
 
 /** Inline, just-in-time location prompt (PRD §7: requested only when needed). */
@@ -52,37 +50,14 @@ export function LocationRequest({ props, emit, events, busy }: GenProps<"Locatio
 /**
  * Memory write gate (PRD §3.9). High confidence auto-saves with undo; mid confidence asks inline.
  */
-export function MemoryConfirm({ props, emit, events, live }: GenProps<"MemoryConfirm">) {
-  const addMemory = useApp((s) => s.addMemory);
-  const deleteMemory = useApp((s) => s.deleteMemory);
+export function MemoryConfirm({ props, emit, events }: GenProps<"MemoryConfirm">) {
   const last = events.at(-1);
-  const memoryId = events.find((e) => e.payload?.memoryId)?.payload?.memoryId as string | undefined;
-  const saved = last?.action === "save" || last?.action === "auto_saved";
+  // High-confidence memories are saved by the server when the card is created; the card only
+  // reflects that. Save, undo and dismiss are ui_events the server handles (no model turn).
   const auto = props.confidence > 0.85;
-  const autoSaved = useRef(false);
+  const saved = last ? last.action === "save" || last.action === "auto_saved" : auto;
 
-  useEffect(() => {
-    if (auto && live && events.length === 0 && !autoSaved.current) {
-      autoSaved.current = true;
-      const id = addMemory({
-        text: props.text,
-        category: props.category,
-        scope: props.scope,
-        confidence: props.confidence,
-      });
-      emit("auto_saved", "Saved to memory", { memoryId: id });
-    }
-  }, [auto, live, events.length, addMemory, emit, props]);
-
-  const save = () => {
-    const id = addMemory({
-      text: props.text,
-      category: props.category,
-      scope: props.scope,
-      confidence: props.confidence,
-    });
-    emit("save", "Saved to memory", { memoryId: id });
-  };
+  const save = () => emit("save", "Saved to memory");
 
   return (
     <View className="flex-row items-center gap-3 rounded-3xl border border-raised p-3.5">
@@ -106,10 +81,7 @@ export function MemoryConfirm({ props, emit, events, live }: GenProps<"MemoryCon
           size="sm"
           variant="ghost"
           label="Undo"
-          onPress={() => {
-            if (memoryId) deleteMemory(memoryId);
-            emit("undo", "Removed from memory");
-          }}
+          onPress={() => emit("undo", "Removed from memory")}
         />
       ) : !last ? (
         <View className="flex-row gap-1.5">

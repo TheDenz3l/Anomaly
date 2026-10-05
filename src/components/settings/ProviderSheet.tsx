@@ -6,7 +6,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { ActionButton, Pill } from "@/genui/kit";
-import { modelRef } from "@/lib/mock/models";
+import { modelRef } from "@/lib/models";
 import { useApp } from "@/lib/store";
 import { colors, fonts } from "@/lib/theme";
 import type { CapabilityProfile, Model, Provider } from "@/lib/types";
@@ -45,22 +45,18 @@ const featureLabels: { key: keyof CapabilityProfile["features"]; label: string }
 /** Capability profile viewer with probes and manual overrides (PRD §3.5). */
 function ModelProfile({ model }: { model: Model }) {
   const overrideProfile = useApp((s) => s.overrideProfile);
+  const probe = useApp((s) => s.runProbes);
   const cap = useApp((s) => s.settings.probeSpendCapUsd);
   const showToast = useApp((s) => s.showToast);
   const [probing, setProbing] = useState<"idle" | "confirm" | "running">("idle");
   const p = model.profile;
   const ref = modelRef(model);
 
-  const runProbes = () => {
+  const runProbes = async () => {
     setProbing("running");
-    setTimeout(() => {
-      overrideProfile(ref, {
-        source: p.source === "manual" ? "manual" : "probe",
-        confidence: Math.min(0.98, p.confidence + 0.12),
-      });
-      setProbing("idle");
-      showToast(`${model.name} profile updated`);
-    }, 1600);
+    const findings = await probe(ref);
+    setProbing("idle");
+    if (findings.length) showToast(`${model.name}: ${findings.slice(0, 2).join(" ")}`);
   };
 
   return (
@@ -182,8 +178,8 @@ function ModelProfile({ model }: { model: Model }) {
       {probing === "confirm" ? (
         <View className="gap-2 rounded-2xl bg-raised p-3">
           <Text className="text-[13px] leading-[18px]">
-            Sends up to 4 tiny requests (max_tokens 16) with no personal data. About $0.002, within
-            your ${cap.toFixed(2)} cap.
+            Sends a few tiny requests with no personal data, within your ${cap.toFixed(2)} probe
+            cap. Every request is logged.
             {p.source === "manual" ? " Your manual overrides stay as they are." : ""}
           </Text>
           <View className="flex-row justify-end gap-2">
@@ -193,7 +189,7 @@ function ModelProfile({ model }: { model: Model }) {
               label="Cancel"
               onPress={() => setProbing("idle")}
             />
-            <ActionButton size="sm" label="Run" onPress={runProbes} />
+            <ActionButton size="sm" label="Run" onPress={() => void runProbes()} />
           </View>
         </View>
       ) : null}
@@ -212,9 +208,9 @@ export function ProviderSheet({
 }) {
   const providers = useApp((s) => s.providers);
   const models = useApp((s) => s.models);
-  const upsertProvider = useApp((s) => s.upsertProvider);
+  const saveProvider = useApp((s) => s.saveProvider);
+  const refreshProvider = useApp((s) => s.refreshProvider);
   const removeProvider = useApp((s) => s.removeProvider);
-  const addModels = useApp((s) => s.addModels);
   const showToast = useApp((s) => s.showToast);
   const existing = providers.find((p) => p.providerId === providerId);
 
@@ -252,55 +248,37 @@ export function ProviderSheet({
     }
   }
 
-  const list = models.filter((m) => m.providerId === form.providerId && form.providerId);
-  const valid = /^[a-z0-9-]+$/.test(form.providerId) && /^https?:\/\/.+/.test(form.baseUrl);
+  const [saving, setSaving] = useState(false);
+  const [filter, setFilter] = useState("");
+  const all = models.filter((m) => m.providerId === form.providerId && form.providerId);
+  const q = filter.trim().toLowerCase();
+  const matching = q ? all.filter((m) => `${m.name} ${m.id}`.toLowerCase().includes(q)) : all;
+  const list = matching.slice(0, 60);
+  const valid =
+    /^[a-z0-9][a-z0-9_-]*$/.test(form.providerId) && /^https?:\/\/.+/.test(form.baseUrl);
 
-  const fetchModels = () => {
+  const input = () => ({
+    providerId: form.providerId,
+    label: form.label || form.providerId,
+    baseUrl: form.baseUrl,
+    headers: form.headers.filter((h) => h.key.trim()),
+  });
+
+  const fetchModels = async () => {
     if (!valid) return;
     setFetching(true);
-    setTimeout(() => {
-      if (list.length === 0) {
-        const id = `${form.providerId}-chat`;
-        addModels([
-          {
-            id,
-            name: `${form.label || form.providerId} chat`,
-            providerId: form.providerId,
-            contextWindow: 128_000,
-            profile: {
-              reasoning: { style: "none", levels: [], defaultLevel: "off" },
-              features: {
-                vision: false,
-                tools: true,
-                streaming: true,
-                reasoningText: false,
-                audio: false,
-                webSearch: false,
-              },
-              confidence: 0.45,
-              source: "registry",
-              lastVerified: Date.now(),
-              version: 1,
-            },
-          },
-        ]);
-      }
-      setFetching(false);
-      showToast(
-        `GET ${form.baseUrl.replace(/\/$/, "")}/models: ${Math.max(1, list.length)} models`
-      );
-    }, 1100);
+    if (existing) await refreshProvider(existing.providerId);
+    else await saveProvider(input(), apiKey || undefined);
+    setFetching(false);
   };
 
-  const save = () => {
-    upsertProvider({
-      ...form,
-      label: form.label || form.providerId,
-      keyHint: apiKey ? `…${apiKey.slice(-4)}` : form.keyHint || "none",
-      status: "connected",
-    });
-    showToast(existing ? "Provider saved" : "Provider added");
-    onClose();
+  const save = async () => {
+    setSaving(true);
+    const ok = await saveProvider(input(), apiKey || undefined);
+    setSaving(false);
+    if (ok) onClose();
+    else if (!existing)
+      showToast("Saved, but the endpoint didn't answer. Check the URL and key.", "danger");
   };
 
   return (
@@ -325,7 +303,11 @@ export function ProviderSheet({
             </View>
           ) : null}
           <View className="flex-1">
-            <ActionButton label="Save" disabled={!valid} onPress={save} />
+            <ActionButton
+              label={saving ? "Connecting…" : "Save"}
+              disabled={!valid || saving}
+              onPress={() => void save()}
+            />
           </View>
         </View>
       }
@@ -373,13 +355,16 @@ export function ProviderSheet({
         >
           <TextInput
             value={apiKey}
-            onChangeText={setApiKey}
+            onChangeText={(t) => setApiKey(t.replace(/\s+/g, ""))}
             placeholder={
               form.keyHint && form.keyHint !== "none" ? `Saved key ${form.keyHint}` : "sk-…"
             }
             placeholderTextColor={colors.textFaint}
             secureTextEntry
             autoCapitalize="none"
+            autoCorrect={false}
+            spellCheck={false}
+            autoComplete="off"
             accessibilityLabel="API key"
             style={field}
           />
@@ -454,13 +439,26 @@ export function ProviderSheet({
                 icon="refresh"
                 label="Fetch models"
                 disabled={!valid}
-                onPress={fetchModels}
+                onPress={() => void fetchModels()}
               />
             )}
           </View>
+          {all.length > 20 ? (
+            <TextInput
+              value={filter}
+              onChangeText={setFilter}
+              placeholder={`Search ${all.length} models`}
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="none"
+              accessibilityLabel="Search models"
+              style={field}
+            />
+          ) : null}
           {list.length === 0 ? (
             <Text muted className="text-[13px]">
-              No models yet. Fetch them from the endpoint’s /models list.
+              {all.length
+                ? "No models match."
+                : "No models yet. Fetch them from the endpoint’s /models list."}
             </Text>
           ) : (
             <View className="overflow-hidden rounded-3xl bg-card">

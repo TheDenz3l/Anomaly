@@ -16,6 +16,7 @@ export const MovieShowtimesSchema = z.object({
       z.object({
         id,
         title: z.string(),
+        poster: z.string().url().optional(),
         year: z.number().int(),
         rating: z.string(),
         runtime: z.number().int().positive(),

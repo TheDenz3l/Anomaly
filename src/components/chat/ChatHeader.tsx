@@ -94,14 +94,20 @@ export function ChatHeader() {
           }}
           className="flex-1 items-center"
         >
-          <Animated.View key={thread?.id ?? "new"} entering={fadeIn} className="w-full items-center">
+          <Animated.View
+            key={thread?.key ?? thread?.id ?? "new"}
+            entering={fadeIn}
+            className="w-full items-center"
+          >
             {thread ? (
               <Display className="text-[15px] leading-5" numberOfLines={1}>
                 {thread.title}
               </Display>
             ) : null}
             <View className="mt-0.5 flex-row items-center gap-1">
-              {incognito ? <Icon name="eye-off-outline" size={12} color={colors.textMuted} /> : null}
+              {incognito ? (
+                <Icon name="eye-off-outline" size={12} color={colors.textMuted} />
+              ) : null}
               {thread?.mode === "research" ? (
                 <Icon name="telescope-outline" size={12} color={colors.textMuted} />
               ) : null}

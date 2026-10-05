@@ -106,7 +106,9 @@ function nearest(pts: number[], i: number, k: number): number[] {
   for (let j = 0; j < pts.length / 3; j++) {
     if (j === i) continue;
     const e =
-      (pts[i * 3] - pts[j * 3]) ** 2 + (pts[i * 3 + 1] - pts[j * 3 + 1]) ** 2 + (pts[i * 3 + 2] - pts[j * 3 + 2]) ** 2;
+      (pts[i * 3] - pts[j * 3]) ** 2 +
+      (pts[i * 3 + 1] - pts[j * 3 + 1]) ** 2 +
+      (pts[i * 3 + 2] - pts[j * 3 + 2]) ** 2;
     d.push({ j, e });
   }
   return d
@@ -125,7 +127,9 @@ function buildWalk(pts: number[], count: number, pitch: number): number[] {
   const ct = Math.cos(pitch);
   const facing = (k: number, t: number) => {
     const yaw = (t / PERIOD.reasoning) * TAU;
-    return pts[k * 3 + 1] * st + (-pts[k * 3] * Math.sin(yaw) + pts[k * 3 + 2] * Math.cos(yaw)) * ct;
+    return (
+      pts[k * 3 + 1] * st + (-pts[k * 3] * Math.sin(yaw) + pts[k * 3 + 2] * Math.cos(yaw)) * ct
+    );
   };
   let first = 0;
   for (let k = 1; k < count; k++) if (facing(k, 0) > facing(first, 0)) first = k;
@@ -234,7 +238,9 @@ export function orbFrame(t: number, cfg: OrbConfig): OrbFrame {
     let a = Math.max(0, (d - 0.3) / 0.7);
 
     if (lens) {
-      const ang = Math.acos(Math.min(1, (vx * lens[0] + vy * lens[1] + vz * lens[2]) / Math.hypot(vx, vy, vz)));
+      const ang = Math.acos(
+        Math.min(1, (vx * lens[0] + vy * lens[1] + vz * lens[2]) / Math.hypot(vx, vy, vz))
+      );
       const w = ang < LENS ? (1 - (ang / LENS) ** 2) ** 2 : 0;
       a *= 1 - 0.55 * (1 - w);
       if (size <= 24) r *= 1 + 0.5 * w;
@@ -254,7 +260,8 @@ export function orbFrame(t: number, cfg: OrbConfig): OrbFrame {
       r *= 1 + 0.6 * g;
       a += (1 - a) * g;
       const w =
-        Math.min(1, Math.max(0, (q - ringAt) / 0.2)) * (wu < 1200 ? 1 : 1 - Math.min(1, 1.6 * ((wu - 1200) / 800)));
+        Math.min(1, Math.max(0, (q - ringAt) / 0.2)) *
+        (wu < 1200 ? 1 : 1 - Math.min(1, 1.6 * ((wu - 1200) / 800)));
       vx *= 1 - 0.08 * w;
       vy *= 1 - 0.08 * w;
       r *= 1 - 0.15 * w;
@@ -278,9 +285,10 @@ export function orbFrame(t: number, cfg: OrbConfig): OrbFrame {
       const off = Math.atan2(Math.sin(lon - head), Math.cos(lon - head));
       const along = off * Math.cos(lat);
       const tt = t + off / ahead;
-      const headLat = ((70 * Math.PI) / 180) * (1 - 2 * (((tt % 6000) + 6000) % 6000) / 6000);
+      const headLat = ((70 * Math.PI) / 180) * (1 - (2 * (((tt % 6000) + 6000) % 6000)) / 6000);
       const g =
-        Math.exp(-(((lat - headLat) / 0.28) ** 2)) * Math.exp(-((along / (off * ahead > 0 ? 0.12 : 1)) ** 2));
+        Math.exp(-(((lat - headLat) / 0.28) ** 2)) *
+        Math.exp(-((along / (off * ahead > 0 ? 0.12 : 1)) ** 2));
       const w = glow * g ** 0.6;
       a = a * 0.5 + (1 - a * 0.5) * w;
       r *= 1 + 1.1 * w;

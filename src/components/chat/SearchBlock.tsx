@@ -14,7 +14,8 @@ const FIRST = 6;
 
 function label(part: SearchPart): string {
   if (part.phase === "searching") return "Searching the web";
-  if (part.phase === "reading") return part.sources.length ? `Reading ${part.sources.length} sources` : "Reading sources";
+  if (part.phase === "reading")
+    return part.sources.length ? `Reading ${part.sources.length} sources` : "Reading sources";
   return "Searched the web";
 }
 
@@ -63,7 +64,11 @@ export function SearchBlock({ part, animate }: { part: SearchPart; animate: bool
         <Animated.View entering={animate ? undefined : fadeIn} exiting={fadeOut}>
           <Rail>
             {part.queries.map((q) => (
-              <Animated.View key={q} entering={enter} className="flex-row items-center gap-2.5 py-1.5">
+              <Animated.View
+                key={q}
+                entering={enter}
+                className="flex-row items-center gap-2.5 py-1.5"
+              >
                 <Icon name="search" size={14} color={colors.textFaint} />
                 <Text muted className="flex-1 text-[14px] leading-5" numberOfLines={1}>
                   {q}
@@ -86,7 +91,11 @@ export function SearchBlock({ part, animate }: { part: SearchPart; animate: bool
               </Animated.View>
             ))}
             {hidden > 0 || all ? (
-              <Tap accessibilityRole="button" onPress={() => setAll(!all)} className="self-start py-1.5">
+              <Tap
+                accessibilityRole="button"
+                onPress={() => setAll(!all)}
+                className="self-start py-1.5"
+              >
                 <Text weight="medium" className="text-[14px] text-ink-faint">
                   {all ? "Show less" : `Show ${hidden} more`}
                 </Text>

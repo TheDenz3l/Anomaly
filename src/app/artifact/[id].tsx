@@ -16,7 +16,17 @@ import { goBack } from "@/lib/nav";
 import { useApp, useArtifacts, useComponentEvents } from "@/lib/store";
 import { colors } from "@/lib/theme";
 
-function BarButton({ icon, label, onPress, active }: { icon: IconName; label: string; onPress: () => void; active?: boolean }) {
+function BarButton({
+  icon,
+  label,
+  onPress,
+  active,
+}: {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  active?: boolean;
+}) {
   return (
     <Tap accessibilityRole="button" accessibilityLabel={label} onPress={onPress}>
       <Glass radius={20} interactive>
@@ -43,9 +53,14 @@ function ComponentBody({ artifact }: { artifact: Extract<Artifact, { type: "comp
   useContinuedToast(artifact.threadId, artifact.part.id);
   return (
     <View key="body" className="mb-4">
-      <ComponentRenderer part={artifact.part} threadId={artifact.threadId} messageStreaming={false} />
+      <ComponentRenderer
+        part={artifact.part}
+        threadId={artifact.threadId}
+        messageStreaming={false}
+      />
       <Text className="mt-3 px-1 text-xs leading-4 text-ink-faint">
-        It works here just as it did in the chat. Anything you send from it continues that conversation.
+        It works here just as it did in the chat. Anything you send from it continues that
+        conversation.
       </Text>
     </View>
   );
@@ -58,7 +73,14 @@ function ReportBody({ artifact }: { artifact: Extract<Artifact, { type: "report"
         {reportParts(artifact.message).map((p) => {
           if (p.type === "text") return <Markdown key={p.id} text={p.text} />;
           if (p.type === "component" && p.name === "Table") {
-            return <ComponentRenderer key={p.id} part={p} threadId={artifact.threadId} messageStreaming={false} />;
+            return (
+              <ComponentRenderer
+                key={p.id}
+                part={p}
+                threadId={artifact.threadId}
+                messageStreaming={false}
+              />
+            );
           }
           return null;
         })}
@@ -108,8 +130,17 @@ export default function ArtifactScreen() {
       plainTitle
       right={
         <>
-          <BarButton icon={pinned ? "pin" : "pin-outline"} label={pinned ? "Unpin" : "Pin"} onPress={() => togglePin(artifact.id)} active={pinned} />
-          <BarButton icon="share-outline" label="Share" onPress={() => void Share.share({ message: artifactText(artifact) })} />
+          <BarButton
+            icon={pinned ? "pin" : "pin-outline"}
+            label={pinned ? "Unpin" : "Pin"}
+            onPress={() => togglePin(artifact.id)}
+            active={pinned}
+          />
+          <BarButton
+            icon="share-outline"
+            label="Share"
+            onPress={() => void Share.share({ message: artifactText(artifact) })}
+          />
         </>
       }
     >

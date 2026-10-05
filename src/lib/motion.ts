@@ -39,9 +39,7 @@ export const fadeOut = FadeOut.duration(140);
  * Siblings sliding into the space left by an added or removed item. Native only: on web, Reanimated
  * positions elements absolutely for layout transitions, which collapses stacked sections.
  */
-export const reflow = web
-  ? undefined
-  : LinearTransition.springify().damping(26).stiffness(260);
+export const reflow = web ? undefined : LinearTransition.springify().damping(26).stiffness(260);
 
 /** Small controls that appear and disappear in place (send ↔ mic ↔ stop, jump-to-latest). */
 export const popIn = web ? ZoomIn.duration(180) : ZoomIn.springify().damping(15).stiffness(320);
@@ -58,3 +56,7 @@ export const bubbleIn = web
   : FadeInDown.springify().damping(18).stiffness(220);
 /** Assistant replies have no bubble, so they simply fade up into place. */
 export const replyIn = FadeIn.duration(320);
+/** A card arriving inside a reply that is still streaming. */
+export const cardIn = FadeIn.duration(280);
+/** The new-chat orb making way for the first message. */
+export const emptyOut = FadeOut.duration(200);

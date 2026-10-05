@@ -10,7 +10,7 @@ import { colors, fonts } from "@/lib/theme";
 const H = 210;
 
 /**
- * Stylised vector map so the mock works offline and on web. MapLibre + OSM tiles replace the SVG layer
+ * Stylised vector map that works offline and on web. MapLibre + OSM tiles replace the SVG layer
  * in the native build; the pin ↔ list sync stays the same.
  */
 export function MapCard({ props, emit, busy }: GenProps<"MapCard">) {

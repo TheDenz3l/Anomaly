@@ -145,7 +145,12 @@ export function SideDrawer({ panel, children }: { panel: ReactNode; children: Re
           </View>
           <GestureDetector gesture={cardGesture}>
             <Animated.View
-              style={[StyleSheet.absoluteFill, styles.dim, { pointerEvents: isOpen ? "auto" : "none" }, dimStyle]}
+              style={[
+                StyleSheet.absoluteFill,
+                styles.dim,
+                { pointerEvents: isOpen ? "auto" : "none" },
+                dimStyle,
+              ]}
             >
               <Pressable
                 accessibilityRole="button"

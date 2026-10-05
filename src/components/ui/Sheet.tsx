@@ -86,6 +86,9 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, scroll
             borderBottomLeftRadius: 0,
             borderBottomRightRadius: 0,
             backgroundColor: "rgba(20,20,23,0.92)",
+            // Header and footer keep their size; only the body shrinks and scrolls.
+            maxHeight: height * 0.88,
+            flexShrink: 1,
           }}
         >
           <View className="items-center pt-2.5 pb-1">
@@ -114,7 +117,7 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, scroll
             </View>
           ) : null}
           <Body
-            style={scroll ? { maxHeight: height * 0.88 - 120 } : undefined}
+            style={scroll ? { flexGrow: 0, flexShrink: 1 } : undefined}
             contentContainerStyle={
               scroll
                 ? { paddingHorizontal: 20, paddingBottom: footer ? 12 : insets.bottom + 20 }

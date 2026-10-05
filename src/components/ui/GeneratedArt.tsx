@@ -5,7 +5,7 @@ import { Icon, type IconName } from "./Icon";
 import { Text } from "./Text";
 
 /**
- * Deterministic artwork for posters and product tiles. Mock mode stays offline; real TMDB posters and
+ * Deterministic artwork for product tiles and movies without a TMDB poster;
  * product images replace this once the backend proxies them.
  */
 export function GeneratedArt({

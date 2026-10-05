@@ -1,13 +1,14 @@
 import { router } from "expo-router";
-import { View } from "react-native";
+import { useState } from "react";
+import { TextInput, View } from "react-native";
 import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { Pill } from "@/genui/kit";
-import { modelRef } from "@/lib/mock/models";
+import { modelRef } from "@/lib/models";
 import { useApp } from "@/lib/store";
-import { colors } from "@/lib/theme";
+import { colors, fonts } from "@/lib/theme";
 import type { Model } from "@/lib/types";
 
 export function capabilityTags(m: Model): string[] {
@@ -41,6 +42,11 @@ export function ModelPicker({
 }) {
   const providers = useApp((s) => s.providers);
   const models = useApp((s) => s.models);
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const LIMIT = 40;
+  // Selected model first, then the provider's own order; long lists are capped.
+  const rank = (m: Model) => (modelRef(m) === value ? 0 : 1);
 
   return (
     <Sheet
@@ -65,8 +71,32 @@ export function ModelPicker({
       }
     >
       <View className="gap-5">
+        {models.length > 12 ? (
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder={`Search ${models.length} models`}
+            placeholderTextColor={colors.textFaint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel="Search models"
+            style={{
+              fontFamily: fonts.body,
+              fontSize: 15,
+              color: colors.text,
+              backgroundColor: colors.raised,
+              borderRadius: 14,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+            }}
+          />
+        ) : null}
         {providers.map((p) => {
-          const list = models.filter((m) => m.providerId === p.providerId);
+          const matching = models
+            .filter((m) => m.providerId === p.providerId)
+            .filter((m) => !q || `${m.name} ${m.id}`.toLowerCase().includes(q))
+            .sort((a, b) => rank(a) - rank(b));
+          const list = matching.slice(0, LIMIT);
           if (list.length === 0) return null;
           return (
             <View key={p.providerId}>
@@ -121,6 +151,11 @@ export function ModelPicker({
                   );
                 })}
               </View>
+              {matching.length > LIMIT ? (
+                <Text muted className="mt-1.5 px-1 text-xs">
+                  {matching.length - LIMIT} more. Search to narrow the list.
+                </Text>
+              ) : null}
             </View>
           );
         })}

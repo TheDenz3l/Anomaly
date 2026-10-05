@@ -222,9 +222,7 @@ export function SubagentTimeline({ props, emit, live }: GenProps<"SubagentTimeli
                 onPress={() => setOpen(expanded ? null : r.id)}
                 className="flex-row items-center gap-3"
               >
-                <View
-                  className="h-9 w-9 items-center justify-center rounded-full bg-raised"
-                >
+                <View className="h-9 w-9 items-center justify-center rounded-full bg-raised">
                   {s === "running" ? (
                     <Orb state="background" size={20} label="Running" />
                   ) : (
@@ -438,7 +436,16 @@ export function ResearchProgress({ props, live }: GenProps<"ResearchProgress">) 
             <View key={ph.id} className="flex-row items-center gap-3">
               {state === "active" ? (
                 <View className="h-5 w-5 items-center justify-center">
-                  <Orb state={ph.id === "synthesize" ? "working" : ph.id === "reflect" ? "reasoning" : "searching"} size={20} />
+                  <Orb
+                    state={
+                      ph.id === "synthesize"
+                        ? "working"
+                        : ph.id === "reflect"
+                          ? "reasoning"
+                          : "searching"
+                    }
+                    size={20}
+                  />
                 </View>
               ) : (
                 <View

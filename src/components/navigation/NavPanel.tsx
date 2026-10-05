@@ -1,10 +1,13 @@
+import * as Haptics from "expo-haptics";
 import { router, type Href } from "expo-router";
-import { useMemo, type ReactNode } from "react";
-import { ScrollView, View } from "react-native";
+import { useMemo, useState, type ReactNode } from "react";
+import { Platform, ScrollView, View } from "react-native";
 import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ActionButton } from "@/genui/kit";
 import { Glass } from "@/components/ui/Glass";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
 import { Display, Text } from "@/components/ui/Text";
 import { reflow } from "@/lib/motion";
@@ -28,10 +31,18 @@ function threadIcon(t: Thread): IconName {
  * Menu rows slide in one after another as the drawer opens. Driven by drawer progress, so a slow
  * drag reveals them slowly and a fast flick snaps them all in.
  */
-function Stagger({ index, children, reorder }: { index: number; children: ReactNode; reorder?: boolean }) {
+function Stagger({
+  index,
+  children,
+  reorder,
+}: {
+  index: number;
+  children: ReactNode;
+  reorder?: boolean;
+}) {
   const { progress } = useDrawer();
   const style = useAnimatedStyle(() => {
-    const start = 0.12 + index * 0.03;
+    const start = 0.12 + Math.min(index, 12) * 0.03;
     const p = interpolate(progress.get(), [start, start + 0.42], [0, 1], "clamp");
     return { opacity: p, transform: [{ translateX: (1 - p) * -22 }] };
   });
@@ -51,14 +62,26 @@ export function NavPanel() {
   const streamingId = useApp((s) => s.streaming?.threadId);
   const openThread = useApp((s) => s.openThread);
   const newChat = useApp((s) => s.newChat);
+  const pinThread = useApp((s) => s.pinThread);
+  const deleteThread = useApp((s) => s.deleteThread);
+  const showToast = useApp((s) => s.showToast);
+  const [menuFor, setMenuFor] = useState<Thread | null>(null);
 
-  const recents = useMemo(
-    () =>
-      Object.values(threads)
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, 6),
-    [threads]
-  );
+  // Pinned chats stay at the top (latest pin first); the six most recent of the rest follow.
+  const recents = useMemo(() => {
+    const all = Object.values(threads);
+    const pinned = all.filter((t) => t.pinnedAt).sort((a, b) => b.pinnedAt! - a.pinnedAt!);
+    const rest = all
+      .filter((t) => !t.pinnedAt)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 6);
+    return [...pinned, ...rest];
+  }, [threads]);
+
+  const openMenu = (t: Thread) => {
+    if (Platform.OS !== "web") void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setMenuFor(t);
+  };
 
   const go = (href: Href) => {
     close();
@@ -68,20 +91,20 @@ export function NavPanel() {
   return (
     <View className="flex-1" style={{ paddingTop: insets.top + 10 }}>
       <Stagger index={0}>
-      <View className="flex-row items-center justify-between pl-5 pr-4">
-        <Display className="text-[26px] leading-8">Anomaly</Display>
-        <Tap
-          accessibilityRole="button"
-          accessibilityLabel="Search chats"
-          onPress={() => go("/history?search=1")}
-        >
-          <Glass radius={24} interactive>
-            <View className="h-12 w-12 items-center justify-center">
-              <Icon name="search" size={21} />
-            </View>
-          </Glass>
-        </Tap>
-      </View>
+        <View className="flex-row items-center justify-between pl-5 pr-4">
+          <Display className="text-[26px] leading-8">Anomaly</Display>
+          <Tap
+            accessibilityRole="button"
+            accessibilityLabel="Search chats"
+            onPress={() => go("/history?search=1")}
+          >
+            <Glass radius={24} interactive>
+              <View className="h-12 w-12 items-center justify-center">
+                <Icon name="search" size={21} />
+              </View>
+            </Glass>
+          </Tap>
+        </View>
       </Stagger>
 
       <ScrollView
@@ -90,14 +113,14 @@ export function NavPanel() {
       >
         {destinations.map((d, i) => (
           <Stagger key={d.label} index={i + 1}>
-          <Tap
-            accessibilityRole="link"
-            onPress={() => go(d.href)}
-            className="flex-row items-center gap-4 rounded-2xl px-3 py-3"
-          >
-            <Icon name={d.icon} size={22} color={colors.text} />
-            <Text className="text-[18px] leading-6">{d.label}</Text>
-          </Tap>
+            <Tap
+              accessibilityRole="link"
+              onPress={() => go(d.href)}
+              className="flex-row items-center gap-4 rounded-2xl px-3 py-3"
+            >
+              <Icon name={d.icon} size={22} color={colors.text} />
+              <Text className="text-[18px] leading-6">{d.label}</Text>
+            </Tap>
           </Stagger>
         ))}
 
@@ -115,73 +138,109 @@ export function NavPanel() {
           const active = t.id === activeId;
           return (
             <Stagger key={t.id} index={4 + i} reorder>
-            <Tap
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              onPress={() => {
-                openThread(t.id);
-                close();
-              }}
-              className={`flex-row items-center gap-4 rounded-2xl px-3 py-3 ${active ? "bg-white/10" : ""}`}
-            >
-              <Icon
-                name={threadIcon(t)}
-                size={20}
-                color={active ? colors.text : colors.textMuted}
-              />
-              <Text className="flex-1 text-[17px] leading-6" numberOfLines={1}>
-                {t.title}
-              </Text>
-              {streamingId === t.id ? (
-                <View accessibilityLabel="Replying" className="h-2 w-2 rounded-full bg-primary" />
-              ) : null}
-            </Tap>
+              <Tap
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                accessibilityHint="Long press to pin or delete"
+                accessibilityActions={[{ name: "longpress", label: "Chat options" }]}
+                onAccessibilityAction={() => openMenu(t)}
+                onPress={() => {
+                  openThread(t.id);
+                  close();
+                }}
+                onLongPress={() => openMenu(t)}
+                delayLongPress={380}
+                className={`flex-row items-center gap-4 rounded-2xl px-3 py-3 ${active ? "bg-white/10" : ""}`}
+              >
+                <Icon
+                  name={threadIcon(t)}
+                  size={20}
+                  color={active ? colors.text : colors.textMuted}
+                />
+                <Text className="flex-1 text-[17px] leading-6" numberOfLines={1}>
+                  {t.title}
+                </Text>
+                {streamingId === t.id ? (
+                  <View accessibilityLabel="Replying" className="h-2 w-2 rounded-full bg-primary" />
+                ) : t.pinnedAt ? (
+                  <View accessibilityLabel="Pinned">
+                    <Icon name="pin" size={15} color={colors.textFaint} />
+                  </View>
+                ) : null}
+              </Tap>
             </Stagger>
           );
         })}
         <Stagger index={4 + recents.length}>
-        <Tap
-          accessibilityRole="link"
-          onPress={() => go("/history")}
-          className="flex-row items-center gap-1 self-start rounded-2xl px-3 py-3"
-        >
-          <Text muted className="text-[16px]">
-            View all
-          </Text>
-          <Icon name="chevron-forward" size={16} color={colors.textMuted} />
-        </Tap>
+          <Tap
+            accessibilityRole="link"
+            onPress={() => go("/history")}
+            className="flex-row items-center gap-1 self-start rounded-2xl px-3 py-3"
+          >
+            <Text muted className="text-[16px]">
+              View all
+            </Text>
+            <Icon name="chevron-forward" size={16} color={colors.textMuted} />
+          </Tap>
         </Stagger>
       </ScrollView>
 
       <Stagger index={12}>
-      <View
-        className="flex-row items-center justify-between px-4"
-        style={{ paddingBottom: Math.max(insets.bottom, 12) + 4 }}
-      >
-        <Tap
-          accessibilityRole="button"
-          accessibilityLabel="Settings"
-          onPress={() => go("/settings")}
-          className="h-[52px] w-[52px] items-center justify-center rounded-full bg-raised"
+        <View
+          className="flex-row items-center justify-between px-4"
+          style={{ paddingBottom: Math.max(insets.bottom, 12) + 4 }}
         >
-          <Icon name="settings-outline" size={22} />
-        </Tap>
-        <Tap
-          haptic
-          accessibilityRole="button"
-          onPress={() => {
-            newChat();
-            close();
-          }}
-          className="h-[52px] flex-row items-center gap-2 rounded-full bg-ink pl-5 pr-6"
-        >
-          <Icon name="add" size={22} color="#000" />
-          <Text weight="bold" className="text-[17px] text-black">
-            New chat
-          </Text>
-        </Tap>
-      </View>
+          <Tap
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+            onPress={() => go("/settings")}
+            className="h-[52px] w-[52px] items-center justify-center rounded-full bg-raised"
+          >
+            <Icon name="settings-outline" size={22} />
+          </Tap>
+          <Tap
+            haptic
+            accessibilityRole="button"
+            onPress={() => {
+              newChat();
+              close();
+            }}
+            className="h-[52px] flex-row items-center gap-2 rounded-full bg-ink pl-5 pr-6"
+          >
+            <Icon name="add" size={22} color="#000" />
+            <Text weight="bold" className="text-[17px] text-black">
+              New chat
+            </Text>
+          </Tap>
+        </View>
       </Stagger>
+
+      <Sheet open={menuFor !== null} onClose={() => setMenuFor(null)} title={menuFor?.title}>
+        {menuFor ? (
+          <View className="gap-2.5">
+            <ActionButton
+              variant="secondary"
+              icon={menuFor.pinnedAt ? "pin-outline" : "pin"}
+              label={menuFor.pinnedAt ? "Unpin" : "Pin to top"}
+              onPress={() => {
+                pinThread(menuFor.id, !menuFor.pinnedAt);
+                showToast(menuFor.pinnedAt ? "Unpinned" : "Pinned");
+                setMenuFor(null);
+              }}
+            />
+            <ActionButton
+              variant="danger-soft"
+              icon="trash-outline"
+              label="Delete chat"
+              onPress={() => {
+                deleteThread(menuFor.id);
+                showToast("Chat deleted");
+                setMenuFor(null);
+              }}
+            />
+          </View>
+        ) : null}
+      </Sheet>
     </View>
   );
 }

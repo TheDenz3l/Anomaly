@@ -1,20 +1,12 @@
+import * as Location from "expo-location";
 import { useMemo } from "react";
+import { Platform } from "react-native";
 import { create } from "zustand";
 import { collectArtifacts } from "@/lib/artifacts";
-import { decisions, reasoningTokensFor, resolveReasoning } from "@/lib/engine/decision";
-import { materialize, play, uid, type Sink } from "@/lib/engine/player";
-import {
-  isSilentEvent,
-  scriptForEvent,
-  scriptForPrompt,
-  type Script,
-  type ScriptContext,
-} from "@/lib/engine/scenarios";
-import { seedMemories } from "@/lib/mock/memories";
-import { DEFAULT_MODEL_REF, mockModels, mockProviders, modelRef } from "@/lib/mock/models";
+import { api, convex, errorText, type Id } from "@/lib/convex";
+import { modelRef, placeholderModel } from "@/lib/models";
 import type {
   CapabilityProfile,
-  ComponentPart,
   Memory,
   Message,
   Model,
@@ -22,9 +14,13 @@ import type {
   Provider,
   Settings,
   Thread,
-  ThreadMode,
   UiEventPart,
 } from "@/lib/types";
+
+/**
+ * App state. Server data (threads, messages, models, settings, memories) streams in from Convex
+ * through <ConvexSync />; actions call Convex and show optimistic parts so the UI never waits.
+ */
 
 export type Attachment = { uri: string; width?: number; height?: number };
 
@@ -32,7 +28,24 @@ type Draft = { modelRef: string; reasoningLevel: string; incognito: boolean };
 
 type Toast = { id: string; text: string; tone: "default" | "danger" };
 
+export const DEFAULT_SETTINGS: Settings = {
+  customInstructions: "",
+  memoryEnabled: true,
+  subagentMode: "auto",
+  webMode: "auto",
+  searchProvider: "searxng",
+  searchKeyHint: "",
+  voiceInput: "device",
+  voiceOutput: "device",
+  readRepliesAloud: false,
+  probeSpendCapUsd: 0.05,
+  defaultModelRef: "",
+  researchModelRef: null,
+};
+
 type State = {
+  /** Signed in and the first settings/threads have arrived. */
+  ready: boolean;
   providers: Provider[];
   models: Model[];
   threads: Record<string, Thread>;
@@ -44,13 +57,19 @@ type State = {
   streaming: { threadId: string; messageId: string } | null;
   /** Deep Research toggle in the composer — applies to the next message only. */
   researchArmed: boolean;
-  locationGranted: boolean;
   savedMessageIds: string[];
   /** Artifact ids pinned to the top of Artifacts. */
   pinnedArtifacts: string[];
   /** When each artifact was last opened, for "recently viewed" ordering. */
   artifactViews: Record<string, number>;
   toast: Toast | null;
+};
+
+export type ProviderInput = {
+  providerId: string;
+  label: string;
+  baseUrl: string;
+  headers: { key: string; value: string }[];
 };
 
 type Actions = {
@@ -70,408 +89,184 @@ type Actions = {
   togglePin(artifactId: string): void;
   markViewed(artifactId: string): void;
   updateSettings(patch: Partial<Settings>): void;
-  addMemory(m: Omit<Memory, "id" | "createdAt">): string;
+  addMemory(m: Omit<Memory, "id" | "createdAt">): void;
   updateMemory(id: string, patch: Partial<Memory>): void;
   deleteMemory(id: string): void;
-  upsertProvider(p: Provider): void;
+  saveProvider(input: ProviderInput, apiKey?: string): Promise<boolean>;
+  refreshProvider(providerId: string): Promise<void>;
   removeProvider(providerId: string): void;
-  addModels(models: Model[]): void;
   overrideProfile(ref: string, patch: Partial<CapabilityProfile>): void;
+  runProbes(ref: string): Promise<string[]>;
+  /** Checks an unverified model's reasoning controls once, in the background. */
+  ensureProfile(ref: string): void;
+  pinThread(id: string, pinned: boolean): void;
   showToast(text: string, tone?: Toast["tone"]): void;
+  /* sync — called by <ConvexSync /> only */
+  hydrate(
+    patch: Partial<
+      Pick<
+        State,
+        "providers" | "models" | "memories" | "settings" | "savedMessageIds" | "pinnedArtifacts"
+      >
+    >
+  ): void;
+  hydrateThreads(list: Thread[]): void;
+  hydrateMessages(threadId: string, list: Message[]): void;
+  hydrateArtifacts(list: Message[]): void;
 };
 
 export type AppStore = State & Actions;
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
-
 export function findModel(models: Model[], ref: string): Model {
-  return models.find((m) => modelRef(m) === ref) ?? models[0];
+  return (
+    models.find((m) => modelRef(m) === ref) ??
+    (ref ? placeholderModel(ref) : (models[0] ?? placeholderModel("")))
+  );
 }
 
-/* ------------------------------------------------------------------ seeds */
+let seq = 0;
+const tempId = (prefix: string) => `${prefix}_tmp${Date.now().toString(36)}${(seq++).toString(36)}`;
+const isPending = (id: string | null) => Boolean(id?.startsWith("pending_"));
 
-function seedThreads(): Pick<State, "threads" | "messages"> {
-  const threads: Record<string, Thread> = {};
-  const messages: Record<string, Message[]> = {};
-  const model = findModel(mockModels, DEFAULT_MODEL_REF);
-  const ctx: ScriptContext = {
-    model,
-    mode: "chat",
-    hasImages: false,
-    incognito: false,
-    memoryEnabled: true,
-    subagentMode: "auto",
-    locationGranted: true,
-  };
+/** Same rule as the server's first title, so a new chat's header doesn't change when the real thread arrives. */
+function titleFrom(text: string): string {
+  const clean = text
+    .replace(/^\/\w+\s*/, "")
+    .replace(/[?!.]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return "New chat";
+  const words = clean.split(" ");
+  const short = words.slice(0, 6).join(" ");
+  return short.charAt(0).toUpperCase() + short.slice(1) + (words.length > 6 ? "…" : "");
+}
 
-  const make = (
-    title: string,
-    ago: number,
-    turns: (
-      | { user: string }
-      | { event: (prev: Message) => Omit<UiEventPart, "id" | "type"> }
-      | { script: Script }
-    )[],
-    extra: Partial<Thread> = {}
-  ) => {
-    const id = uid("thr");
-    const createdAt = Date.now() - ago;
-    const list: Message[] = [];
-    let t = createdAt;
-    for (const turn of turns) {
-      t += 40_000;
-      if ("user" in turn) {
-        list.push({
-          id: uid("msg"),
-          threadId: id,
-          role: "user",
-          parts: [{ id: uid("txt"), type: "text", text: turn.user }],
-          createdAt: t,
-          status: "done",
-        });
-      } else if ("event" in turn) {
-        const ev = turn.event(list[list.length - 1]);
-        list.push({
-          id: uid("msg"),
-          threadId: id,
-          role: "user",
-          parts: [{ id: uid("evt"), type: "ui_event", ...ev }],
-          createdAt: t,
-          status: "done",
-        });
-      } else {
-        const sent = turn.script.difficulty === "hard" ? "high" : "medium";
-        list.push({
-          id: uid("msg"),
-          threadId: id,
-          role: "assistant",
-          parts: materialize(turn.script, true),
-          createdAt: t,
-          status: "done",
-          meta: {
-            modelRef: DEFAULT_MODEL_REF,
-            levelRequested: "auto",
-            levelSent: sent,
-            reasoningTokens: reasoningTokensFor(sent, turn.script.difficulty),
-            kind: turn.script.kind,
-          },
-        });
-      }
+const SETTINGS_KEYS = [
+  "customInstructions",
+  "memoryEnabled",
+  "subagentMode",
+  "webMode",
+  "searchProvider",
+  "voiceInput",
+  "voiceOutput",
+  "readRepliesAloud",
+  "probeSpendCapUsd",
+  "defaultModelRef",
+  "researchModelRef",
+] as const;
+
+/** Threads whose full message list is loaded (vs. the artifact-only subset). */
+const fullThreads = new Set<string>();
+
+/**
+ * A call queued on a dead connection never settles by itself, which left buttons spinning forever.
+ * Give up with a clear message instead (the server may still finish it later, which is harmless here).
+ */
+function within<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("Can't reach the server. Check your connection and try again.")),
+        ms
+      )
+    ),
+  ]);
+}
+/** Model refs already sent for a background capability check this session. */
+const ensured = new Set<string>();
+/** Server message id → the optimistic id it replaced, used as a stable React key. */
+const aliases = new Map<string, string>();
+const isTemp = (id: string) => id.includes("_tmp");
+
+/**
+ * Gives server messages the keys of the optimistic messages they replace (matched in order by role),
+ * so a reply doesn't remount — and replay its entrance animation — when the real data arrives.
+ */
+function withStableKeys(prev: Message[], next: Message[]): Message[] {
+  const prevIds = new Set(prev.map((m) => m.id));
+  const temps = prev.filter((m) => isTemp(m.id));
+  const fresh = next.filter((m) => !prevIds.has(m.id) && !aliases.has(m.id));
+  for (const t of temps) {
+    const match = fresh.find((f) => f.role === t.role && !aliases.has(f.id));
+    if (match) aliases.set(match.id, t.key ?? t.id);
+  }
+  return next.map((m) => (aliases.has(m.id) ? { ...m, key: aliases.get(m.id) } : m));
+}
+let searchKeyTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function uploadImage(
+  a: Attachment
+): Promise<{ storageId: Id<"_storage">; width?: number; height?: number }> {
+  const blob = await (await fetch(a.uri)).blob();
+  const url = await convex.mutation(api.attachments.generateUploadUrl, {});
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": blob.type || "image/jpeg" },
+    body: blob,
+  });
+  if (!res.ok) throw new Error("Photo upload failed.");
+  const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
+  await convex.mutation(api.attachments.register, { storageId, width: a.width, height: a.height });
+  return { storageId, width: a.width, height: a.height };
+}
+
+async function currentLocation(): Promise<{ lat: number; lng: number; label?: string } | null> {
+  const perm = await Location.requestForegroundPermissionsAsync();
+  if (perm.status !== "granted") return null;
+  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+  const { latitude: lat, longitude: lng } = pos.coords;
+  let label: string | undefined;
+  if (Platform.OS !== "web") {
+    try {
+      const [place] = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      label =
+        [place?.city ?? place?.district, place?.region].filter(Boolean).join(", ") || undefined;
+    } catch {
+      label = undefined;
     }
-    threads[id] = {
-      id,
-      title,
-      modelRef: DEFAULT_MODEL_REF,
-      mode: "chat",
-      reasoningLevel: "auto",
-      incognito: false,
-      createdAt,
-      updatedAt: t,
-      ...extra,
-    };
-    messages[id] = list;
-  };
-
-  const componentIn = (m: Message, name: string) =>
-    m.parts.find((p): p is ComponentPart => p.type === "component" && p.name === name)!;
-
-  make("Savings at $500 a month", 2 * HOUR, [
-    { user: "Show my savings if I add $500 a month" },
-    { script: scriptForPrompt("Show my savings if I add $500 a month", ctx) },
-  ]);
-
-  make("Movies near me", DAY + 3 * HOUR, [
-    { user: "What movies are playing near me?" },
-    {
-      script: scriptForPrompt("What movies are playing near me?", {
-        ...ctx,
-        locationGranted: false,
-      }),
-    },
-    {
-      event: (prev) => ({
-        componentId: componentIn(prev, "LocationRequest").id,
-        component: "LocationRequest",
-        action: "allow",
-        label: "Shared current location",
-      }),
-    },
-    {
-      script: scriptForEvent(
-        {
-          id: "",
-          type: "ui_event",
-          componentId: "",
-          component: "LocationRequest",
-          action: "allow",
-          label: "",
-        },
-        ctx
-      )!,
-    },
-  ]);
-
-  const research = { ...ctx, mode: "research" as const };
-  make(
-    "Best e-bikes under $2,000",
-    2 * DAY + 5 * HOUR,
-    [
-      { user: "Research the best e-bikes under $2,000 for commuting" },
-      { script: scriptForPrompt("Research", research) },
-      {
-        event: (prev) => ({
-          componentId: componentIn(prev, "ChoiceChips").id,
-          component: "ChoiceChips",
-          action: "choose",
-          label: "Hill climbing, Light enough to carry",
-          payload: { ids: ["hills", "weight"] },
-        }),
-      },
-      {
-        script: scriptForEvent(
-          {
-            id: "",
-            type: "ui_event",
-            componentId: "",
-            component: "ChoiceChips",
-            action: "choose",
-            label: "",
-            payload: { ids: ["hills"] },
-          },
-          research
-        )!,
-      },
-      {
-        event: (prev) => ({
-          componentId: componentIn(prev, "ResearchPlan").id,
-          component: "ResearchPlan",
-          action: "start",
-          label: "Started research with 4 steps",
-        }),
-      },
-      {
-        script: scriptForEvent(
-          {
-            id: "",
-            type: "ui_event",
-            componentId: "",
-            component: "ResearchPlan",
-            action: "start",
-            label: "",
-          },
-          research
-        )!,
-      },
-    ],
-    { mode: "research" }
-  );
-
-  make("Noise-cancelling headphones", 3 * DAY, [
-    { user: "Best noise cancelling headphones under $300" },
-    { script: scriptForPrompt("Best noise cancelling headphones under $300", ctx) },
-  ]);
-
-  make("WireGuard at home", 4 * DAY + 2 * HOUR, [
-    { user: "How do I set up WireGuard at home?" },
-    { script: scriptForPrompt("How do I set up WireGuard at home?", ctx) },
-  ]);
-
-  make("Packing for Lisbon", 6 * DAY, [
-    { user: "Packing list for 4 days in Lisbon" },
-    { script: scriptForPrompt("Packing list for 4 days in Lisbon", ctx) },
-  ]);
-
-  make(
-    "Weekend weather",
-    8 * DAY,
-    [
-      { user: "What's the weather this weekend?" },
-      { script: scriptForPrompt("What's the weather this weekend?", ctx) },
-    ],
-    { incognito: true }
-  );
-
-  make("History of the web", 10 * DAY, [
-    { user: "Give me a timeline of the history of the web" },
-    { script: scriptForPrompt("Give me a timeline of the history of the web", ctx) },
-  ]);
-
-  make("Pixel 11 vs iPhone 17", 12 * DAY, [
-    { user: "Compare Pixel 11 and iPhone 17" },
-    { script: scriptForPrompt("Compare Pixel 11 and iPhone 17", ctx) },
-  ]);
-
-  return { threads, messages };
+  }
+  return { lat, lng, label };
 }
 
-/* ------------------------------------------------------------------ run control */
-
-let runToken = { cancelled: false };
-
-const defaultSettings: Settings = {
-  customInstructions: "Be concise. Use metric units. I live in Toronto.",
-  memoryEnabled: true,
-  subagentMode: "auto",
-  webMode: "auto",
-  searchProvider: "searxng",
-  searchKeyHint: "https://searx.example.org",
-  voiceInput: "device",
-  voiceOutput: "device",
-  readRepliesAloud: false,
-  probeSpendCapUsd: 0.05,
-  defaultModelRef: DEFAULT_MODEL_REF,
-  researchModelRef: "openai/gpt-5",
-};
-
-/** Starts with the research report and the savings calculator pinned, so Artifacts shows both sections. */
-function seedPins(seed: Pick<State, "threads" | "messages">): string[] {
-  const all = collectArtifacts(seed.threads, seed.messages);
-  return [all.find((a) => a.type === "report"), all.find((a) => a.kind === "Calculator")]
-    .filter((a): a is NonNullable<typeof a> => Boolean(a))
-    .map((a) => a.id);
+function streamingIn(threadId: string, list: Message[]): State["streaming"] {
+  const m = [...list].reverse().find((x) => x.role === "assistant" && x.status === "streaming");
+  return m ? { threadId, messageId: m.id } : null;
 }
-
-const seed = seedThreads();
 
 export const useApp = create<AppStore>()((set, get) => {
+  const toastError = (e: unknown) => get().showToast(errorText(e), "danger");
+
   const patchMessages = (threadId: string, fn: (list: Message[]) => Message[]) =>
     set((s) => ({ messages: { ...s.messages, [threadId]: fn(s.messages[threadId] ?? []) } }));
 
-  const patchMessage = (threadId: string, messageId: string, fn: (m: Message) => Message) =>
-    patchMessages(threadId, (list) => list.map((m) => (m.id === messageId ? fn(m) : m)));
-
-  const touch = (threadId: string) =>
-    set((s) =>
-      s.threads[threadId]
-        ? {
-            threads: {
-              ...s.threads,
-              [threadId]: { ...s.threads[threadId], updatedAt: Date.now() },
-            },
-          }
-        : {}
-    );
-
-  const contextFor = (thread: Thread, hasImages: boolean): ScriptContext => {
+  const patchThreadOrDraft = (patch: Partial<Draft>) => {
     const s = get();
-    return {
-      model: findModel(s.models, thread.modelRef),
-      mode: thread.mode,
-      hasImages,
-      incognito: thread.incognito,
-      memoryEnabled: s.settings.memoryEnabled,
-      subagentMode: s.settings.subagentMode,
-      locationGranted: s.locationGranted,
-    };
-  };
-
-  /** Runs one assistant turn: resolves reasoning for the endpoint, then streams the script into a new message. */
-  const runAssistant = async (threadId: string, script: Script) => {
-    const s = get();
-    const thread = s.threads[threadId];
-    const model = findModel(s.models, thread.modelRef);
-    const { sent } = resolveReasoning(model.profile, thread.reasoningLevel, script.difficulty);
-    const messageId = uid("msg");
-    const message: Message = {
-      id: messageId,
-      threadId,
-      role: "assistant",
-      parts: [],
-      createdAt: Date.now(),
-      status: "streaming",
-      meta: {
-        modelRef: thread.modelRef,
-        levelRequested: thread.reasoningLevel,
-        levelSent: sent,
-        reasoningTokens: model.profile.reasoning.noop
-          ? 0
-          : reasoningTokensFor(sent, script.difficulty),
-        kind: script.kind,
-      },
-    };
-    runToken.cancelled = true;
-    const token = { cancelled: false };
-    runToken = token;
-    patchMessages(threadId, (list) => [...list, message]);
-    set({ streaming: { threadId, messageId } });
-
-    const sink: Sink = {
-      append: (part) =>
-        patchMessage(threadId, messageId, (m) => ({ ...m, parts: [...m.parts, part] })),
-      update: (partId, fn) =>
-        patchMessage(threadId, messageId, (m) => ({
-          ...m,
-          parts: m.parts.map((p) => (p.id === partId ? fn(p) : p)),
-        })),
-      cancelled: () => token.cancelled,
-    };
-
-    const showThinking = model.profile.features.reasoningText && sent !== "off";
-    const hiddenThinkMs = sent === "off" ? 350 : showThinking ? 250 : sent === "high" ? 1600 : 900;
-    const outcome = await play(script, { showThinking, hiddenThinkMs }, sink);
-    patchMessage(threadId, messageId, (m) => ({
-      ...m,
-      status: outcome,
-      parts: m.parts.map((p) =>
-        p.type === "thinking" && !p.done
-          ? { ...p, done: true, durationMs: 1000 }
-          : p.type === "search" && p.phase !== "done"
-            ? { ...p, phase: "done" as const }
-            : p
-      ),
-    }));
-    touch(threadId);
-    if (get().streaming?.messageId === messageId) set({ streaming: null });
-  };
-
-  const ensureThread = (firstText: string): string => {
-    const s = get();
-    if (s.activeThreadId && s.threads[s.activeThreadId]) return s.activeThreadId;
-    const id = uid("thr");
-    const now = Date.now();
-    const mode: ThreadMode = s.researchArmed ? "research" : "chat";
-    const thread: Thread = {
-      id,
-      title: decisions.title(firstText),
-      mode,
-      ...s.draft,
-      createdAt: now,
-      updatedAt: now,
-    };
-    set({
-      threads: { ...s.threads, [id]: thread },
-      messages: { ...s.messages, [id]: [] },
-      activeThreadId: id,
-    });
-    return id;
-  };
-
-  const patchActiveOrDraft = (patch: Partial<Draft & { mode: ThreadMode }>) => {
-    const s = get();
-    if (s.activeThreadId && s.threads[s.activeThreadId]) {
-      set({
-        threads: { ...s.threads, [s.activeThreadId]: { ...s.threads[s.activeThreadId], ...patch } },
-      });
+    const id = s.activeThreadId;
+    if (id && s.threads[id] && !isPending(id)) {
+      set({ threads: { ...s.threads, [id]: { ...s.threads[id], ...patch } } });
+      convex
+        .mutation(api.threads.update, { threadId: id as Id<"threads">, ...patch })
+        .catch(toastError);
     } else {
       set({ draft: { ...s.draft, ...patch } });
     }
   };
 
   return {
-    providers: mockProviders,
-    models: mockModels,
-    ...seed,
+    ready: false,
+    providers: [],
+    models: [],
+    threads: {},
+    messages: {},
     activeThreadId: null,
-    draft: { modelRef: DEFAULT_MODEL_REF, reasoningLevel: "auto", incognito: false },
-    settings: defaultSettings,
-    researchArmed: false,
-    memories: seedMemories,
+    draft: { modelRef: "", reasoningLevel: "auto", incognito: false },
+    settings: DEFAULT_SETTINGS,
+    memories: [],
     streaming: null,
-    locationGranted: false,
+    researchArmed: false,
     savedMessageIds: [],
-    pinnedArtifacts: seedPins(seed),
+    pinnedArtifacts: [],
     artifactViews: {},
     toast: null,
 
@@ -479,18 +274,19 @@ export const useApp = create<AppStore>()((set, get) => {
       const s = get();
       set({
         activeThreadId: null,
+        streaming: null,
         draft: { modelRef: s.settings.defaultModelRef, reasoningLevel: "auto", incognito: false },
         researchArmed: false,
       });
     },
 
     openThread(id) {
-      set({ activeThreadId: id });
+      const list = get().messages[id] ?? [];
+      set({ activeThreadId: id, streaming: streamingIn(id, list) });
     },
 
     deleteThread(id) {
       const s = get();
-      if (s.streaming?.threadId === id) runToken.cancelled = true;
       const { [id]: _t, ...threads } = s.threads;
       const { [id]: _m, ...messages } = s.messages;
       set({
@@ -499,19 +295,35 @@ export const useApp = create<AppStore>()((set, get) => {
         activeThreadId: s.activeThreadId === id ? null : s.activeThreadId,
         streaming: s.streaming?.threadId === id ? null : s.streaming,
       });
+      if (!isPending(id))
+        convex.mutation(api.threads.remove, { threadId: id as Id<"threads"> }).catch(toastError);
+    },
+
+    pinThread(id, pinned) {
+      const s = get();
+      if (!s.threads[id] || isPending(id)) return;
+      const pinnedAt = pinned ? Date.now() : undefined;
+      set({ threads: { ...s.threads, [id]: { ...s.threads[id], pinnedAt } } });
+      convex
+        .mutation(api.threads.update, { threadId: id as Id<"threads">, pinned })
+        .catch(toastError);
     },
 
     renameThread(id, title) {
       const s = get();
-      if (s.threads[id]) set({ threads: { ...s.threads, [id]: { ...s.threads[id], title } } });
+      if (!s.threads[id]) return;
+      set({ threads: { ...s.threads, [id]: { ...s.threads[id], title } } });
+      convex
+        .mutation(api.threads.update, { threadId: id as Id<"threads">, title })
+        .catch(toastError);
     },
 
     setModel(ref) {
-      patchActiveOrDraft({ modelRef: ref });
+      patchThreadOrDraft({ modelRef: ref });
     },
 
     setReasoningLevel(level) {
-      patchActiveOrDraft({ reasoningLevel: level });
+      patchThreadOrDraft({ reasoningLevel: level });
     },
 
     setResearchMode(on) {
@@ -519,97 +331,171 @@ export const useApp = create<AppStore>()((set, get) => {
     },
 
     setIncognito(on) {
-      patchActiveOrDraft({ incognito: on });
+      patchThreadOrDraft({ incognito: on });
     },
 
     send(text, attachments) {
       const trimmed = text.trim();
       if (!trimmed && attachments.length === 0) return;
-      const threadId = ensureThread(trimmed || "Photo");
+      const s = get();
+      const research = s.researchArmed;
+      const existing = s.activeThreadId && !isPending(s.activeThreadId) ? s.activeThreadId : null;
+      const threadKey = existing ?? `pending_${Date.now().toString(36)}`;
+      const now = Date.now();
       const parts: Part[] = [
         ...attachments.map((a): Part => ({
-          id: uid("img"),
+          id: tempId("img"),
           type: "image",
           uri: a.uri,
           width: a.width,
           height: a.height,
         })),
-        ...(trimmed ? [{ id: uid("txt"), type: "text", text: trimmed } as Part] : []),
+        ...(trimmed ? [{ id: tempId("txt"), type: "text", text: trimmed } as Part] : []),
       ];
-      patchMessages(threadId, (list) => [
-        ...list,
-        { id: uid("msg"), threadId, role: "user", parts, createdAt: Date.now(), status: "done" },
-      ]);
-      const research = get().researchArmed;
-      if (research) {
-        patchActiveOrDraft({ mode: "research" });
-        set({ researchArmed: false });
-      }
-      const thread = get().threads[threadId];
-      // Research is a one-shot preset: clarify → plan → run continues through ui_events, not later prompts.
-      const ctx = {
-        ...contextFor(thread, attachments.length > 0),
-        mode: research ? ("research" as const) : ("chat" as const),
+      const userMsg: Message = {
+        id: tempId("msg"),
+        threadId: threadKey,
+        role: "user",
+        parts,
+        createdAt: now,
+        status: "done",
       };
-      void runAssistant(threadId, scriptForPrompt(trimmed, ctx));
+      const replyId = tempId("msg");
+      const target = existing ? s.threads[existing] : s.draft;
+      const reply: Message = {
+        id: replyId,
+        threadId: threadKey,
+        role: "assistant",
+        parts: [],
+        createdAt: now + 1,
+        status: "streaming",
+        // Mirrors the server's initial meta so the placeholder row doesn't change label on arrival.
+        meta: {
+          modelRef: target?.modelRef ?? "",
+          levelRequested: target?.reasoningLevel ?? "auto",
+          levelSent: "",
+          reasoningTokens: 0,
+        },
+      };
+      if (!existing) {
+        const thread: Thread = {
+          id: threadKey,
+          key: threadKey,
+          title: titleFrom(trimmed || "Photo"),
+          mode: research ? "research" : "chat",
+          ...s.draft,
+          createdAt: now,
+          updatedAt: now,
+        };
+        set({ threads: { ...s.threads, [threadKey]: thread }, activeThreadId: threadKey });
+      }
+      patchMessages(threadKey, (list) => [...list, userMsg, reply]);
+      set({ streaming: { threadId: threadKey, messageId: replyId }, researchArmed: false });
+
+      void (async () => {
+        try {
+          const uploaded = await Promise.all(attachments.map(uploadImage));
+          const res = await convex.mutation(api.messages.send, {
+            threadId: existing ? (existing as Id<"threads">) : undefined,
+            text: trimmed,
+            attachments: uploaded,
+            research,
+            draft: existing ? undefined : get().draft,
+          });
+          if (!existing) {
+            const st = get();
+            const { [threadKey]: pendingThread, ...threads } = st.threads;
+            const { [threadKey]: pendingMsgs, ...messages } = st.messages;
+            set({
+              threads: { ...threads, [res.threadId]: { ...pendingThread, id: res.threadId } },
+              messages: {
+                ...messages,
+                [res.threadId]:
+                  messages[res.threadId] ??
+                  (pendingMsgs ?? []).map((m) => ({ ...m, threadId: res.threadId })),
+              },
+              activeThreadId: st.activeThreadId === threadKey ? res.threadId : st.activeThreadId,
+              streaming:
+                st.streaming?.threadId === threadKey
+                  ? { threadId: res.threadId, messageId: res.messageId }
+                  : st.streaming,
+            });
+          }
+        } catch (e) {
+          patchMessages(threadKey, (list) => list.filter((m) => m.id !== replyId));
+          if (get().streaming?.messageId === replyId) set({ streaming: null });
+          toastError(e);
+        }
+      })();
     },
 
     emitUiEvent(threadId, event) {
-      const part: UiEventPart = { id: uid("evt"), type: "ui_event", ...event };
-      patchMessages(threadId, (list) => [
-        ...list,
-        {
-          id: uid("msg"),
-          threadId,
-          role: "user",
-          parts: [part],
-          createdAt: Date.now(),
-          status: "done",
-        },
-      ]);
-      if (event.component === "LocationRequest" && event.action === "allow")
-        set({ locationGranted: true });
-      touch(threadId);
-      if (isSilentEvent(part)) return;
-      const thread = get().threads[threadId];
-      const script = scriptForEvent(part, contextFor(thread, false));
-      if (script) void runAssistant(threadId, script);
+      const tmp: Message = {
+        id: tempId("msg"),
+        threadId,
+        role: "user",
+        parts: [{ id: tempId("evt"), type: "ui_event", ...event }],
+        createdAt: Date.now(),
+        status: "done",
+      };
+      patchMessages(threadId, (list) => [...list, tmp]);
+      void (async () => {
+        try {
+          let payload = event.payload;
+          if (event.component === "LocationRequest" && event.action === "allow") {
+            const loc = await currentLocation().catch(() => null);
+            if (!loc) {
+              patchMessages(threadId, (list) => list.filter((m) => m.id !== tmp.id));
+              get().showToast("Location access is off. Pick the city option instead.", "danger");
+              return;
+            }
+            payload = { ...(payload ?? {}), ...loc };
+          }
+          await convex.mutation(api.messages.emitUiEvent, {
+            threadId: threadId as Id<"threads">,
+            componentId: event.componentId,
+            component: event.component,
+            action: event.action,
+            label: event.label,
+            payload,
+          });
+        } catch (e) {
+          patchMessages(threadId, (list) => list.filter((m) => m.id !== tmp.id));
+          toastError(e);
+        }
+      })();
     },
 
     stop() {
-      runToken.cancelled = true;
+      const s = get();
+      const threadId = s.streaming?.threadId ?? s.activeThreadId;
       set({ streaming: null });
+      if (threadId && !isPending(threadId)) {
+        convex
+          .mutation(api.messages.stop, { threadId: threadId as Id<"threads"> })
+          .catch(toastError);
+      }
     },
 
     regenerate(messageId) {
       const s = get();
+      if (s.streaming) return;
       const threadId = Object.keys(s.messages).find((k) =>
         s.messages[k].some((m) => m.id === messageId)
       );
-      if (!threadId || s.streaming) return;
-      const list = s.messages[threadId];
-      const idx = list.findIndex((m) => m.id === messageId);
-      const prompt = list
-        .slice(0, idx)
-        .reverse()
-        .find((m) => m.role === "user");
-      if (!prompt) return;
-      const thread = s.threads[threadId];
-      const ev = prompt.parts.find((p): p is UiEventPart => p.type === "ui_event");
-      const text = prompt.parts.find((p) => p.type === "text");
-      const hasImages = prompt.parts.some((p) => p.type === "image");
-      const script = ev
-        ? scriptForEvent(ev, contextFor(thread, false))
-        : scriptForPrompt(text?.type === "text" ? text.text : "", {
-            ...contextFor(thread, hasImages),
-            mode:
-              list.findIndex((m) => m.role === "user") === list.indexOf(prompt)
-                ? thread.mode
-                : "chat",
-          });
-      if (!script) return;
-      patchMessages(threadId, (l) => l.filter((m) => m.id !== messageId));
-      void runAssistant(threadId, script);
+      if (!threadId) return;
+      patchMessages(threadId, (list) =>
+        list.map((m) =>
+          m.id === messageId ? { ...m, parts: [], status: "streaming" as const } : m
+        )
+      );
+      set({ streaming: { threadId, messageId } });
+      convex
+        .mutation(api.messages.regenerate, { messageId: messageId as Id<"messages"> })
+        .catch((e) => {
+          set({ streaming: null });
+          toastError(e);
+        });
     },
 
     toggleSaved(messageId) {
@@ -621,6 +507,9 @@ export const useApp = create<AppStore>()((set, get) => {
           : [...s.savedMessageIds, messageId],
       });
       get().showToast(saved ? "Removed from saved" : "Saved");
+      convex
+        .mutation(api.messages.toggleSaved, { refId: messageId, kind: "message" })
+        .catch(toastError);
     },
 
     togglePin(artifactId) {
@@ -632,6 +521,9 @@ export const useApp = create<AppStore>()((set, get) => {
           : [artifactId, ...s.pinnedArtifacts],
       });
       get().showToast(pinned ? "Unpinned" : "Pinned to Artifacts");
+      convex
+        .mutation(api.messages.toggleSaved, { refId: artifactId, kind: "artifact" })
+        .catch(toastError);
     },
 
     markViewed(artifactId) {
@@ -639,32 +531,87 @@ export const useApp = create<AppStore>()((set, get) => {
     },
 
     updateSettings(patch) {
-      set((s) => ({ settings: { ...s.settings, ...patch } }));
+      const s = get();
+      set({ settings: { ...s.settings, ...patch } });
+      const server: Record<string, unknown> = {};
+      for (const k of SETTINGS_KEYS) if (k in patch) server[k] = patch[k];
+      if (Object.keys(server).length) {
+        convex.mutation(api.settings.update, server as never).catch(toastError);
+      }
+      if ("searchKeyHint" in patch) {
+        if (searchKeyTimer) clearTimeout(searchKeyTimer);
+        const value = (patch.searchKeyHint ?? "").trim();
+        const provider = get().settings.searchProvider;
+        searchKeyTimer = setTimeout(() => {
+          if (provider === "none") return;
+          convex
+            .action(api.settings.setSearchKey, {
+              provider,
+              key: provider === "searxng" ? "" : value,
+              url: provider === "searxng" ? value : undefined,
+            })
+            .catch(toastError);
+        }, 900);
+      }
     },
 
     addMemory(m) {
-      const id = uid("mem");
-      set((s) => ({ memories: [{ ...m, id, createdAt: Date.now() }, ...s.memories] }));
-      return id;
+      convex
+        .mutation(api.memories.create, {
+          text: m.text,
+          category: m.category,
+          scope: m.scope,
+          threadId: m.threadId as Id<"threads"> | undefined,
+        })
+        .catch(toastError);
     },
 
     updateMemory(id, patch) {
       set((s) => ({ memories: s.memories.map((m) => (m.id === id ? { ...m, ...patch } : m)) }));
+      convex
+        .mutation(api.memories.update, {
+          id: id as Id<"memories">,
+          text: patch.text,
+          category: patch.category,
+          scope: patch.scope,
+        })
+        .catch(toastError);
     },
 
     deleteMemory(id) {
       set((s) => ({ memories: s.memories.filter((m) => m.id !== id) }));
+      convex.mutation(api.memories.remove, { id: id as Id<"memories"> }).catch(toastError);
     },
 
-    upsertProvider(p) {
-      set((s) => {
-        const exists = s.providers.some((x) => x.providerId === p.providerId);
-        return {
-          providers: exists
-            ? s.providers.map((x) => (x.providerId === p.providerId ? p : x))
-            : [...s.providers, p],
-        };
-      });
+    async saveProvider(input, apiKey) {
+      try {
+        const res = await within(
+          convex.action(api.providers.save, {
+            providerId: input.providerId,
+            label: input.label,
+            baseUrl: input.baseUrl,
+            apiKey: apiKey ? apiKey : undefined,
+            headers: input.headers,
+          }),
+          45_000
+        );
+        if (res.status === "connected") get().showToast(`Connected: ${res.models} models`);
+        else get().showToast(res.error ?? "Couldn't connect to the provider.", "danger");
+        return res.status === "connected";
+      } catch (e) {
+        toastError(e);
+        return false;
+      }
+    },
+
+    async refreshProvider(providerId) {
+      try {
+        const res = await within(convex.action(api.providers.refresh, { providerId }), 45_000);
+        if (res.status === "connected") get().showToast(`Fetched ${res.models} models`);
+        else get().showToast(res.error ?? "Couldn't fetch models.", "danger");
+      } catch (e) {
+        toastError(e);
+      }
     },
 
     removeProvider(providerId) {
@@ -672,41 +619,85 @@ export const useApp = create<AppStore>()((set, get) => {
         providers: s.providers.filter((p) => p.providerId !== providerId),
         models: s.models.filter((m) => m.providerId !== providerId),
       }));
-    },
-
-    addModels(list) {
-      set((s) => ({
-        models: [
-          ...s.models.filter((m) => !list.some((n) => modelRef(n) === modelRef(m))),
-          ...list,
-        ],
-      }));
+      convex.mutation(api.providers.remove, { providerId }).catch(toastError);
     },
 
     overrideProfile(ref, patch) {
-      set((s) => ({
-        models: s.models.map((m) =>
-          modelRef(m) === ref
-            ? {
-                ...m,
-                profile: {
-                  ...m.profile,
-                  ...patch,
-                  version: m.profile.version + 1,
-                  lastVerified: Date.now(),
-                },
-              }
-            : m
-        ),
-      }));
+      convex
+        .mutation(api.models.setOverride, {
+          ref,
+          reasoning: patch.reasoning,
+          features: patch.features,
+        })
+        .catch(toastError);
+    },
+
+    ensureProfile(ref) {
+      if (!ref || ensured.has(ref)) return;
+      ensured.add(ref);
+      convex.mutation(api.probes.ensure, { ref }).catch(() => ensured.delete(ref));
+    },
+
+    async runProbes(ref) {
+      try {
+        const res = await convex.action(api.probes.run, { ref });
+        return res.findings;
+      } catch (e) {
+        toastError(e);
+        return [];
+      }
     },
 
     showToast(text, tone = "default") {
-      const id = uid("toast");
+      const id = tempId("toast");
       set({ toast: { id, text, tone } });
       setTimeout(() => {
         if (get().toast?.id === id) set({ toast: null });
-      }, 2400);
+      }, 2600);
+    },
+
+    hydrate(patch) {
+      const s = get();
+      const next: Partial<State> = { ...patch };
+      if (patch.settings && !s.draft.modelRef && patch.settings.defaultModelRef) {
+        next.draft = { ...s.draft, modelRef: patch.settings.defaultModelRef };
+      }
+      if (patch.settings || patch.providers) next.ready = true;
+      set(next);
+    },
+
+    hydrateThreads(list) {
+      const s = get();
+      const threads: Record<string, Thread> = {};
+      for (const t of list) {
+        const key = s.threads[t.id]?.key;
+        threads[t.id] = key ? { ...t, key } : t;
+      }
+      // Keep an optimistic chat until the server knows about it.
+      for (const [id, t] of Object.entries(s.threads)) if (isPending(id)) threads[id] = t;
+      set({ threads, ready: true });
+    },
+
+    hydrateMessages(threadId, list) {
+      fullThreads.add(threadId);
+      const s = get();
+      const keyed = withStableKeys(s.messages[threadId] ?? [], list);
+      set({
+        messages: { ...s.messages, [threadId]: keyed },
+        ...(s.activeThreadId === threadId ? { streaming: streamingIn(threadId, keyed) } : {}),
+      });
+    },
+
+    hydrateArtifacts(list) {
+      const byThread: Record<string, Message[]> = {};
+      for (const m of list) (byThread[m.threadId] ??= []).push(m);
+      const s = get();
+      const messages = { ...s.messages };
+      for (const [threadId, msgs] of Object.entries(byThread)) {
+        if (!fullThreads.has(threadId))
+          messages[threadId] = msgs.sort((a, b) => a.createdAt - b.createdAt);
+      }
+      set({ messages });
     },
   };
 });
@@ -722,7 +713,6 @@ export function useComposerTarget() {
   return { thread, target, model: findModel(models, target.modelRef) };
 }
 
-/** ui_events the user has sent back for a given component — lets components replay their chosen state. */
 /** Every artifact across non-incognito chats, newest first. */
 export function useArtifacts() {
   const threads = useApp((s) => s.threads);
@@ -730,12 +720,15 @@ export function useArtifacts() {
   return useMemo(() => collectArtifacts(threads, messages), [threads, messages]);
 }
 
+/** ui_events the user has sent back for a given component — lets components replay their chosen state. */
 export function useComponentEvents(threadId: string, componentId: string): UiEventPart[] {
   const list = useApp((s) => s.messages[threadId]);
-  const out: UiEventPart[] = [];
-  for (const m of list ?? []) {
-    for (const p of m.parts)
-      if (p.type === "ui_event" && p.componentId === componentId) out.push(p);
-  }
-  return out;
+  return useMemo(() => {
+    const out: UiEventPart[] = [];
+    for (const m of list ?? []) {
+      for (const p of m.parts)
+        if (p.type === "ui_event" && p.componentId === componentId) out.push(p);
+    }
+    return out;
+  }, [list, componentId]);
 }

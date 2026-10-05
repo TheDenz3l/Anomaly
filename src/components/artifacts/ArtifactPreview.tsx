@@ -68,7 +68,11 @@ export function ArtifactPreview({ artifact, height }: { artifact: Artifact; heig
     >
       {width > 0 ? (
         <View style={{ width: RENDER_W, transform: [{ scale }], transformOrigin: "left top" }}>
-          {artifact.type === "report" ? <ReportPage artifact={artifact} /> : <ComponentPage artifact={artifact} />}
+          {artifact.type === "report" ? (
+            <ReportPage artifact={artifact} />
+          ) : (
+            <ComponentPage artifact={artifact} />
+          )}
         </View>
       ) : null}
     </View>

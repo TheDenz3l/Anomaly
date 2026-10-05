@@ -10,7 +10,13 @@ type CitationApi = { sources: Source[]; open: (nums: number[]) => void };
 const CitationContext = createContext<CitationApi | null>(null);
 
 /** Gives a reply's text access to its sources, and hosts the sheet a citation opens. */
-export function CitationProvider({ sources, children }: { sources: Source[]; children: ReactNode }) {
+export function CitationProvider({
+  sources,
+  children,
+}: {
+  sources: Source[];
+  children: ReactNode;
+}) {
   const [nums, setNums] = useState<number[] | null>(null);
   const cited = (nums ?? []).map((n) => ({ n, source: sources[n - 1] })).filter((c) => c.source);
   return (
@@ -46,7 +52,9 @@ const pill = {
 export function CitationPill({ nums }: { nums: number[] }) {
   const ctx = useContext(CitationContext);
   const first = ctx?.sources[nums[0] - 1];
-  const label = (first ? shortName(first.url) : String(nums[0])) + (nums.length > 1 ? ` +${nums.length - 1}` : "");
+  const label =
+    (first ? shortName(first.url) : String(nums[0])) +
+    (nums.length > 1 ? ` +${nums.length - 1}` : "");
   const a11y = `Sources ${nums.join(", ")}${first ? `, ${shortName(first.url)}` : ""}`;
   const open = () => ctx?.open(nums);
 

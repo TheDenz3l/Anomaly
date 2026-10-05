@@ -1,7 +1,8 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode, memo } from "react";
 import { Text as RNText, View } from "react-native";
 import { Text } from "@/components/ui/Text";
 import { CitationPill } from "./Citations";
+import { useSmoothText } from "./useSmoothText";
 
 /** Drops a trailing unmatched `**` so half-streamed bold doesn't flash raw asterisks. */
 function balance(text: string): string {
@@ -60,52 +61,67 @@ function blocks(text: string): Block[] {
   return out.filter((b) => b.kind !== "para" || b.text);
 }
 
-/** Just enough Markdown for chat: paragraphs, ### headings, bullets, numbered lists, bold, code, [n] citations. */
-export function Markdown({ text }: { text: string }) {
-  return (
-    <View className="gap-2.5">
-      {blocks(text).map((b, bi) => {
-        if (b.kind === "heading") {
+const BlockView = memo(function BlockView({
+  kind,
+  text,
+  index,
+}: {
+  kind: Block["kind"];
+  text: string;
+  index: number;
+}) {
+  if (kind === "heading") {
+    return (
+      <Text weight="bold" className={`text-[17px] leading-6 ${index > 0 ? "mt-2" : ""}`}>
+        {text}
+      </Text>
+    );
+  }
+  if (kind === "list") {
+    return (
+      <View className="gap-1.5">
+        {text.split("\n").map((l, li) => {
+          const numbered = /^\d+\./.test(l);
+          const marker = numbered ? l.match(/^\d+\./)![0] : "•";
           return (
-            <Text
-              key={bi}
-              weight="bold"
-              className={`text-[17px] leading-6 ${bi > 0 ? "mt-2" : ""}`}
-            >
-              {b.text}
-            </Text>
-          );
-        }
-        if (b.kind === "list") {
-          return (
-            <View key={bi} className="gap-1.5">
-              {b.items.map((l, li) => {
-                const numbered = /^\d+\./.test(l);
-                const marker = numbered ? l.match(/^\d+\./)![0] : "•";
-                return (
-                  <View key={li} className="flex-row pr-2">
-                    <Text
-                      muted
-                      weight={numbered ? "bold" : "regular"}
-                      className="w-5 text-base leading-[25px]"
-                    >
-                      {marker}
-                    </Text>
-                    <Text className="flex-1 text-base leading-[25px]">
-                      {inline(l.replace(/^(-|\d+\.)\s/, ""), `${bi}-${li}`)}
-                    </Text>
-                  </View>
-                );
-              })}
+            <View key={li} className="flex-row pr-2">
+              <Text
+                muted
+                weight={numbered ? "bold" : "regular"}
+                className="w-5 text-base leading-[25px]"
+              >
+                {marker}
+              </Text>
+              <Text className="flex-1 text-base leading-[25px]">
+                {inline(l.replace(/^(-|\d+\.)\s/, ""), `${index}-${li}`)}
+              </Text>
             </View>
           );
-        }
-        return (
-          <Text key={bi} className="text-base leading-[25px]">
-            {inline(b.text, String(bi))}
-          </Text>
-        );
-      })}
+        })}
+      </View>
+    );
+  }
+  return <Text className="text-base leading-[25px]">{inline(text, String(index))}</Text>;
+});
+
+/**
+ * Just enough Markdown for chat: paragraphs, ### headings, bullets, numbered lists, bold, code, [n]
+ * citations. While streaming, text is revealed smoothly and only the block still growing re-renders.
+ */
+export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const smooth = useSmoothText(text, streaming);
+  // A citation still arriving (" [1") would flash as raw brackets before it becomes a pill.
+  const visible = smooth.length < text.length ? smooth.replace(/\s?\[\d*$/, "") : smooth;
+  return (
+    <View className="gap-2.5">
+      {blocks(visible).map((b, bi) => (
+        <BlockView
+          key={bi}
+          kind={b.kind}
+          text={b.kind === "list" ? b.items.join("\n") : b.text}
+          index={bi}
+        />
+      ))}
     </View>
   );
 }

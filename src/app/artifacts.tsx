@@ -24,12 +24,33 @@ const emptyCopy: Record<Filter, string> = {
   data: "Tables, comparisons and timelines from your chats will show up here.",
 };
 
-function Grid({ items, pinned, onOpen, onMore }: { items: Artifact[]; pinned: string[]; onOpen: (a: Artifact) => void; onMore: (a: Artifact) => void }) {
+function Grid({
+  items,
+  pinned,
+  onOpen,
+  onMore,
+}: {
+  items: Artifact[];
+  pinned: string[];
+  onOpen: (a: Artifact) => void;
+  onMore: (a: Artifact) => void;
+}) {
   return (
     <View className="flex-row flex-wrap justify-between gap-y-5">
       {items.map((a) => (
-        <Animated.View key={a.id} entering={fadeIn} exiting={fadeOut} layout={reflow} style={{ width: "48%" }}>
-          <ArtifactCard artifact={a} pinned={pinned.includes(a.id)} onOpen={() => onOpen(a)} onMore={() => onMore(a)} />
+        <Animated.View
+          key={a.id}
+          entering={fadeIn}
+          exiting={fadeOut}
+          layout={reflow}
+          style={{ width: "48%" }}
+        >
+          <ArtifactCard
+            artifact={a}
+            pinned={pinned.includes(a.id)}
+            onOpen={() => onOpen(a)}
+            onMore={() => onMore(a)}
+          />
         </Animated.View>
       ))}
     </View>
@@ -53,10 +74,14 @@ export default function ArtifactsScreen() {
   }, [artifacts]);
 
   const shown = artifacts.filter((a) => filter === "all" || a.group === filter);
-  const pinnedItems = pinned.map((id) => shown.find((a) => a.id === id)).filter((a): a is Artifact => Boolean(a));
+  const pinnedItems = pinned
+    .map((id) => shown.find((a) => a.id === id))
+    .filter((a): a is Artifact => Boolean(a));
   const recent = shown
     .filter((a) => !pinned.includes(a.id))
-    .sort((a, b) => Math.max(b.createdAt, views[b.id] ?? 0) - Math.max(a.createdAt, views[a.id] ?? 0));
+    .sort(
+      (a, b) => Math.max(b.createdAt, views[b.id] ?? 0) - Math.max(a.createdAt, views[a.id] ?? 0)
+    );
 
   const open = (a: Artifact) => {
     markViewed(a.id);
@@ -67,7 +92,14 @@ export default function ArtifactsScreen() {
 
   return (
     <View className="flex-1">
-      <Page title="Artifacts" subtitle={artifacts.length ? `${artifacts.length} things Anomaly made in your chats` : "Things Anomaly makes in your chats"}>
+      <Page
+        title="Artifacts"
+        subtitle={
+          artifacts.length
+            ? `${artifacts.length} things Anomaly made in your chats`
+            : "Things Anomaly makes in your chats"
+        }
+      >
         <ScrollView
           key="filters"
           horizontal
@@ -86,10 +118,15 @@ export default function ArtifactsScreen() {
                 onPress={() => setFilter(f)}
                 className={`flex-row items-center gap-1.5 rounded-full px-3.5 py-2 ${on ? "bg-primary-soft" : "bg-raised"}`}
               >
-                <Text weight={on ? "bold" : "medium"} className={`text-sm ${on ? "text-primary-strong" : ""}`}>
+                <Text
+                  weight={on ? "bold" : "medium"}
+                  className={`text-sm ${on ? "text-primary-strong" : ""}`}
+                >
                   {f === "all" ? "All" : groupLabels[f]}
                 </Text>
-                <Text className={`text-xs ${on ? "text-primary-strong" : "text-ink-faint"}`}>{counts[f]}</Text>
+                <Text className={`text-xs ${on ? "text-primary-strong" : "text-ink-faint"}`}>
+                  {counts[f]}
+                </Text>
               </Tap>
             );
           })}

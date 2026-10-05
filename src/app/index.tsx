@@ -17,8 +17,14 @@ import { useApp } from "@/lib/store";
 function useKeyboardVisible() {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
-    const show = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", () => setVisible(true));
-    const hide = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () => setVisible(false));
+    const show = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      () => setVisible(true)
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => setVisible(false)
+    );
     return () => {
       show.remove();
       hide.remove();
@@ -39,6 +45,10 @@ export default function ChatScreen() {
   const [away, setAway] = useState(false);
   const scroller = useRef<ScrollView>(null);
   const stick = useRef(true);
+  /** Until then, layout growth (a thread loading, images settling) keeps the view pinned to the end. */
+  const settleUntil = useRef(0);
+  /** A smooth scroll is in flight; jumping now would cut it short. */
+  const smoothUntil = useRef(0);
   const count = messages?.length ?? 0;
   const bottom = keyboard ? 8 : Math.max(insets.bottom, 12);
 
@@ -47,17 +57,20 @@ export default function ChatScreen() {
   // chat continues the same view rather than counting as a switch.
   const [tracked, setTracked] = useState(threadId);
   const [generation, setGeneration] = useState(0);
-  const [existing, setExisting] = useState(() => new Set(messages?.map((m) => m.id)));
+  const [existing, setExisting] = useState(() => new Set(messages?.map((m) => m.key ?? m.id)));
   if (tracked !== threadId) {
     setTracked(threadId);
-    if (!(tracked === null && count <= 1)) {
+    // A new chat's first send goes null → pending → real id; all three are the same conversation.
+    const continuing = (tracked === null && count <= 2) || Boolean(tracked?.startsWith("pending_"));
+    if (!continuing) {
       setGeneration((g) => g + 1);
-      setExisting(new Set(messages?.map((m) => m.id)));
+      setExisting(new Set(messages?.map((m) => m.key ?? m.id)));
     }
   }
 
   useEffect(() => {
     stick.current = threadId !== null;
+    settleUntil.current = Date.now() + 1500;
     requestAnimationFrame(() => {
       if (threadId) scroller.current?.scrollToEnd({ animated: false });
       else scroller.current?.scrollTo({ y: 0, animated: false });
@@ -65,10 +78,16 @@ export default function ChatScreen() {
   }, [threadId]);
 
   useEffect(() => {
-    if (count > 0) {
-      stick.current = true;
-      scroller.current?.scrollToEnd({ animated: true });
-    }
+    if (count === 0) return;
+    stick.current = true;
+    settleUntil.current = Date.now() + 1500;
+    smoothUntil.current = Date.now() + 400;
+    scroller.current?.scrollToEnd({ animated: true });
+    // Content that grew while the smooth scroll ran: finish the trip.
+    const t = setTimeout(() => {
+      if (stick.current) scroller.current?.scrollToEnd({ animated: true });
+    }, 420);
+    return () => clearTimeout(t);
   }, [count]);
 
   const jumpToLatest = () => {
@@ -84,6 +103,7 @@ export default function ChatScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           onScroll={(e) => {
+            if (Date.now() < smoothUntil.current) return;
             const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
             const distance = contentSize.height - contentOffset.y - layoutMeasurement.height;
             stick.current = distance < FOLLOW_SLACK;
@@ -92,7 +112,12 @@ export default function ChatScreen() {
           }}
           scrollEventThrottle={32}
           onContentSizeChange={() => {
-            if (stick.current && count > 0) scroller.current?.scrollToEnd({ animated: false });
+            // Follow new content while a reply streams or a thread settles in. Growth the user caused
+            // (opening a thinking block, expanding a card) must not drag the view to the bottom.
+            const now = Date.now();
+            if (!stick.current || count === 0 || now < smoothUntil.current) return;
+            if (useApp.getState().streaming || now < settleUntil.current)
+              scroller.current?.scrollToEnd({ animated: false });
           }}
           contentContainerStyle={{
             flexGrow: 1,
@@ -107,7 +132,12 @@ export default function ChatScreen() {
           <Animated.View key={generation} entering={threadIn} style={{ flexGrow: 1, gap: 22 }}>
             {messages && messages.length > 0 ? (
               messages.map((m, i) => (
-                <Animated.View key={m.id} entering={existing.has(m.id) ? undefined : m.role === "user" ? bubbleIn : replyIn}>
+                <Animated.View
+                  key={m.key ?? m.id}
+                  entering={
+                    existing.has(m.key ?? m.id) ? undefined : m.role === "user" ? bubbleIn : replyIn
+                  }
+                >
                   {m.role === "user" ? (
                     <UserMessage message={m} />
                   ) : (
@@ -129,7 +159,11 @@ export default function ChatScreen() {
             exiting={popOut}
             style={{ position: "absolute", alignSelf: "center", bottom: composerH + bottom + 12 }}
           >
-            <Tap accessibilityRole="button" accessibilityLabel="Jump to latest" onPress={jumpToLatest}>
+            <Tap
+              accessibilityRole="button"
+              accessibilityLabel="Jump to latest"
+              onPress={jumpToLatest}
+            >
               <Glass radius={20} interactive>
                 <View className="h-10 w-10 items-center justify-center">
                   <Icon name="arrow-down" size={18} />
@@ -144,7 +178,10 @@ export default function ChatScreen() {
           pointerEvents="box-none"
           style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
         >
-          <View style={{ paddingBottom: bottom, width: "100%", maxWidth: 720, alignSelf: "center" }} pointerEvents="box-none">
+          <View
+            style={{ paddingBottom: bottom, width: "100%", maxWidth: 720, alignSelf: "center" }}
+            pointerEvents="box-none"
+          >
             <Composer onLayout={(e) => setComposerH(e.nativeEvent.layout.height)} />
           </View>
         </KeyboardAvoidingView>

@@ -57,9 +57,22 @@ export function ShimmerText({
 
   const chars = Array.from(text);
   return (
-    <View accessible accessibilityRole="text" accessibilityLabel={text} style={{ flexDirection: "row", flexShrink: 1, overflow: "hidden" }}>
+    <View
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={text}
+      style={{ flexDirection: "row", flexShrink: 1, overflow: "hidden" }}
+    >
       {chars.map((ch, i) => (
-        <Char key={`${i}${ch}`} ch={ch} index={i} total={chars.length} progress={progress} size={size} lineHeight={lineHeight} />
+        <Char
+          key={`${i}${ch}`}
+          ch={ch}
+          index={i}
+          total={chars.length}
+          progress={progress}
+          size={size}
+          lineHeight={lineHeight}
+        />
       ))}
     </View>
   );

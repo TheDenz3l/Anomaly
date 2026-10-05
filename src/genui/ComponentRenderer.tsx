@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ComponentType } from "react";
-import { Animated, Platform, View } from "react-native";
-import { useReducedMotion } from "react-native-reanimated";
+import { useState, type ComponentType } from "react";
+import { View } from "react-native";
+import Animated from "react-native-reanimated";
 import { Icon } from "@/components/ui/Icon";
 import { Text } from "@/components/ui/Text";
+import { cardIn } from "@/lib/motion";
 import { useApp, useComponentEvents } from "@/lib/store";
 import { colors } from "@/lib/theme";
 import type { ComponentPart } from "@/lib/types";
@@ -22,23 +23,11 @@ export function ComponentRenderer({ part, threadId, messageStreaming }: Props) {
   const events = useComponentEvents(threadId, part.id);
   const busy = useApp((s) => s.streaming !== null);
   const emitUiEvent = useApp((s) => s.emitUiEvent);
-  const reduced = useReducedMotion();
-  const [fade] = useState(
-    () => new Animated.Value(part.status === "streaming" || !messageStreaming ? 1 : 0)
-  );
-  const wasStreaming = useRef(part.status === "streaming");
-
-  useEffect(() => {
-    if (wasStreaming.current && part.status !== "streaming") {
-      wasStreaming.current = false;
-      fade.setValue(reduced ? 1 : 0);
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 320,
-        useNativeDriver: Platform.OS !== "web",
-      }).start();
-    }
-  }, [part.status, fade, reduced]);
+  // Cards fade in once when they first become ready during a live reply — whether they arrived as a
+  // skeleton first or fully formed (tools render cards directly). Replayed threads show them at once.
+  // A mount-time layout animation, not a JS-driven opacity value: if it is interrupted the card is
+  // simply shown, it can never be left invisible.
+  const [animateIn] = useState(() => part.status === "streaming" || messageStreaming);
 
   if (part.status === "streaming") return <GenSkeleton name={part.name} />;
 
@@ -65,12 +54,7 @@ export function ComponentRenderer({ part, threadId, messageStreaming }: Props) {
   }
 
   return (
-    <Animated.View
-      style={{
-        opacity: fade,
-        transform: [{ translateY: fade.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
-      }}
-    >
+    <Animated.View entering={animateIn ? cardIn : undefined}>
       <Component
         props={part.props as GenProps<CatalogName>["props"]}
         events={events}
