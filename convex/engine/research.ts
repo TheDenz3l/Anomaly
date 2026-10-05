@@ -6,11 +6,12 @@ import { parseLooseJson, truncate, uid } from "../lib/util";
 import type { Part, Source } from "../lib/validators";
 import { searchWeb } from "../web/providers";
 import { readPage } from "../web/read";
-import { makeSource, SourceCollector } from "../web/sources";
+import { makeSource, SourceCollector, normalizeUrl } from "../web/sources";
 import { estimateCost, forkEngine, note, type Engine } from "./context";
 import { finishTurn } from "./finish";
 import { wrapUntrusted } from "./prompt";
 import type { PartWriter } from "./writer";
+import { focusPage } from "../web/relevance";
 
 /**
  * Deep Research (PRD §3.7) on the sub-agent engine:
@@ -225,7 +226,8 @@ async function researchStep(
     if (limits.searches >= limits.maxSearches) break;
     limits.searches++;
     const { results } = await searchWeb(engine.ctx, engine.search, q, { limit: 5 });
-    for (const r of results) if (!hits.some((h) => h.url === r.url)) hits.push(r);
+    for (const r of results)
+      if (!hits.some((h) => normalizeUrl(h.url) === normalizeUrl(r.url))) hits.push(r);
     onFound(results.length);
   }
   if (!hits.length) return { note: null, cost: 0, found: 0 };
@@ -241,7 +243,7 @@ async function researchStep(
         n,
         title: page.title || h.title,
         url: page.url,
-        text: truncate(page.text, 6000),
+        text: focusPage(page.text, step.queries.join(" "), 6000).text,
       });
     } catch {
       /* unreadable page: skip */

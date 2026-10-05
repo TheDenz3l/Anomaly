@@ -3,7 +3,8 @@ import { truncate } from "../lib/util";
 
 /** One citation shape for native search, app tools and sub-agents (PRD §3.2, §3.8). */
 
-const TRACKING = /^(utm_|fbclid|gclid|mc_|ref$|ref_src|igshid|si$)/i;
+const TRACKING =
+  /^(utm_|fbclid|gclid|gclsrc|dclid|msclkid|msockid|srsltid|yclid|mc_|mkt_tok|_hsenc|_hsmi|ref$|ref_src|igshid|si$|spm$|cvid$|ocid$)/i;
 
 export function normalizeUrl(raw: string): string {
   try {

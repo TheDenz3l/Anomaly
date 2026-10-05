@@ -3,15 +3,18 @@ import type { ActionCtx } from "../_generated/server";
 import { HOUR, webCache, type WebCache } from "./cache";
 import { publicUrl } from "./guard";
 import type { SearchConfig } from "./providers";
+import { benchKey, FirecrawlError, firecrawlKeys, firecrawlScrape } from "./firecrawl";
 
 /**
- * read_url (PRD §3.8): robots.txt respected, cached by URL with content-type TTLs. Extraction runs
- * in pi-web-access (./access.ts): Readability/Defuddle → Markdown, PDFs as text, Firecrawl and the
- * Jina Reader for pages that block plain fetches or need JavaScript.
+ * read_url (PRD §3.8): robots.txt respected, cached by URL with content-type TTLs. Firecrawl's
+ * main-content scrape goes first (./firecrawl.ts: JS rendering, no site chrome, PDFs); without a
+ * usable key, or when it fails, pi-web-access (./access.ts) extracts instead: Readability/Defuddle →
+ * Markdown, PDFs via unpdf, the keyless Jina Reader behind blocked or JS-rendered pages.
  */
 
 const UA = "Mozilla/5.0 (compatible; AtlasBot/1.0; personal assistant)";
 const BOT = "atlasbot";
+const MAX_TEXT = 150_000;
 
 export type PageContent = {
   url: string;
@@ -110,6 +113,32 @@ export async function robotsAllowed(cache: WebCache, url: URL): Promise<boolean>
   return best ? best.allow : true;
 }
 
+/** Firecrawl's main-content scrape; null when no key is usable or it failed for a reason a plain fetch might not hit. */
+async function viaFirecrawl(
+  cache: WebCache,
+  cfg: SearchConfig,
+  url: URL
+): Promise<PageContent | null> {
+  for (const k of await firecrawlKeys(cache, cfg.provider === "firecrawl" ? cfg.key : undefined)) {
+    try {
+      const s = await firecrawlScrape(k.key, url.toString());
+      return {
+        url: s.url,
+        title: s.title || url.hostname,
+        description: describe(s.markdown),
+        text: s.markdown.slice(0, MAX_TEXT),
+        contentType: s.contentType,
+        via: "firecrawl",
+      };
+    } catch (e) {
+      if (!(e instanceof FirecrawlError)) throw e;
+      await benchKey(cache, k, e);
+      if (![401, 402, 403, 429].includes(e.status)) return null;
+    }
+  }
+  return null;
+}
+
 export async function readPage(
   ctx: ActionCtx,
   cfg: SearchConfig,
@@ -117,7 +146,7 @@ export async function readPage(
 ): Promise<PageContent> {
   const url = publicUrl(rawUrl);
   const cache = webCache(ctx);
-  const key = `read:${url.toString()}`;
+  const key = `read:v2:${url.toString()}`;
   const hit = await cache.get(key);
   if (hit) return JSON.parse(hit.content) as PageContent;
 
@@ -125,20 +154,20 @@ export async function readPage(
     throw new Error("This site's robots.txt asks automated readers not to fetch this page.");
   }
 
-  const r: ReadOutcome = await ctx.runAction(internal.web.access.read, {
-    url: url.toString(),
-    firecrawlKey: cfg.provider === "firecrawl" ? cfg.key : undefined,
-  });
-  if (!r.ok) throw new Error(r.error);
-  if (!r.text.trim()) throw new Error("The page had no readable text.");
-  const page: PageContent = {
-    url: r.url,
-    title: r.title || url.hostname,
-    description: describe(r.text),
-    text: r.text,
-    contentType: r.contentType,
-    via: "pi-web-access",
-  };
+  let page = await viaFirecrawl(cache, cfg, url);
+  if (!page) {
+    const r: ReadOutcome = await ctx.runAction(internal.web.access.read, { url: url.toString() });
+    if (!r.ok) throw new Error(r.error);
+    if (!r.text.trim()) throw new Error("The page had no readable text.");
+    page = {
+      url: r.url,
+      title: r.title || url.hostname,
+      description: describe(r.text),
+      text: r.text,
+      contentType: r.contentType,
+      via: "pi-web-access",
+    };
+  }
   await cache.put(key, JSON.stringify(page), page.contentType, ttlFor(page.contentType));
   return page;
 }

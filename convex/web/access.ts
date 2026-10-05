@@ -9,14 +9,17 @@ import { internalAction } from "../_generated/server";
 import { vSearchProvider } from "../lib/validators";
 import type { SearchOutcome, SearchResult, Recency } from "./providers";
 import type { ReadOutcome } from "./read";
+import { judgeResults } from "./relevance";
+import { normalizeUrl } from "./sources";
 
 /**
  * Web access engine: pi-web-access (github.com/nicobailon/pi-web-access) in a Node action.
- * Search runs the user's own provider, then the server SearXNG instance, then pi's auto chain
- * (Exa — keyless over MCP unless EXA_API_KEY is set — then Brave/Tavily/Firecrawl/Jina when keyed
- * in the deployment env), then keyless DuckDuckGo and Keenable. Reads go through Readability/Defuddle
- * to Markdown (PDFs via unpdf), with Firecrawl and the keyless Jina Reader behind blocked or
- * JS-rendered pages.
+ * Search runs the user's own Brave/Tavily/SearXNG provider and, when ./providers.ts asks for the
+ * chain, pi's auto chain (Exa — keyless over MCP unless EXA_API_KEY is set — then Brave/Tavily/Jina
+ * when keyed in the deployment env), then keyless DuckDuckGo and Keenable. The first step whose
+ * results pass the relevance check wins. Reads go through Readability/Defuddle to Markdown (PDFs via
+ * unpdf), with the keyless Jina Reader behind blocked or JS-rendered pages. Firecrawl and the
+ * SearXNG pool are called from the default runtime (./firecrawl.ts, ./providers.ts), not from here.
  *
  * pi reads its settings from a JSON file once per process and its keys from process.env on every
  * call, so the static config is written to /tmp before the first import and per-user keys are
@@ -26,18 +29,9 @@ import type { ReadOutcome } from "./read";
 const DIR = join(tmpdir(), "pi-web-access");
 const CONFIG = {
   webSearch: {
-    allowedProviders: [
-      "searxng",
-      "exa",
-      "brave",
-      "tavily",
-      "firecrawl",
-      "jina",
-      "duckduckgo",
-      "keenable",
-    ],
+    allowedProviders: ["searxng", "exa", "brave", "tavily", "jina", "duckduckgo", "keenable"],
   },
-  fetchRouting: { providers: ["http", "firecrawl", "jina"], allowRemoteHostedProviders: true },
+  fetchRouting: { providers: ["http", "jina"], allowRemoteHostedProviders: true },
   githubClone: { enabled: false },
   githubPrIssue: { enabled: false },
   youtube: { enabled: false },
@@ -45,7 +39,6 @@ const CONFIG = {
 const KEY_ENV = {
   brave: "BRAVE_API_KEY",
   tavily: "TAVILY_API_KEY",
-  firecrawl: "FIRECRAWL_API_KEY",
 } as const;
 const KEYLESS = ["duckduckgo", "keenable"] as const;
 const MAX_TEXT = 150_000;
@@ -145,17 +138,16 @@ function excerpts(answer: string): Map<string, string> {
   return out;
 }
 
-function normalize(
-  r: Awaited<ReturnType<Pi["search"]>>,
-  provider: string,
-  limit: number
-): SearchResult[] {
+function normalize(r: Awaited<ReturnType<Pi["search"]>>, provider: string): SearchResult[] {
   const fromAnswer = excerpts(r.answer ?? "");
   const inline = new Map((r.inlineContent ?? []).map((c) => [c.url, c.content]));
   const seen = new Set<string>();
   return r.results
-    .filter((x) => /^https?:\/\//.test(x.url) && !seen.has(x.url) && seen.add(x.url))
-    .slice(0, limit)
+    .filter((x) => {
+      if (!/^https?:\/\//.test(x.url)) return false;
+      const key = normalizeUrl(x.url);
+      return !seen.has(key) && !!seen.add(key);
+    })
     .map((x) => ({
       url: x.url,
       title: x.title || x.url,
@@ -181,24 +173,30 @@ export const search = internalAction({
         url: v.optional(v.string()),
       })
     ),
-    searxng: v.optional(v.string()),
+    /** Run pi's provider chain after `own` (the SearXNG pool is queried from ./providers.ts). */
+    chain: v.boolean(),
   },
-  handler: async (_ctx, { query, limit, recency, own, searxng }): Promise<SearchOutcome> => {
+  handler: async (_ctx, { query, limit, recency, own, chain }): Promise<SearchOutcome> => {
     const engine = await pi();
-    const opts = { numResults: limit, ...(recency ? { recencyFilter: recency } : {}) };
+    // A few extra results leave room for the off-topic ones the relevance check drops.
+    const opts = {
+      numResults: Math.min(limit + 4, 10),
+      ...(recency ? { recencyFilter: recency } : {}),
+    };
     const errors: string[] = [];
     let ownStatus = 0;
-    let searxngFailed = false;
+    let best: Omit<SearchOutcome, "errors" | "ownStatus"> | null = null;
 
     const steps: Step[] = [];
     if (own?.provider === "searxng" && own.url) {
       steps.push({ id: "searxng", role: "own", env: { SEARXNG_BASE_URL: own.url } });
-    } else if (own && own.provider !== "none" && own.provider !== "searxng" && own.key) {
+    } else if (own?.key && (own.provider === "brave" || own.provider === "tavily")) {
       steps.push({ id: own.provider, role: "own", env: { [KEY_ENV[own.provider]]: own.key } });
     }
-    if (searxng) steps.push({ id: "searxng", role: "pool", env: { SEARXNG_BASE_URL: searxng } });
-    steps.push({ id: "auto", role: "chain", env: { SEARXNG_BASE_URL: undefined } });
-    for (const id of KEYLESS) steps.push({ id, role: "chain", env: {} });
+    if (chain) {
+      steps.push({ id: "auto", role: "chain", env: { SEARXNG_BASE_URL: undefined } });
+      for (const id of KEYLESS) steps.push({ id, role: "chain", env: {} });
+    }
 
     for (const step of steps) {
       try {
@@ -206,28 +204,33 @@ export const search = internalAction({
           engine.search(query, { ...opts, provider: step.id })
         );
         const provider = r.provider ?? step.id;
-        const results = normalize(r, provider, limit);
-        if (results.length) return { results, provider, errors, ownStatus, searxngFailed };
-        if (step.role === "pool") searxngFailed = true;
+        const judged = judgeResults(query, normalize(r, provider));
+        const out = { ...judged, results: judged.results.slice(0, limit), provider };
+        if (out.ok) return { ...out, errors, ownStatus };
+        if (out.results.length) {
+          errors.push(`${provider}: off-topic results`);
+          if (!best || out.score > best.score) best = out;
+        }
       } catch (e) {
         errors.push(`${step.id}: ${firstLine(message(e)).slice(0, 160)}`);
         if (step.role === "own") ownStatus = authStatus(message(e));
-        if (step.role === "pool") searxngFailed = true;
       }
     }
-    return { results: [], provider: "none", errors, ownStatus, searxngFailed };
+    return {
+      ...(best ?? { results: [], provider: "none", ok: false, score: 0 }),
+      errors,
+      ownStatus,
+    };
   },
 });
 
 export const read = internalAction({
-  args: { url: v.string(), firecrawlKey: v.optional(v.string()) },
-  handler: async (_ctx, { url, firecrawlKey }): Promise<ReadOutcome> => {
+  args: { url: v.string() },
+  handler: async (_ctx, { url }): Promise<ReadOutcome> => {
     const engine = await pi();
-    const r = await withEnv(firecrawlKey ? { FIRECRAWL_API_KEY: firecrawlKey } : {}, () =>
-      engine.extract(url, AbortSignal.timeout(45_000), {
-        rejectDirectImages: "Images can't be read as text.",
-      })
-    );
+    const r = await engine.extract(url, AbortSignal.timeout(45_000), {
+      rejectDirectImages: "Images can't be read as text.",
+    });
     if (r.error) return { ok: false, error: firstLine(r.error).slice(0, 300) };
     let text = r.content;
     let contentType = r.mimeType ?? "text/html";

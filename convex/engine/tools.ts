@@ -10,11 +10,12 @@ import { parseLooseJson, truncate, uid } from "../lib/util";
 import type { GeoLocation, MemoryCategory, Part, SourceOrigin } from "../lib/validators";
 import { searchWeb } from "../web/providers";
 import { readPage } from "../web/read";
-import { makeSource, type SourceCollector } from "../web/sources";
+import { makeSource, type SourceCollector, normalizeUrl } from "../web/sources";
 import { note, type Engine } from "./context";
 import type { LoopTool, ToolOutcome } from "./loop";
 import { wrapUntrusted } from "./prompt";
 import type { Sink } from "./writer";
+import { focusPage } from "../web/relevance";
 
 /** App-side tools (PRD §3.8 fallback + free data sources). Results are plain text for the model. */
 
@@ -86,10 +87,14 @@ function finishSearch(
 ) {
   env.sink.update(partId, (p) => {
     const s = p as Extract<Part, { type: "search" }>;
-    const seen = new Set(s.sources.map((x) => x.url));
+    const seen = new Set(s.sources.map((x) => normalizeUrl(x.url)));
+    const fresh = found.filter((x) => {
+      const key = normalizeUrl(x.url);
+      return !seen.has(key) && !!seen.add(key);
+    });
     return {
       ...s,
-      sources: [...s.sources, ...found.filter((x) => !seen.has(x.url))].slice(0, 24),
+      sources: [...s.sources, ...fresh].slice(0, 24),
       phase,
       durationMs: (s.durationMs ?? 0) + (Date.now() - startedAt),
     };
@@ -152,12 +157,26 @@ export function webSearchTool(env: ToolEnv): LoopTool {
   };
 }
 
+/** What the reply is looking for, when the model didn't say: the latest search queries. */
+function readFocus(env: ToolEnv): string {
+  const part = env.sink.find((p) => p.type === "search") as
+    Extract<Part, { type: "search" }> | undefined;
+  return (part?.queries ?? []).slice(-2).join(" ");
+}
+
 export function readUrlTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
       "read_url",
-      "Fetch a web page and return its main text. Use on search results or URLs the user gave.",
-      { url: { type: "string", description: "http(s) URL" } },
+      "Fetch a web page and return its main text. Use on search results or URLs the user gave. Long pages are cut to the opening plus the passages about `focus`.",
+      {
+        url: { type: "string", description: "http(s) URL" },
+        focus: {
+          type: "string",
+          description:
+            "What you need from the page, e.g. 'iPhone Duo US starting price'. Defaults to your latest search.",
+        },
+      },
       ["url"]
     ),
     async run(args): Promise<ToolOutcome> {
@@ -181,15 +200,23 @@ export function readUrlTool(env: ToolEnv): LoopTool {
           env.sink.update(searchId, (p) => {
             const s = p as Extract<Part, { type: "search" }>;
             const src = env.sources.at(n)!;
+            const key = normalizeUrl(src.url);
             return {
               ...s,
               phase: "done",
-              sources: s.sources.some((x) => x.url === src.url) ? s.sources : [...s.sources, src],
+              sources: s.sources.some((x) => normalizeUrl(x.url) === key)
+                ? s.sources
+                : [...s.sources, src],
             };
           });
         }
+        const focus = String(args.focus ?? "").trim() || readFocus(env);
+        const view = focusPage(page.text, focus, 9000);
+        const note = view.trimmed
+          ? `\n(Long page: navigation removed; showing the opening and the passages about "${truncate(focus, 80)}". […] marks skipped parts. Call read_url again with a different focus for other details.)`
+          : "";
         return {
-          content: `[${n}] ${page.title} — ${page.url}\n${wrapUntrusted(page.url, truncate(page.text, 9000))}`,
+          content: `[${n}] ${page.title} — ${page.url}${note}\n${wrapUntrusted(page.url, view.text)}`,
         };
       } catch (e) {
         if (searchId)

@@ -57,13 +57,19 @@ import type * as users from "../users.js";
 import type * as voice from "../voice.js";
 import type * as web_access from "../web/access.js";
 import type * as web_cache from "../web/cache.js";
+import type * as web_firecrawl from "../web/firecrawl.js";
 import type * as web_guard from "../web/guard.js";
 import type * as web_providers from "../web/providers.js";
 import type * as web_read from "../web/read.js";
+import type * as web_relevance from "../web/relevance.js";
 import type * as web_sources from "../web/sources.js";
 import type * as webCache from "../webCache.js";
 
-import type { ApiFromModules, FilterApi, FunctionReference } from "convex/server";
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
@@ -115,9 +121,11 @@ declare const fullApi: ApiFromModules<{
   voice: typeof voice;
   "web/access": typeof web_access;
   "web/cache": typeof web_cache;
+  "web/firecrawl": typeof web_firecrawl;
   "web/guard": typeof web_guard;
   "web/providers": typeof web_providers;
   "web/read": typeof web_read;
+  "web/relevance": typeof web_relevance;
   "web/sources": typeof web_sources;
   webCache: typeof webCache;
 }>;
@@ -130,7 +138,10 @@ declare const fullApi: ApiFromModules<{
  * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-export declare const api: FilterApi<typeof fullApi, FunctionReference<any, "public">>;
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
 
 /**
  * A utility for referencing Convex functions in your app's internal API.
@@ -140,6 +151,9 @@ export declare const api: FilterApi<typeof fullApi, FunctionReference<any, "publ
  * const myFunctionReference = internal.myModule.myFunction;
  * ```
  */
-export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, "internal">>;
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
 
 export declare const components: {};
