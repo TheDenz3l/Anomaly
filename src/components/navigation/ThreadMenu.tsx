@@ -2,6 +2,7 @@ import { BlurView } from "expo-blur";
 import { useEffect, useState } from "react";
 import {
   Animated,
+  Easing,
   Modal,
   Platform,
   Pressable,
@@ -10,7 +11,13 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { useReducedMotion } from "react-native-reanimated";
+import Reanimated, {
+  Easing as REasing,
+  useAnimatedProps,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Glass } from "@/components/ui/Glass";
 import { Icon, type IconName } from "@/components/ui/Icon";
@@ -34,6 +41,8 @@ type Item = {
 };
 
 const native = Platform.OS !== "web";
+const BLUR = 28;
+const AnimatedBlur = Reanimated.createAnimatedComponent(BlurView);
 const MENU_W = 250;
 const ROW_H = 50;
 const PAD_V = 6;
@@ -71,6 +80,16 @@ export function ThreadMenu({
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const reduced = useReducedMotion();
+  /** Opacity of the dimming and the menu: a plain ease, no overshoot. */
+  const [fade] = useState(() => new Animated.Value(0));
+  /**
+   * Blur strength, animated on its own. Fading the blur's parent instead makes it flicker: an
+   * ancestor below full opacity cuts the blur off from what's behind it (web and iOS both), so it
+   * snaps in and out as the opacity crosses 1.
+   */
+  const blur = useSharedValue(0);
+  const blurProps = useAnimatedProps(() => ({ intensity: blur.get() }));
+  /** Scale of the menu and the lifted row: springy, but clamped so it never overshoots. */
   const [progress] = useState(() => new Animated.Value(0));
   const [shift] = useState(() => new Animated.Value(0));
 
@@ -87,25 +106,39 @@ export function ThreadMenu({
   useEffect(() => {
     if (target) {
       shift.setValue(0);
-      if (reduced) progress.setValue(1);
-      else
-        Animated.spring(progress, {
-          toValue: 1,
-          damping: 22,
-          stiffness: 340,
-          mass: 0.7,
-          useNativeDriver: native,
-        }).start();
+      if (reduced) {
+        fade.setValue(1);
+        blur.set(BLUR);
+        progress.setValue(1);
+      } else {
+        blur.set(withTiming(BLUR, { duration: 220, easing: REasing.out(REasing.cubic) }));
+        Animated.parallel([
+          Animated.timing(fade, {
+            toValue: 1,
+            duration: 180,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: native,
+          }),
+          Animated.spring(progress, {
+            toValue: 1,
+            damping: 24,
+            stiffness: 340,
+            mass: 0.7,
+            overshootClamping: true,
+            useNativeDriver: native,
+          }),
+        ]).start();
+      }
     } else {
-      Animated.timing(progress, {
-        toValue: 0,
-        duration: reduced ? 0 : 140,
-        useNativeDriver: native,
-      }).start(({ finished }) => {
-        if (finished) setShown(null);
-      });
+      const out = { toValue: 0, duration: reduced ? 0 : 140, useNativeDriver: native };
+      blur.set(withTiming(0, { duration: out.duration }));
+      Animated.parallel([Animated.timing(fade, out), Animated.timing(progress, out)]).start(
+        ({ finished }) => {
+          if (finished) setShown(null);
+        }
+      );
     }
-  }, [target, reduced, progress, shift]);
+  }, [target, reduced, fade, blur, progress, shift]);
 
   if (!shown) return null;
   const { thread, anchor: a } = shown;
@@ -189,16 +222,16 @@ export function ThreadMenu({
 
   return (
     <Modal transparent visible animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Animated.View style={[StyleSheet.absoluteFill, { opacity: progress }]}>
-        <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
-        <View style={[StyleSheet.absoluteFill, styles.dim]} />
+      <View style={StyleSheet.absoluteFill}>
+        <AnimatedBlur animatedProps={blurProps} tint="dark" style={StyleSheet.absoluteFill} />
+        <Animated.View style={[StyleSheet.absoluteFill, styles.dim, { opacity: fade }]} />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Close menu"
+          accessibilityLabel="Close chat options"
           style={StyleSheet.absoluteFill}
           onPress={onClose}
         />
-      </Animated.View>
+      </View>
 
       <Animated.View
         style={{
@@ -245,7 +278,7 @@ export function ThreadMenu({
             left,
             top: menuTop,
             width: menuW,
-            opacity: progress,
+            opacity: fade,
             transformOrigin: above ? "bottom left" : "top left",
             transform: [{ translateY: shift }, { scale: reduced ? 1 : menuScale }],
           },

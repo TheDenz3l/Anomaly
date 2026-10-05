@@ -9,6 +9,7 @@ const UA = `AtlasAssistant/1.0 (${process.env.APP_CONTACT ?? "personal use"})`;
 async function json(url: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  init.signal?.addEventListener("abort", () => controller.abort());
   try {
     const res = await fetch(url, {
       ...init,
@@ -151,6 +152,200 @@ const POI_TAGS: Record<string, string> = {
 
 export const POI_KINDS = Object.keys(POI_TAGS);
 
+const OVERPASS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
+const OVERPASS_STAGGER_MS = 4000;
+
+/**
+ * Overpass instances are often overloaded (406 without an Accept header, 429, 504, or a 200 whose
+ * remark says the query timed out). Ask the main instance first and bring in a mirror every few
+ * seconds, or at once when one fails; the first good answer wins.
+ */
+function overpass(query: string, signal?: AbortSignal): Promise<any> {
+  const init: RequestInit = {
+    signal,
+    method: "POST",
+    body: new URLSearchParams({ data: query }).toString(),
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+  };
+  return new Promise((resolve, reject) => {
+    let next = 0;
+    let failed = 0;
+    let settled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const settle = () => {
+      settled = true;
+      timers.forEach(clearTimeout);
+    };
+    const launch = () => {
+      if (settled || next >= OVERPASS.length) return;
+      const url = OVERPASS[next++];
+      json(url, init, 20_000)
+        .then((res) => {
+          const remark = typeof res?.remark === "string" ? res.remark : "";
+          if (
+            !Array.isArray(res?.elements) ||
+            (/error|timed out/i.test(remark) && !res.elements.length)
+          )
+            throw new Error(`${new URL(url).hostname}: ${remark || "no elements"}`);
+          return res;
+        })
+        .then(
+          (res) => {
+            if (settled) return;
+            settle();
+            resolve(res);
+          },
+          (err) => {
+            failed++;
+            if (settled) return;
+            if (failed >= OVERPASS.length) {
+              settle();
+              reject(err);
+            } else launch();
+          }
+        );
+      if (next < OVERPASS.length) timers.push(setTimeout(launch, OVERPASS_STAGGER_MS));
+    };
+    launch();
+  });
+}
+
+/** Search words per kind for Photon, which needs a query alongside its tag filter. */
+const POI_PHRASES: Record<string, string> = {
+  cinema: "cinema",
+  restaurant: "restaurant",
+  cafe: "cafe",
+  bar: "bar",
+  pharmacy: "pharmacy",
+  hospital: "hospital",
+  park: "park",
+  gym: "gym",
+  supermarket: "supermarket",
+  library: "library",
+  museum: "museum",
+  hotel: "hotel",
+  fuel: "fuel",
+  ev_charging: "charging station",
+  atm: "atm",
+  bakery: "bakery",
+};
+
+/** Places of one kind inside the search box, shaped like Overpass elements. Null when Nominatim can't answer. */
+function boxAround(center: { lat: number; lng: number }, radiusM: number) {
+  const dLat = radiusM / 111_000;
+  const dLng = radiusM / (111_000 * Math.max(0.2, Math.cos((center.lat * Math.PI) / 180)));
+  return {
+    s: center.lat - dLat,
+    w: center.lng - dLng,
+    n: center.lat + dLat,
+    e: center.lng + dLng,
+  };
+}
+
+const OSM_TYPES: Record<string, string> = { N: "node", W: "way", R: "relation" };
+
+/**
+ * Photon (komoot's OpenStreetMap search) answers in a second or two from shared cloud IPs, where
+ * Nominatim rate-limits and Overpass often times out. It leaves out tags like website, so the
+ * nearest results get theirs from the OSM API. Shaped like Overpass elements.
+ */
+async function photonPlaces(
+  center: { lat: number; lng: number },
+  radiusM: number,
+  kind: string,
+  name?: string,
+  signal?: AbortSignal
+): Promise<any[]> {
+  const tag = POI_TAGS[kind]?.match(/\["(\w+)"(=|~)"([^"]+)"\]/);
+  if (!tag) throw new Error(`No Photon mapping for ${kind}`);
+  const [, key, op, value] = tag;
+  const values = op === "=" ? [value] : value.replace(/^\^\(|\)\$$/g, "").split("|");
+  const box = boxAround(center, radiusM);
+  const params = new URLSearchParams({
+    q: name || POI_PHRASES[kind] || values[0],
+    lat: String(center.lat),
+    lon: String(center.lng),
+    limit: "40",
+    bbox: `${box.w},${box.s},${box.e},${box.n}`,
+  });
+  for (const v of values) params.append("osm_tag", `${key}:${v}`);
+  const res = await json(`https://photon.komoot.io/api/?${params}`, { signal }, 8000);
+  const nearest = ((res?.features ?? []) as any[])
+    .map((f) => ({
+      type: OSM_TYPES[f.properties?.osm_type] ?? "node",
+      id: f.properties?.osm_id,
+      lat: f.geometry?.coordinates?.[1],
+      lon: f.geometry?.coordinates?.[0],
+      tags: {
+        name: f.properties?.name,
+        "addr:housenumber": f.properties?.housenumber,
+        "addr:street": f.properties?.street,
+      } as Record<string, string | undefined>,
+    }))
+    .filter((el) => el.id && typeof el.lat === "number" && el.tags.name)
+    .sort(
+      (a, b) =>
+        haversineKm(center, { lat: a.lat, lng: a.lon }) -
+        haversineKm(center, { lat: b.lat, lng: b.lon })
+    )
+    .slice(0, 12);
+  await Promise.all(
+    nearest.map(async (el) => {
+      try {
+        const full = await json(
+          `https://api.openstreetmap.org/api/0.6/${el.type}/${el.id}.json`,
+          { headers: { Accept: "application/json" }, signal },
+          5000
+        );
+        el.tags = { ...el.tags, ...(full?.elements?.[0]?.tags ?? {}) };
+      } catch {
+        /* keep what Photon had */
+      }
+    })
+  );
+  return nearest;
+}
+
+/** The first answer wins: the primary source, then the fallback once the primary is slow or fails. */
+function firstAnswer<T>(
+  primary: Promise<T>,
+  fallback: () => Promise<T>,
+  afterMs: number
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let pending = 1;
+    let fellBack = false;
+    const ok = (v: T) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const fail = (err: unknown) => {
+      pending--;
+      if (settled) return;
+      if (!fellBack) startFallback();
+      else if (pending === 0) {
+        settled = true;
+        reject(err);
+      }
+    };
+    const startFallback = () => {
+      if (fellBack || settled) return;
+      fellBack = true;
+      pending++;
+      fallback().then(ok, fail);
+    };
+    const timer = setTimeout(startFallback, afterMs);
+    primary.then(ok, fail);
+  });
+}
+
 export async function findPlaces(
   cache: WebCache,
   center: { lat: number; lng: number },
@@ -166,17 +361,16 @@ export async function findPlaces(
   let elements: any[];
   if (hit) elements = JSON.parse(hit.content);
   else {
-    const q = `[out:json][timeout:20];(node${filter}${nameFilter}(around:${radius},${center.lat},${center.lng});way${filter}${nameFilter}(around:${radius},${center.lat},${center.lng}););out center tags 60;`;
-    const res = await json(
-      "https://overpass-api.de/api/interpreter",
-      {
-        method: "POST",
-        body: new URLSearchParams({ data: q }).toString(),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      },
-      25_000
-    );
-    elements = res?.elements ?? [];
+    // A bounding box is far cheaper for Overpass than "around"; results are trimmed to the radius below.
+    const box = boxAround(center, radius);
+    const q = `[out:json][timeout:15];nwr${filter}${nameFilter}(${box.s},${box.w},${box.n},${box.e});out center tags 60;`;
+    // The slower source is cancelled once one answers, so nothing runs past the action.
+    const stop = new AbortController();
+    elements = await firstAnswer(
+      overpass(q, stop.signal).then((res) => res?.elements ?? []),
+      () => photonPlaces(center, radius, kind, opts.name, stop.signal),
+      3000
+    ).finally(() => stop.abort());
     await cache.put(key, JSON.stringify(elements), "application/json", 24 * HOUR);
   }
   return (
@@ -199,7 +393,7 @@ export async function findPlaces(
           kind,
         } satisfies PoiResult;
       })
-      .filter((p): p is NonNullable<typeof p> => p !== null)
+      .filter((p): p is NonNullable<typeof p> => p !== null && p.distanceKm <= radius / 1000)
       .sort((a, b) => a.distanceKm - b.distanceKm)
       // OSM often maps one venue as both a node and a building outline.
       .filter(

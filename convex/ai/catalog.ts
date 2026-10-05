@@ -46,6 +46,11 @@ const descriptions: Record<ModelComponent, string> = {
     "Product picks with price, rating, store. Only use real products with prices you found.",
 };
 
+/** Props only the engine sets (live state of a card it's still filling); models never see or send them. */
+const ENGINE_ONLY: Partial<Record<ModelComponent, string[]>> = {
+  MovieShowtimes: ["timesLoading"],
+};
+
 const FALLBACK_HINT =
   "One or two plain sentences conveying the same information, used for voice and text-only clients.";
 
@@ -72,7 +77,11 @@ function allTools(): Map<ModelComponent, ToolDef> {
   if (cache) return cache;
   cache = new Map();
   for (const name of MODEL_COMPONENTS) {
-    const schema = (catalogSchemas[name] as unknown as z.ZodObject).extend({
+    const base = catalogSchemas[name] as unknown as z.ZodObject;
+    const hidden = Object.fromEntries(
+      (ENGINE_ONLY[name] ?? []).map((k) => [k, true] as const)
+    ) as Record<string, true>;
+    const schema = base.omit(hidden as never).extend({
       fallbackText: z.string().describe(FALLBACK_HINT),
     });
     cache.set(name, {
@@ -112,6 +121,7 @@ export function validateToolArgs(
   const obj = args && typeof args === "object" ? { ...(args as Record<string, unknown>) } : {};
   const fallbackText = typeof obj.fallbackText === "string" ? obj.fallbackText : "";
   delete obj.fallbackText;
+  for (const k of ENGINE_ONLY[name as ModelComponent] ?? []) delete obj[k];
   const res = validateComponent(name, obj);
   if (res.ok) return { ok: true, props: res.props, fallbackText: fallbackText || `${name} shown.` };
   return { ok: false, error: res.error, fallbackText };

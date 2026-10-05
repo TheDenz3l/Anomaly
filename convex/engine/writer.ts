@@ -16,6 +16,10 @@ export interface Sink {
   find(fn: (p: Part) => boolean): Part | undefined;
   /** Ends the reasoning step in progress, as adding a part does. */
   closeThinking(): void;
+  /** Loading skeleton for a card a tool is about to build; the tool's card takes its place. */
+  preload?(name: string): void;
+  /** Removes that skeleton if the tool ended without building the card. */
+  dropPreload?(name: string): void;
   remove(id: string): void;
   /** Flushes if due. Resolves true once the user stopped the reply. */
   tick(): Promise<boolean>;
@@ -112,7 +116,7 @@ export class PartWriter implements Sink {
     return part.id;
   }
 
-  /** Shows a loading skeleton for a card the model is very likely to build. */
+  /** Shows a loading skeleton for a card that's being built. */
   preload(name: string): void {
     if (this.preloaded.has(name)) return;
     const id = uid("cmp");
@@ -126,6 +130,13 @@ export class PartWriter implements Sink {
     });
     this.preloaded.set(name, id);
     this.dirty = true;
+  }
+
+  dropPreload(name: string): void {
+    const id = this.preloaded.get(name);
+    if (!id) return;
+    this.preloaded.delete(name);
+    this.remove(id);
   }
 
   /** Removes skeletons the model never filled. */

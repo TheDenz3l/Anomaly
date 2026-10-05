@@ -63,6 +63,18 @@ export type LoopResult = {
 
 const TOOL_RESULT_MAX = 12_000;
 
+/** Data tools that render a card themselves: its skeleton shows from the moment the model calls them. */
+const TOOL_CARDS: Record<string, string> = {
+  find_showtimes: "MovieShowtimes",
+  get_weather: "Weather",
+};
+
+/** Every card such a tool puts on screen; the model drawing one of these again would be a duplicate. */
+const TOOL_RENDERS: Record<string, string[]> = {
+  find_showtimes: ["MovieShowtimes", "MapCard"],
+  get_weather: ["Weather"],
+};
+
 /* ------------------------------------------------------------------ prompted-JSON fallback */
 
 type FenceEvent =
@@ -228,6 +240,8 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
   const invalidPartByName = new Map<string, string>();
   let finalNext = false;
   let nativeSearch = Boolean(o.nativeSearch);
+  /** Cards a data tool already drew this turn. */
+  const drawnByTools = new Set<string>();
 
   for (let step = 0; step < maxSteps; step++) {
     result.steps = step + 1;
@@ -335,7 +349,9 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
             const { index, isNew } = calls.push(ev);
             const call = calls.get(index);
             const comp = call?.name ? componentFromTool(call.name) : null;
-            if (comp && !partByIndex.has(index)) {
+            const card = call?.name ? TOOL_CARDS[call.name] : undefined;
+            if (card) sink.preload?.(card);
+            if (comp && !partByIndex.has(index) && !drawnByTools.has(comp)) {
               const reuse = invalidPartByName.get(comp);
               if (reuse && sink.get(reuse)) {
                 sink.update(reuse, (p) => ({
@@ -442,6 +458,8 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     if (!toolCalls.length || defs.length === 0) break;
 
     let stopAfter = false;
+    // Cards a data tool in this same step is about to draw count as drawn already.
+    const drawingNow = new Set(toolCalls.flatMap((c) => TOOL_RENDERS[c.function.name] ?? []));
     const outputs = await Promise.all(
       toolCalls.map(async (call, i): Promise<string> => {
         const name = call.function.name;
@@ -453,6 +471,11 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
           args = null;
         }
         const comp = componentFromTool(name);
+        if (comp && (drawnByTools.has(comp) || drawingNow.has(comp))) {
+          const stray = partByIndex.get(entries[i].index);
+          if (stray) sink.remove(stray);
+          return `${comp} is already on screen from a tool; don't render it again. Answer in a sentence or two.`;
+        }
         if (comp) {
           const partId =
             partByIndex.get(entries[i].index) ??
@@ -491,16 +514,20 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
             : `Invalid ${comp} props again (${v.error}). Don't retry; answer in text instead.`;
         }
         const tool = byName.get(name);
-        if (!tool) return `Unknown tool ${name}.`;
-        if (args === null)
-          return "Your arguments weren't valid JSON. Call the tool again with a JSON object.";
         try {
+          if (!tool) return `Unknown tool ${name}.`;
+          if (args === null)
+            return "Your arguments weren't valid JSON. Call the tool again with a JSON object.";
           const out = await tool.run(args, call.id);
+          for (const card of TOOL_RENDERS[name] ?? []) drawnByTools.add(card);
           if (out.final) finalNext = true;
           if (out.stop) stopAfter = true;
           return truncate(out.content, TOOL_RESULT_MAX);
         } catch (err) {
           return `Tool failed: ${(err as Error).message}`;
+        } finally {
+          const card = TOOL_CARDS[name];
+          if (card) sink.dropPreload?.(card);
         }
       })
     );

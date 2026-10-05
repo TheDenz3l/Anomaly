@@ -120,12 +120,8 @@ export function note<T>(
 ): T {
   engine.decisions.push({
     kind,
-    input:
-      typeof input === "string"
-        ? engine.safety.includes("pii_sensitive") || engine.safety.includes("credentials")
-          ? "[redacted: sensitive]"
-          : maskPii(input).slice(0, 500)
-        : input,
+    // Strings are masked when the log is written: the safety flags may still be on their way.
+    input: typeof input === "string" ? input.slice(0, 2000) : input,
     output: d.choice as unknown,
     confidence: d.confidence,
     provider: d.provider,
@@ -146,9 +142,16 @@ export async function flushRecords(engine: Engine, refId?: string): Promise<void
   const { ctx } = engine;
   const jobs: Promise<unknown>[] = [];
   if (engine.decisions.length) {
+    const sensitive =
+      engine.safety.includes("pii_sensitive") || engine.safety.includes("credentials");
     const items = engine.decisions.splice(0).map((d) => ({
       ...d,
-      input: sanitizeLog(d.input),
+      input:
+        typeof d.input === "string"
+          ? sensitive
+            ? "[redacted: sensitive]"
+            : maskPii(d.input).slice(0, 500)
+          : sanitizeLog(d.input),
       output: sanitizeLog(d.output),
     }));
     jobs.push(

@@ -23,6 +23,7 @@ import {
   readUrlTool,
   rememberTool,
   requestLocationTool,
+  showtimeData,
   showtimesTool,
   weatherTool,
   webSearchTool,
@@ -140,6 +141,17 @@ export async function runTurn(
     const dp = engine.dp;
     const text = input.text;
     const previous = [...history].reverse().find((m) => m.role === "assistant");
+    const memoryOn = settings.memoryEnabled && !thread.incognito;
+    const t0 = Date.now();
+    // Memory recall (an embedding call and a search) doesn't depend on the router's answers, so it
+    // runs alongside them instead of after.
+    const recalled =
+      memoryOn && text
+        ? recallMemories(engine, text, thread._id).catch((err) => {
+            console.warn("memory recall failed", (err as Error).message);
+            return [];
+          })
+        : Promise.resolve([]);
     // Jev router (PRD §3.3/§4): one Decisions request answers every per-turn question; heuristics
     // stand in when Jev is unavailable or below the 0.5 confidence floor.
     const td = await dp.turn({
@@ -165,10 +177,11 @@ export async function runTurn(
     }
     const act = (d: { confidence: number }) => band(d.confidence) === "act";
 
+    const decidedAt = Date.now();
     const profile = engine.profile;
     const canTools = profile.features.tools;
-    const memoryOn = settings.memoryEnabled && !thread.incognito;
-    const memories = memoryOn && text ? await recallMemories(engine, text, thread._id) : [];
+    const memories = await recalled;
+    const recalledAt = Date.now();
     const sources = new SourceCollector(opts.sources);
 
     // Search decision → auto web access: none skips web tools, quick/deep size the budget.
@@ -241,8 +254,10 @@ export async function runTurn(
             (c) => (c !== "Weather" && c !== "MovieShowtimes") || probs[c] !== undefined
           )
         : [];
-    const top = Object.entries(probs).sort((x, y) => (y[1] ?? 0) - (x[1] ?? 0))[0];
-    if (canTools && top && (top[1] ?? 0) > THRESHOLDS.act) sink.preload(top[0]);
+    // Showtimes are likely: look up movies and cinemas while the model thinks, so the tool call
+    // finds them ready.
+    if (canTools && wantsData && location && (probs.MovieShowtimes ?? 0) > THRESHOLDS.act)
+      showtimeData(env, location);
 
     const extra: string[] = [];
     if (!canTools && appWeb && searchMode !== "none" && text) {
@@ -319,6 +334,12 @@ export async function runTurn(
       sources,
       signal,
     });
+    const loopDoneAt = Date.now();
+    // Cards still filling in (showtimes read from theatre sites) finish before the reply does.
+    if (env.background?.length && !sink.stopped) await Promise.allSettled(env.background);
+    console.log(
+      `[turn] ${messageId} decide=${decidedAt - t0}ms recallWait=${recalledAt - decidedAt}ms model+tools=${loopDoneAt - recalledAt}ms cards=${Date.now() - loopDoneAt}ms steps=${result.steps} tools=${result.usedTools.join(",") || "none"}`
+    );
 
     // Memory write gate: act → auto-save, confirm → inline chip, fallback → skip.
     if (

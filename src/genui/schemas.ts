@@ -34,6 +34,8 @@ export const MovieShowtimesSchema = z.object({
       })
     )
     .min(1),
+  /** Times are still being read from theatre websites. */
+  timesLoading: z.boolean().optional(),
   attribution: z.string(),
 });
 

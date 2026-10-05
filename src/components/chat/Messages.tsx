@@ -1,5 +1,10 @@
+import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
-import { View } from "react-native";
+import { useState } from "react";
+import { Platform, Pressable, View } from "react-native";
+import { Tap } from "@/components/ui/Tap";
+import { withLinkUrls } from "@/lib/links";
+import { useApp } from "@/lib/store";
 import { Icon } from "@/components/ui/Icon";
 import { Text } from "@/components/ui/Text";
 import { ComponentRenderer } from "@/genui/ComponentRenderer";
@@ -13,6 +18,62 @@ import { ActivityRow } from "./Activity";
 import { CitationProvider } from "./Citations";
 import { LinkedText } from "./LinkedText";
 import { SearchBlock } from "./SearchBlock";
+
+const hoverable = Platform.OS === "web";
+
+/**
+ * Your message, with a copy button underneath. On web it appears while the pointer is over the
+ * message (its row keeps its space, so nothing shifts); on touch screens a tap on the bubble shows it.
+ */
+function UserBubble({ text }: { text: string }) {
+  const showToast = useApp((s) => s.showToast);
+  const [hover, setHover] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const shown = hover || open;
+
+  const copy = async () => {
+    await Clipboard.setStringAsync(withLinkUrls(text));
+    setCopied(true);
+    showToast("Copied");
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <Pressable
+      onHoverIn={() => setHover(true)}
+      onHoverOut={() => setHover(false)}
+      onPress={hoverable ? undefined : () => setOpen((o) => !o)}
+      accessible={false}
+      className="w-full items-end"
+    >
+      <View className="max-w-[82%] rounded-[22px] rounded-br-md bg-bubble px-4 py-2.5">
+        <Text selectable className="text-base leading-6 text-white">
+          <LinkedText text={text} color={colors.linkOnBubble} />
+        </Text>
+      </View>
+      {hoverable || shown ? (
+        <View className="h-8 flex-row items-center justify-end" style={{ opacity: shown ? 1 : 0 }}>
+          <Tap
+            accessibilityRole="button"
+            accessibilityLabel={copied ? "Copied" : "Copy message"}
+            onPress={() => void copy()}
+            onFocus={() => setHover(true)}
+            onBlur={() => setHover(false)}
+            hitSlop={4}
+            className="h-8 w-[30px] items-center justify-center rounded-full"
+          >
+            <Icon
+              name={copied ? "checkmark" : "copy-outline"}
+              size={17}
+              color={copied ? colors.success : colors.textMuted}
+            />
+          </Tap>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
 
 export function UserMessage({ message }: { message: Message }) {
   const event = message.parts.find((p) => p.type === "ui_event");
@@ -54,13 +115,7 @@ export function UserMessage({ message }: { message: Message }) {
           )}
         </View>
       ) : null}
-      {text && text.type === "text" ? (
-        <View className="max-w-[82%] rounded-[22px] rounded-br-md bg-bubble px-4 py-2.5">
-          <Text className="text-base leading-6 text-white">
-            <LinkedText text={text.text} color={colors.linkOnBubble} />
-          </Text>
-        </View>
-      ) : null}
+      {text && text.type === "text" ? <UserBubble text={text.text} /> : null}
     </View>
   );
 }

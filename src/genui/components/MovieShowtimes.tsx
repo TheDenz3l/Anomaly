@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ScrollView, View } from "react-native";
 import { GeneratedArt } from "@/components/ui/GeneratedArt";
 import { Icon } from "@/components/ui/Icon";
+import { ShimmerText } from "@/components/ui/ShimmerText";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { ActionButton, GenCard, Pill, type GenProps } from "@/genui/kit";
@@ -19,14 +20,22 @@ export function MovieShowtimes({ props, emit, events, busy }: GenProps<"MovieSho
   const [pick, setPick] = useState<{ theatreId: string; time: string } | null>(
     sent?.theatreId && sent.time ? { theatreId: sent.theatreId, time: sent.time } : null
   );
-  const movie = props.movies.find((m) => m.id === movieId) ?? props.movies[0];
+  const [touched, setTouched] = useState(false);
+  // Until someone picks a film, follow the first one with times as they arrive.
+  const picked = props.movies.find((m) => m.id === movieId);
+  const firstTimed = props.movies.find((m) => m.showtimes.length);
+  const movie =
+    !touched && !sent && firstTimed && !picked?.showtimes.length
+      ? firstTimed
+      : (picked ?? props.movies[0]);
   const pickedShow = pick ? movie.showtimes.find((s) => s.theatreId === pick.theatreId) : undefined;
   const locked = Boolean(sent);
+  const [broken, setBroken] = useState<string[]>([]);
 
   return (
     <GenCard
       title={props.title ?? "Showtimes"}
-      subtitle={`${props.date}, ${props.location.charAt(0).toLowerCase()}${props.location.slice(1)}`}
+      subtitle={`${props.date}, ${props.location}`}
       icon="film-outline"
       flush
       footer={
@@ -49,6 +58,7 @@ export function MovieShowtimes({ props, emit, events, busy }: GenProps<"MovieSho
               accessibilityState={{ selected: active }}
               accessibilityLabel={`${m.title}, rated ${m.rating}, score ${m.score}`}
               onPress={() => {
+                setTouched(true);
                 setMovieId(m.id);
                 if (!locked) setPick(null);
               }}
@@ -59,15 +69,8 @@ export function MovieShowtimes({ props, emit, events, busy }: GenProps<"MovieSho
                 padding: 2,
               }}
             >
-              {m.poster ? (
-                <Image
-                  source={{ uri: m.poster }}
-                  accessibilityLabel={`${m.title} poster`}
-                  cachePolicy="memory-disk"
-                  transition={150}
-                  style={{ width: 100, height: 146, borderRadius: 14 }}
-                />
-              ) : (
+              {/* Generated art sits under the poster, so a slow or failed image never leaves a gap. */}
+              <View style={{ width: 100, height: 146, borderRadius: 14, overflow: "hidden" }}>
                 <GeneratedArt
                   seed={m.id}
                   width={100}
@@ -76,7 +79,17 @@ export function MovieShowtimes({ props, emit, events, busy }: GenProps<"MovieSho
                   caption={m.genres.join(", ")}
                   radius={14}
                 />
-              )}
+                {m.poster && !broken.includes(m.id) ? (
+                  <Image
+                    source={{ uri: m.poster }}
+                    accessibilityLabel={`${m.title} poster`}
+                    cachePolicy="memory-disk"
+                    transition={150}
+                    onError={() => setBroken((b) => [...b, m.id])}
+                    style={{ position: "absolute", top: 0, left: 0, width: 100, height: 146 }}
+                  />
+                ) : null}
+              </View>
             </Tap>
           );
         })}
@@ -101,6 +114,15 @@ export function MovieShowtimes({ props, emit, events, busy }: GenProps<"MovieSho
         </View>
 
         <View className="mt-3 gap-4 pb-4">
+          {movie.showtimes.length === 0 ? (
+            props.timesLoading ? (
+              <ShimmerText text="Checking theatre websites for times" size={13} lineHeight={18} />
+            ) : (
+              <Text muted className="text-[13px] leading-[18px]">
+                No times listed online for this one. Check the theatre’s own site.
+              </Text>
+            )
+          ) : null}
           {movie.showtimes.map((s) => (
             <View key={s.theatreId} className="gap-2">
               <View className="flex-row items-center gap-2">
