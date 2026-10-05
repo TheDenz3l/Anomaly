@@ -7,13 +7,21 @@
    level up from this src/global.css file. */
 @source '../node_modules/heroui-native/lib';
 
+/* Text fields show focus with the caret; the browser's ring clashed with the rounded fields. */
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible {
+  outline: none;
+}
+
 /* Anomaly tokens (PRD §2.2). Dark only. */
 @theme {
   --color-primary: #3b82f6;
   --color-primary-soft: rgba(59, 130, 246, 0.15);
   --color-primary-strong: #60a5fa;
-  /* Your messages: deep enough for white text to read at AA contrast. */
-  --color-bubble: #1d5fd8;
+  /* Your messages: deep navy so white text stands well clear of it. */
+  --color-bubble: #03096b;
   --color-raised: #27272a;
   --color-hairline: rgba(39, 39, 42, 0.6);
   --color-ink: #fafafa;

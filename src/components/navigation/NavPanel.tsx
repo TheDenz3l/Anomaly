@@ -1,13 +1,11 @@
 import * as Haptics from "expo-haptics";
 import { router, type Href } from "expo-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ActionButton } from "@/genui/kit";
 import { Glass } from "@/components/ui/Glass";
 import { Icon, type IconName } from "@/components/ui/Icon";
-import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
 import { Display, Text } from "@/components/ui/Text";
 import { reflow } from "@/lib/motion";
@@ -15,17 +13,12 @@ import { useApp } from "@/lib/store";
 import { colors } from "@/lib/theme";
 import type { Thread } from "@/lib/types";
 import { useDrawer } from "./SideDrawer";
+import { threadIcon, ThreadMenu, type ThreadMenuTarget } from "./ThreadMenu";
 
 const destinations: { label: string; icon: IconName; href: Href }[] = [
   { label: "Artifacts", icon: "shapes-outline", href: "/artifacts" },
   { label: "Memory", icon: "sparkles-outline", href: "/memory" },
 ];
-
-function threadIcon(t: Thread): IconName {
-  if (t.mode === "research") return "telescope-outline";
-  if (t.incognito) return "eye-off-outline";
-  return "chatbubble-outline";
-}
 
 /**
  * Menu rows slide in one after another as the drawer opens. Driven by drawer progress, so a slow
@@ -62,10 +55,8 @@ export function NavPanel() {
   const streamingId = useApp((s) => s.streaming?.threadId);
   const openThread = useApp((s) => s.openThread);
   const newChat = useApp((s) => s.newChat);
-  const pinThread = useApp((s) => s.pinThread);
-  const deleteThread = useApp((s) => s.deleteThread);
-  const showToast = useApp((s) => s.showToast);
-  const [menuFor, setMenuFor] = useState<Thread | null>(null);
+  const rows = useRef(new Map<string, View>());
+  const [menu, setMenu] = useState<ThreadMenuTarget | null>(null);
 
   // Pinned chats stay at the top (latest pin first); the six most recent of the rest follow.
   const recents = useMemo(() => {
@@ -78,9 +69,14 @@ export function NavPanel() {
     return [...pinned, ...rest];
   }, [threads]);
 
+  /** Lifts the pressed row into the context menu, anchored to where it sits on screen. */
   const openMenu = (t: Thread) => {
     if (Platform.OS !== "web") void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setMenuFor(t);
+    rows.current
+      .get(t.id)
+      ?.measureInWindow((x, y, width, height) =>
+        setMenu({ thread: t, anchor: { x, y, width, height } })
+      );
   };
 
   const go = (href: Href) => {
@@ -138,36 +134,50 @@ export function NavPanel() {
           const active = t.id === activeId;
           return (
             <Stagger key={t.id} index={4 + i} reorder>
-              <Tap
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                accessibilityHint="Long press to pin or delete"
-                accessibilityActions={[{ name: "longpress", label: "Chat options" }]}
-                onAccessibilityAction={() => openMenu(t)}
-                onPress={() => {
-                  openThread(t.id);
-                  close();
+              <View
+                collapsable={false}
+                ref={(node) => {
+                  if (!node) return;
+                  rows.current.set(t.id, node);
+                  return () => {
+                    rows.current.delete(t.id);
+                  };
                 }}
-                onLongPress={() => openMenu(t)}
-                delayLongPress={380}
-                className={`flex-row items-center gap-4 rounded-2xl px-3 py-3 ${active ? "bg-white/10" : ""}`}
               >
-                <Icon
-                  name={threadIcon(t)}
-                  size={20}
-                  color={active ? colors.text : colors.textMuted}
-                />
-                <Text className="flex-1 text-[17px] leading-6" numberOfLines={1}>
-                  {t.title}
-                </Text>
-                {streamingId === t.id ? (
-                  <View accessibilityLabel="Replying" className="h-2 w-2 rounded-full bg-primary" />
-                ) : t.pinnedAt ? (
-                  <View accessibilityLabel="Pinned">
-                    <Icon name="pin" size={15} color={colors.textFaint} />
-                  </View>
-                ) : null}
-              </Tap>
+                <Tap
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  accessibilityHint="Long press to pin, rename or delete"
+                  accessibilityActions={[{ name: "longpress", label: "Chat options" }]}
+                  onAccessibilityAction={() => openMenu(t)}
+                  onPress={() => {
+                    openThread(t.id);
+                    close();
+                  }}
+                  onLongPress={() => openMenu(t)}
+                  delayLongPress={380}
+                  className={`flex-row items-center gap-4 rounded-2xl px-3 py-3 ${active ? "bg-white/10" : ""}`}
+                >
+                  <Icon
+                    name={threadIcon(t)}
+                    size={20}
+                    color={active ? colors.text : colors.textMuted}
+                  />
+                  <Text className="flex-1 text-[17px] leading-6" numberOfLines={1}>
+                    {t.title}
+                  </Text>
+                  {streamingId === t.id ? (
+                    <View
+                      accessibilityLabel="Replying"
+                      className="h-2 w-2 rounded-full bg-primary"
+                    />
+                  ) : t.pinnedAt ? (
+                    <View accessibilityLabel="Pinned">
+                      <Icon name="pin" size={15} color={colors.textFaint} />
+                    </View>
+                  ) : null}
+                </Tap>
+              </View>
             </Stagger>
           );
         })}
@@ -215,32 +225,7 @@ export function NavPanel() {
         </View>
       </Stagger>
 
-      <Sheet open={menuFor !== null} onClose={() => setMenuFor(null)} title={menuFor?.title}>
-        {menuFor ? (
-          <View className="gap-2.5">
-            <ActionButton
-              variant="secondary"
-              icon={menuFor.pinnedAt ? "pin-outline" : "pin"}
-              label={menuFor.pinnedAt ? "Unpin" : "Pin to top"}
-              onPress={() => {
-                pinThread(menuFor.id, !menuFor.pinnedAt);
-                showToast(menuFor.pinnedAt ? "Unpinned" : "Pinned");
-                setMenuFor(null);
-              }}
-            />
-            <ActionButton
-              variant="danger-soft"
-              icon="trash-outline"
-              label="Delete chat"
-              onPress={() => {
-                deleteThread(menuFor.id);
-                showToast("Chat deleted");
-                setMenuFor(null);
-              }}
-            />
-          </View>
-        ) : null}
-      </Sheet>
+      <ThreadMenu target={menu} onClose={() => setMenu(null)} />
     </View>
   );
 }

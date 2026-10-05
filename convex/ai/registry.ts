@@ -237,6 +237,19 @@ function anthropicProfile(id: string): CapabilityProfile {
   });
 }
 
+/**
+ * Families that reason, recognised by model id on hosts the registry doesn't know (gateways,
+ * resellers, self-hosted proxies). OpenAI-compatible gateways translate reasoning_effort into each
+ * vendor's own control, so that's the starting guess; the background probe confirms or corrects
+ * it the first time the model is picked.
+ */
+const THINKS =
+  /claude-|\bo[134](-|$)|gpt-[5-9]|grok-(3-mini|[4-9])|gemini-(2\.5|[3-9])|deepseek-(v3\.[1-9]|v[4-9])|kimi-k(2-thinking|[3-9])|glm-(4\.[5-9]|[5-9])|mimo|minimax-m|seed-?(1\.[6-9]|[2-9])|ernie-x|hunyuan-t|step-?3/;
+const NO_THINKING =
+  /claude-(instant|2|3-(haiku|sonnet|opus)|3[-.]5)|gpt-[5-9](\.\d)?-chat|-instruct\b|non-?reasoning|nothink/;
+const SEES =
+  /vision|llava|-vl\b|vl-|gemma-?3|pixtral|llama-?3\.2-?\d+b-?vision|llama-4|minicpm-v|moondream|claude-(?!instant|2)|gpt-4o|gpt-4\.1|gpt-[5-9]|gemini|grok-[4-9]/;
+
 function genericByName(id: string, local: boolean): CapabilityProfile {
   const m = id.toLowerCase();
   let p = merge(base(), { confidence: local ? 0.5 : 0.4 });
@@ -254,14 +267,18 @@ function genericByName(id: string, local: boolean): CapabilityProfile {
       features: { reasoningText: true },
       confidence: 0.6,
     });
+  } else if (THINKS.test(m) && !NO_THINKING.test(m)) {
+    p = merge(p, {
+      reasoning: {
+        style: "effort",
+        field: "reasoning_effort",
+        levels: EFFORT_3,
+        defaultLevel: "medium",
+      },
+      confidence: 0.55,
+    });
   }
-  if (
-    /vision|llava|-vl\b|vl-|gemma-?3|pixtral|llama-?3\.2-?\d+b-?vision|llama-4|minicpm-v|moondream/.test(
-      m
-    )
-  ) {
-    p = merge(p, { features: { vision: true } });
-  }
+  if (SEES.test(m)) p = merge(p, { features: { vision: true } });
   return p;
 }
 

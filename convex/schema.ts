@@ -104,6 +104,8 @@ export default defineSchema({
     version: v.number(),
     successStreak: v.number(),
     noopStrikes: v.number(),
+    /** The user set the reasoning control by hand. Feature toggles alone leave reasoning to detection. */
+    manualReasoning: v.optional(v.boolean()),
   })
     .index("by_user_model", ["userId", "providerId", "modelId"])
     .index("by_user_provider", ["userId", "providerId"]),

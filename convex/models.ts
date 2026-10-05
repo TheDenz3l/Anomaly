@@ -116,6 +116,7 @@ export const setOverride = mutation({
       source: "manual" as const,
       lastVerified: Date.now(),
       version: base.version + 1,
+      manualReasoning: reasoning !== undefined || prior?.manualReasoning === true,
     };
     if (prior) await ctx.db.patch(prior._id, next);
     else
@@ -150,6 +151,7 @@ export const clearOverride = mutation({
       version: prior.version + 1,
       successStreak: 0,
       noopStrikes: 0,
+      manualReasoning: undefined,
     });
   },
 });
@@ -307,7 +309,21 @@ export const applyProbeResult = internalMutation({
   },
   handler: async (ctx, a) => {
     const prof = await profileDoc(ctx, a.userId, a.providerId, a.modelId);
-    if (prof?.source === "manual") return;
+    if (prof?.source === "manual") {
+      // Hand-set features stay; reasoning is still detected unless it was set by hand too.
+      if (!prof.manualReasoning && a.reasoning) {
+        await ctx.db.patch(prof._id, {
+          reasoning: a.reasoning,
+          params: {
+            ...(prof.params ?? {}),
+            ...(a.maxTokensField ? { maxTokensField: a.maxTokensField } : {}),
+          },
+          lastVerified: Date.now(),
+          version: prof.version + 1,
+        });
+      }
+      return;
+    }
     const provider = await ctx.db
       .query("providers")
       .withIndex("by_user_provider", (q) => q.eq("userId", a.userId).eq("providerId", a.providerId))
@@ -337,4 +353,68 @@ export const applyProbeResult = internalMutation({
         noopStrikes: 0,
       });
   },
+});
+
+/**
+ * Re-derives every registry-sourced profile from the current registry rules. Those rows hold no
+ * evidence, only the registry's guess, so run this after the rules improve.
+ */
+/**
+ * Re-derives profiles that hold no evidence from the current registry rules: registry rows, and
+ * probe or feature-only manual rows whose model was never actually probed (a run the spend cap
+ * skipped used to record "no reasoning"). Repaired models get checked again on their next pick.
+ */
+export const refreshRegistryProfiles = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const baseUrls = new Map<string, string>();
+    let updated = 0;
+    for await (const prof of ctx.db.query("capabilityProfiles")) {
+      const manualFeatures = prof.source === "manual" && !prof.manualReasoning;
+      if (prof.source !== "registry" && prof.source !== "probe" && !manualFeatures) continue;
+      const logs = await ctx.db
+        .query("probeLogs")
+        .withIndex("by_user_model", (q) =>
+          q.eq("userId", prof.userId).eq("providerId", prof.providerId).eq("modelId", prof.modelId)
+        )
+        .collect();
+      if (prof.source !== "registry" && logs.some((l) => l.probe !== "auto")) continue;
+      const key = `${prof.userId}:${prof.providerId}`;
+      let baseUrl = baseUrls.get(key);
+      if (baseUrl === undefined) {
+        const provider = await ctx.db
+          .query("providers")
+          .withIndex("by_user_provider", (q) =>
+            q.eq("userId", prof.userId).eq("providerId", prof.providerId)
+          )
+          .first();
+        baseUrl = provider?.baseUrl ?? "";
+        baseUrls.set(key, baseUrl);
+      }
+      if (!baseUrl) continue;
+      const fresh = registryProfile(baseUrl, prof.modelId);
+      if (manualFeatures) {
+        await ctx.db.patch(prof._id, { reasoning: fresh.reasoning, version: prof.version + 1 });
+      } else {
+        await ctx.db.patch(prof._id, {
+          reasoning: fresh.reasoning,
+          features: fresh.features,
+          params: fresh.params,
+          confidence: fresh.confidence,
+          source: "registry",
+          lastVerified: Date.now(),
+          version: prof.version + 1,
+        });
+      }
+      if (prof.source !== "registry") for (const l of logs) await ctx.db.delete(l._id);
+      updated++;
+    }
+    return updated;
+  },
+});
+
+export const reasoningLocked = internalQuery({
+  args: { userId: v.id("users"), providerId: v.string(), modelId: v.string() },
+  handler: async (ctx, { userId, providerId, modelId }) =>
+    (await profileDoc(ctx, userId, providerId, modelId))?.manualReasoning === true,
 });

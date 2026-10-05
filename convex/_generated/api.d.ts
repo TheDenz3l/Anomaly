@@ -44,6 +44,7 @@ import type * as lib_settings from "../lib/settings.js";
 import type * as lib_util from "../lib/util.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_vectors from "../lib/vectors.js";
+import type * as links from "../links.js";
 import type * as memories from "../memories.js";
 import type * as messages from "../messages.js";
 import type * as models from "../models.js";
@@ -108,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   "lib/util": typeof lib_util;
   "lib/validators": typeof lib_validators;
   "lib/vectors": typeof lib_vectors;
+  links: typeof links;
   memories: typeof memories;
   messages: typeof messages;
   models: typeof models;

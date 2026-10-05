@@ -1,5 +1,6 @@
 import { Linking, View } from "react-native";
-import { domainOf, Favicon } from "@/components/ui/Favicon";
+import { Favicon } from "@/components/ui/Favicon";
+import { domainOf } from "@/lib/links";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import type { Source } from "@/lib/types";

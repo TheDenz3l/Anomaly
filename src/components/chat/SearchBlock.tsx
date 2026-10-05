@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Linking, View } from "react-native";
 import Animated from "react-native-reanimated";
-import { domainOf, Favicon } from "@/components/ui/Favicon";
+import { Favicon } from "@/components/ui/Favicon";
+import { domainOf } from "@/lib/links";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";

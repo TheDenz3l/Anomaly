@@ -11,6 +11,7 @@ import { SourcesBar } from "./SourcesBar";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ActivityRow } from "./Activity";
 import { CitationProvider } from "./Citations";
+import { LinkedText } from "./LinkedText";
 import { SearchBlock } from "./SearchBlock";
 
 export function UserMessage({ message }: { message: Message }) {
@@ -55,7 +56,9 @@ export function UserMessage({ message }: { message: Message }) {
       ) : null}
       {text && text.type === "text" ? (
         <View className="max-w-[82%] rounded-[22px] rounded-br-md bg-bubble px-4 py-2.5">
-          <Text className="text-base leading-6 text-white">{text.text}</Text>
+          <Text className="text-base leading-6 text-white">
+            <LinkedText text={text.text} color={colors.linkOnBubble} />
+          </Text>
         </View>
       ) : null}
     </View>

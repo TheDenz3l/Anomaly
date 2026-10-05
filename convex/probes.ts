@@ -5,10 +5,12 @@ import {
   action,
   internalAction,
   internalMutation,
+  internalQuery,
   mutation,
   query,
   type ActionCtx,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { decisionProvider, heuristicDecisions, type ProbeName } from "./ai/decisions";
 import { complete, LlmError, type Completion, type Endpoint } from "./ai/openai";
@@ -26,6 +28,7 @@ import type { CapabilityProfile } from "./lib/validators";
 const ALL: ProbeName[] = [
   "basic",
   "effort_flat",
+  "reasoning_check",
   "effort_nested",
   "budget",
   "toggle",
@@ -35,6 +38,7 @@ const ALL: ProbeName[] = [
   "web_search",
 ];
 const PROMPT = "Reply with the single word OK.";
+const MATH = [{ role: "user", content: "What is 17*23? Answer with just the number." }];
 const PIXEL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const LEVEL_WORDS = ["none", "minimal", "low", "medium", "high", "xhigh", "default"];
@@ -43,6 +47,7 @@ const FALLBACK_PRICE = { prompt: 5e-6, completion: 15e-6 };
 const EST_TOKENS: Record<ProbeName, [number, number]> = {
   basic: [20, 8],
   effort_flat: [40, 32],
+  reasoning_check: [30, 400],
   effort_nested: [20, 16],
   budget: [20, 1100],
   toggle: [20, 16],
@@ -55,6 +60,25 @@ const EST_TOKENS: Record<ProbeName, [number, number]> = {
 function costOf(price: { prompt: number; completion: number }, p: number, c: number) {
   return p * price.prompt + c * price.completion;
 }
+
+type ModelKey = { userId: Id<"users">; providerId: string; modelId: string };
+
+/** What probing this one model has cost so far; the spend cap in Settings is per model. */
+async function spentOn(ctx: QueryCtx, key: ModelKey): Promise<number> {
+  let total = 0;
+  for await (const row of ctx.db
+    .query("probeLogs")
+    .withIndex("by_user_model", (q) =>
+      q.eq("userId", key.userId).eq("providerId", key.providerId).eq("modelId", key.modelId)
+    ))
+    total += row.costUsd;
+  return total;
+}
+
+export const modelSpend = internalQuery({
+  args: { userId: v.id("users"), providerId: v.string(), modelId: v.string() },
+  handler: async (ctx, key) => spentOn(ctx, key),
+});
 
 export const plan = query({
   args: { ref: v.string() },
@@ -85,12 +109,13 @@ export const plan = query({
       .query("settings")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
+    const spentUsd = await spentOn(ctx, { userId, ...parsed });
     return {
       probes: triage.choice,
       skipped: available.filter((p) => !triage.choice.includes(p)),
       estimatedUsd: Math.round(estimatedUsd * 10000) / 10000,
       priceKnown: Boolean(provider.models.find((m) => m.id === parsed.modelId)?.pricing),
-      spentUsd: settings?.probeSpentUsd ?? 0,
+      spentUsd,
       capUsd: settings?.probeSpendCapUsd ?? 0.05,
       manual: profile.source === "manual",
     };
@@ -137,6 +162,11 @@ export const log = internalMutation({
 });
 
 type ProbeOutcome = { ok: boolean; status: number; error?: string; res?: Completion };
+
+/** The reply carried reasoning text or a non-zero reasoning-token count. */
+function thinks(r: ProbeOutcome): boolean {
+  return Boolean(r.ok && (r.res?.reasoning || (r.res?.usage?.reasoningTokens ?? 0) > 0));
+}
 
 async function send(
   ctx: ActionCtx,
@@ -225,11 +255,21 @@ export const run = action({
     runProbes(ctx, await requireUser(ctx), ref, probes),
 });
 
+const RETRY_AFTER_MS = 3600_000;
+
 /** Reasoning-control probes only: a few tiny requests, enough to fill in the Thinking levels. */
-const AUTO: ProbeName[] = ["basic", "effort_flat", "effort_nested", "budget", "toggle"];
+const AUTO: ProbeName[] = [
+  "basic",
+  "effort_flat",
+  "reasoning_check",
+  "effort_nested",
+  "budget",
+  "toggle",
+];
 
 /** A registry guess that leaves the Thinking control empty or uncertain gets checked once, unasked. */
 function needsCheck(p: Pick<CapabilityProfile, "source" | "confidence" | "reasoning">): boolean {
+  if (p.source === "manual") return true;
   return p.source === "registry" && (p.reasoning.style === "none" || p.confidence < 0.75);
 }
 
@@ -255,9 +295,14 @@ export async function scheduleAutoProbe(
   const byModel = (q: any) =>
     q.eq("userId", userId).eq("providerId", parsed.providerId).eq("modelId", parsed.modelId);
   const prof = await ctx.db.query("capabilityProfiles").withIndex("by_user_model", byModel).first();
+  if (prof?.manualReasoning) return false;
   if (!needsCheck(prof ?? registryProfile(provider.baseUrl, parsed.modelId))) return false;
-  const tried = await ctx.db.query("probeLogs").withIndex("by_user_model", byModel).first();
-  if (tried) return false;
+  // Once real requests went out, the answer is in; a bare marker means a run is in flight, or one
+  // that sent nothing (spend cap), which may try again after a while.
+  const logs = await ctx.db.query("probeLogs").withIndex("by_user_model", byModel).collect();
+  const probed = logs.some((l) => l.probe !== "auto");
+  const pending = logs.some((l) => l.probe === "auto" && Date.now() - l.ts < RETRY_AFTER_MS);
+  if (probed || pending) return false;
   await ctx.db.insert("probeLogs", {
     userId,
     ...parsed,
@@ -300,7 +345,10 @@ async function runProbes(
   if (!ep) throw new ConvexError("Provider not found.");
   const current = await ctx.runQuery(internal.models.profileInternal, { userId, ...parsed });
   if (!current) throw new ConvexError("Model not found.");
-  if (current.source === "manual")
+  if (
+    current.source === "manual" &&
+    (await ctx.runQuery(internal.models.reasoningLocked, { userId, ...parsed }))
+  )
     throw new ConvexError("This model has a manual override. Clear it before probing.");
   const settings = await ctx.runQuery(internal.settings.forUser, { userId });
   const modelCtx = await ctx.runQuery(internal.engine.data.modelContext, { userId, ref });
@@ -322,7 +370,7 @@ async function runProbes(
   const ran: string[] = [];
   const skipped: string[] = [];
   const findings: string[] = [];
-  let spent = settings.probeSpentUsd;
+  let spent = await ctx.runQuery(internal.probes.modelSpend, { userId, ...parsed });
 
   const reasoning: CapabilityProfile["reasoning"] = { ...current.reasoning };
   const features = { ...current.features };
@@ -354,35 +402,61 @@ async function runProbes(
     return r;
   };
 
-  if (wanted.includes("basic") && can("basic")) {
-    const r = await go("basic", {});
-    if (!r.ok) {
+  // The plain request and both effort requests go out together: one round trip instead of three.
+  const runBasic = wanted.includes("basic") && can("basic");
+  const runEffort = wanted.includes("effort_flat") && can("effort_flat");
+  const [basic, low, bad] = await Promise.all([
+    runBasic ? go("basic", {}) : null,
+    runEffort ? go("effort_flat", { reasoning_effort: "low" }) : null,
+    runEffort ? go("effort_flat", { reasoning_effort: "x-invalid-level" }) : null,
+  ]);
+  if (basic) {
+    if (!basic.ok) {
       const msg =
-        r.status === 401 || r.status === 403
-          ? `The provider rejected the API key (${r.status}). Open this provider and paste the key again.`
-          : r.status === 404
+        basic.status === 401 || basic.status === 403
+          ? `The provider rejected the API key (${basic.status}). Open this provider and paste the key again.`
+          : basic.status === 404
             ? "The provider doesn't recognise this model or path. Check the base URL (it usually ends in /v1)."
-            : `The test request failed (${r.status || "network"}). ${(r.error ?? "").slice(0, 160)}`;
+            : `The test request failed (${basic.status || "network"}). ${(basic.error ?? "").slice(0, 160)}`;
       throw new ConvexError(msg);
     }
     features.streaming = true;
   }
-  if (wanted.includes("effort_flat") && can("effort_flat")) {
-    const ok = await go("effort_flat", { reasoning_effort: "low" });
-    if (ok.ok) {
-      effortField = "reasoning_effort";
-      const bad = await go("effort_flat", { reasoning_effort: "x-invalid-level" });
-      const text = (bad.error ?? "").toLowerCase();
-      levels = LEVEL_WORDS.filter((w) => new RegExp(`["'\\s\\[]${w}["'\\],]`).test(text));
-      if (bad.ok) findings.push("reasoning_effort accepted any value (probably ignored).");
+  let budgetField: string | null = null;
+  let unconfirmed = false;
+  if (low?.ok) {
+    effortField = "reasoning_effort";
+    const text = (bad?.error ?? "").toLowerCase();
+    levels = LEVEL_WORDS.filter((w) => new RegExp(`["'\\s\\[]${w}["'\\],]`).test(text));
+    // A made-up level got through too, so the field may be ignored: ask for real thinking and
+    // look for it, then try Anthropic-style thinking before settling.
+    if (thinks(low)) findings.push("Reasoning confirmed.");
+    else if (bad?.ok && wanted.includes("reasoning_check") && can("reasoning_check")) {
+      const check = await go("reasoning_check", {
+        messages: MATH,
+        max_tokens: 400,
+        reasoning_effort: "high",
+      });
+      if (thinks(check)) findings.push("Reasoning confirmed at high effort.");
+      else if (can("budget")) {
+        const alt = await go("budget", {
+          messages: MATH,
+          thinking: { type: "enabled", budget_tokens: 1024 },
+          max_tokens: 1400,
+        });
+        if (thinks(alt)) {
+          effortField = null;
+          budgetField = "thinking.budget_tokens";
+        } else unconfirmed = true;
+      } else unconfirmed = true;
     }
+    if (unconfirmed) findings.push("reasoning_effort is accepted, but no reasoning showed up yet.");
   }
-  if (!effortField && wanted.includes("effort_nested") && can("effort_nested")) {
+  if (!effortField && !budgetField && wanted.includes("effort_nested") && can("effort_nested")) {
     const r = await go("effort_nested", { reasoning: { effort: "low" } });
     if (r.ok) effortField = "reasoning.effort";
   }
-  let budgetField: string | null = null;
-  if (!effortField && wanted.includes("budget") && can("budget")) {
+  if (!effortField && !budgetField && wanted.includes("budget") && can("budget")) {
     const a = await go("budget", { reasoning: { max_tokens: 1024 }, max_tokens: 1100 });
     if (a.ok) budgetField = "reasoning.max_tokens";
     else {
@@ -511,6 +585,8 @@ async function runProbes(
     features.webSearch = r.ok;
   }
   features.reasoningText = features.reasoningText || sawReasoningText;
+  // Nothing went out (spend cap): there's no evidence to record.
+  if (!ran.length) return { ran, skipped, findings, profile: current };
 
   await ctx.runMutation(internal.models.applyProbeResult, {
     userId,
@@ -518,7 +594,7 @@ async function runProbes(
     reasoning,
     features,
     maxTokensField: maxField.value,
-    confidence: 0.9,
+    confidence: unconfirmed ? 0.65 : 0.9,
   });
   const profile = await ctx.runQuery(internal.models.profileInternal, { userId, ...parsed });
   return { ran, skipped, findings, profile };

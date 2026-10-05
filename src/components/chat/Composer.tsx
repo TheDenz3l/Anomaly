@@ -18,7 +18,8 @@ import { fadeIn, fadeOut, popIn, popOut, reflow } from "@/lib/motion";
 import { useApp, useComposerTarget, type Attachment } from "@/lib/store";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import { modelRef } from "@/lib/models";
-import { colors, fonts } from "@/lib/theme";
+import { colors } from "@/lib/theme";
+import { LinkInput } from "./LinkInput";
 import { ModelPicker } from "./ModelPicker";
 import { levelLabel, ThinkingPicker } from "./ThinkingPicker";
 
@@ -133,7 +134,7 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
   const thinkingSupported = model.profile.reasoning.style !== "none";
   const visionWarning = attachments.length > 0 && !model.profile.features.vision;
   const ref = model.providerId ? modelRef(model) : "";
-  const unverified = model.profile.source === "registry";
+  const unverified = model.profile.source === "registry" || model.profile.source === "manual";
 
   // A model only known from the registry gets its reasoning controls checked in the background,
   // so the Thinking levels appear on their own instead of after a manual probe.
@@ -223,11 +224,10 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
               </Text>
             </View>
           ) : (
-            <TextInput
+            <LinkInput
               ref={input}
               value={text}
-              onChangeText={setText}
-              multiline
+              onChangeValue={setText}
               placeholder={researchArmed ? "What should I research?" : "Ask anything"}
               placeholderTextColor={colors.textFaint}
               accessibilityLabel="Message"
@@ -238,21 +238,6 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
                   submit();
                 }
               }}
-              style={
-                {
-                  fontFamily: fonts.body,
-                  fontSize: 16,
-                  lineHeight: 22,
-                  color: colors.text,
-                  minHeight: 44,
-                  maxHeight: 140,
-                  paddingHorizontal: 12,
-                  paddingTop: 11,
-                  paddingBottom: 9,
-                  outlineStyle: "none",
-                  resize: "none",
-                } as object
-              }
             />
           )}
 

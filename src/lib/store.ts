@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import { create } from "zustand";
 import { collectArtifacts } from "@/lib/artifacts";
 import { api, convex, errorText, type Id } from "@/lib/convex";
+import { withoutLinkMarkup } from "@/lib/links";
 import { modelRef, placeholderModel } from "@/lib/models";
 import type {
   CapabilityProfile,
@@ -130,7 +131,7 @@ const isPending = (id: string | null) => Boolean(id?.startsWith("pending_"));
 
 /** Same rule as the server's first title, so a new chat's header doesn't change when the real thread arrives. */
 function titleFrom(text: string): string {
-  const clean = text
+  const clean = withoutLinkMarkup(text)
     .replace(/^\/\w+\s*/, "")
     .replace(/[?!.]+$/, "")
     .replace(/\s+/g, " ")
@@ -158,20 +159,40 @@ const SETTINGS_KEYS = [
 /** Threads whose full message list is loaded (vs. the artifact-only subset). */
 const fullThreads = new Set<string>();
 
+/** How long the socket may stay down before a call is reported as unreachable. */
+const OFFLINE_GRACE_MS = 6_000;
+
 /**
  * A call queued on a dead connection never settles by itself, which left buttons spinning forever.
- * Give up with a clear message instead (the server may still finish it later, which is harmless here).
+ * Give up with a clear message instead: after `ms`, or sooner once the socket has been down for a
+ * few seconds (the server may still finish it later, which is harmless here).
  */
 function within<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(
-        () => reject(new Error("Can't reach the server. Check your connection and try again.")),
-        ms
-      )
-    ),
-  ]);
+  return new Promise<T>((resolve, reject) => {
+    const started = Date.now();
+    let offlineSince: number | null = null;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      offlineSince = convex.connectionState().isWebSocketConnected ? null : (offlineSince ?? now);
+      if (
+        now - started >= ms ||
+        (offlineSince !== null && now - offlineSince >= OFFLINE_GRACE_MS)
+      ) {
+        clearInterval(timer);
+        reject(new Error("Can't reach the server. Check your connection and try again."));
+      }
+    }, 1000);
+    p.then(
+      (v) => {
+        clearInterval(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearInterval(timer);
+        reject(err);
+      }
+    );
+  });
 }
 /** Model refs already sent for a background capability check this session. */
 const ensured = new Set<string>();
@@ -596,7 +617,7 @@ export const useApp = create<AppStore>()((set, get) => {
           45_000
         );
         if (res.status === "connected") get().showToast(`Connected: ${res.models} models`);
-        else get().showToast(res.error ?? "Couldn't connect to the provider.", "danger");
+        else get().showToast(`Saved. ${res.error ?? "Couldn't list its models."}`, "danger");
         return res.status === "connected";
       } catch (e) {
         toastError(e);

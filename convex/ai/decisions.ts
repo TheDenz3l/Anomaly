@@ -45,6 +45,7 @@ export type MemoryGate = {
 export type ProbeName =
   | "basic"
   | "effort_flat"
+  | "reasoning_check"
   | "effort_nested"
   | "budget"
   | "toggle"
@@ -375,6 +376,7 @@ export const heuristicDecisions: DecisionProvider = {
 
   title(text) {
     const clean = text
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1")
       .replace(/^\/\w+\s*/, "")
       .replace(/[?!.]+$/, "")
       .replace(/\s+/g, " ")
@@ -693,6 +695,8 @@ const jevDecisions: DecisionProvider = {
     const what: Record<ProbeName, string> = {
       basic: "a plain request works at all",
       effort_flat: "the top-level reasoning_effort parameter is accepted, and which levels",
+      reasoning_check:
+        "the model actually reasons when asked, for an endpoint that accepts any effort value",
       effort_nested: "a nested reasoning.effort parameter is accepted",
       budget:
         "a reasoning token budget (reasoning.max_tokens or thinking.budget_tokens) is accepted",

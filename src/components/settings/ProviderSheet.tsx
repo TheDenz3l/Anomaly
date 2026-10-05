@@ -277,8 +277,6 @@ export function ProviderSheet({
     const ok = await saveProvider(input(), apiKey || undefined);
     setSaving(false);
     if (ok) onClose();
-    else if (!existing)
-      showToast("Saved, but the endpoint didn't answer. Check the URL and key.", "danger");
   };
 
   return (
