@@ -1,0 +1,187 @@
+import { router, type Href } from "expo-router";
+import { useMemo, type ReactNode } from "react";
+import { ScrollView, View } from "react-native";
+import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Glass } from "@/components/ui/Glass";
+import { Icon, type IconName } from "@/components/ui/Icon";
+import { Tap } from "@/components/ui/Tap";
+import { Display, Text } from "@/components/ui/Text";
+import { reflow } from "@/lib/motion";
+import { useApp } from "@/lib/store";
+import { colors } from "@/lib/theme";
+import type { Thread } from "@/lib/types";
+import { useDrawer } from "./SideDrawer";
+
+const destinations: { label: string; icon: IconName; href: Href }[] = [
+  { label: "History", icon: "time-outline", href: "/history" },
+  { label: "Memory", icon: "sparkles-outline", href: "/memory" },
+];
+
+function threadIcon(t: Thread): IconName {
+  if (t.mode === "research") return "telescope-outline";
+  if (t.incognito) return "eye-off-outline";
+  return "chatbubble-outline";
+}
+
+/**
+ * Menu rows slide in one after another as the drawer opens. Driven by drawer progress, so a slow
+ * drag reveals them slowly and a fast flick snaps them all in.
+ */
+function Stagger({ index, children, reorder }: { index: number; children: ReactNode; reorder?: boolean }) {
+  const { progress } = useDrawer();
+  const style = useAnimatedStyle(() => {
+    const start = 0.12 + index * 0.03;
+    const p = interpolate(progress.get(), [start, start + 0.42], [0, 1], "clamp");
+    return { opacity: p, transform: [{ translateX: (1 - p) * -22 }] };
+  });
+  return (
+    <Animated.View style={style} layout={reorder ? reflow : undefined}>
+      {children}
+    </Animated.View>
+  );
+}
+
+/** Drawer contents: destinations, recent chats, then settings and a new-chat button pinned to the bottom. */
+export function NavPanel() {
+  const insets = useSafeAreaInsets();
+  const { close } = useDrawer();
+  const threads = useApp((s) => s.threads);
+  const activeId = useApp((s) => s.activeThreadId);
+  const streamingId = useApp((s) => s.streaming?.threadId);
+  const openThread = useApp((s) => s.openThread);
+  const newChat = useApp((s) => s.newChat);
+
+  const recents = useMemo(
+    () =>
+      Object.values(threads)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 6),
+    [threads]
+  );
+
+  const go = (href: Href) => {
+    close();
+    router.push(href);
+  };
+
+  return (
+    <View className="flex-1" style={{ paddingTop: insets.top + 10 }}>
+      <Stagger index={0}>
+      <View className="flex-row items-center justify-between pl-5 pr-4">
+        <Display className="text-[26px] leading-8">Atlas</Display>
+        <Tap
+          accessibilityRole="button"
+          accessibilityLabel="Search chats"
+          onPress={() => go("/history?search=1")}
+        >
+          <Glass radius={24} interactive>
+            <View className="h-12 w-12 items-center justify-center">
+              <Icon name="search" size={21} />
+            </View>
+          </Glass>
+        </Tap>
+      </View>
+      </Stagger>
+
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{ paddingHorizontal: 8, paddingTop: 20, paddingBottom: 16 }}
+      >
+        {destinations.map((d, i) => (
+          <Stagger key={d.label} index={i + 1}>
+          <Tap
+            accessibilityRole="link"
+            onPress={() => go(d.href)}
+            className="flex-row items-center gap-4 rounded-2xl px-3 py-3"
+          >
+            <Icon name={d.icon} size={22} color={colors.text} />
+            <Text className="text-[18px] leading-6">{d.label}</Text>
+          </Tap>
+          </Stagger>
+        ))}
+
+        <Stagger index={3}>
+          <Text muted weight="medium" className="mb-1.5 mt-6 px-3 text-[15px]">
+            Recents
+          </Text>
+        </Stagger>
+        {recents.length === 0 ? (
+          <Text className="px-3 py-2 text-[15px] text-ink-faint">
+            Your chats will show up here.
+          </Text>
+        ) : null}
+        {recents.map((t, i) => {
+          const active = t.id === activeId;
+          return (
+            <Stagger key={t.id} index={4 + i} reorder>
+            <Tap
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              onPress={() => {
+                openThread(t.id);
+                close();
+              }}
+              className={`flex-row items-center gap-4 rounded-2xl px-3 py-3 ${active ? "bg-white/10" : ""}`}
+            >
+              <Icon
+                name={threadIcon(t)}
+                size={20}
+                color={active ? colors.text : colors.textMuted}
+              />
+              <Text className="flex-1 text-[17px] leading-6" numberOfLines={1}>
+                {t.title}
+              </Text>
+              {streamingId === t.id ? (
+                <View accessibilityLabel="Replying" className="h-2 w-2 rounded-full bg-primary" />
+              ) : null}
+            </Tap>
+            </Stagger>
+          );
+        })}
+        <Stagger index={4 + recents.length}>
+        <Tap
+          accessibilityRole="link"
+          onPress={() => go("/history")}
+          className="flex-row items-center gap-1 self-start rounded-2xl px-3 py-3"
+        >
+          <Text muted className="text-[16px]">
+            View all
+          </Text>
+          <Icon name="chevron-forward" size={16} color={colors.textMuted} />
+        </Tap>
+        </Stagger>
+      </ScrollView>
+
+      <Stagger index={12}>
+      <View
+        className="flex-row items-center justify-between px-4"
+        style={{ paddingBottom: Math.max(insets.bottom, 12) + 4 }}
+      >
+        <Tap
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          onPress={() => go("/settings")}
+          className="h-[52px] w-[52px] items-center justify-center rounded-full bg-raised"
+        >
+          <Icon name="settings-outline" size={22} />
+        </Tap>
+        <Tap
+          haptic
+          accessibilityRole="button"
+          onPress={() => {
+            newChat();
+            close();
+          }}
+          className="h-[52px] flex-row items-center gap-2 rounded-full bg-ink pl-5 pr-6"
+        >
+          <Icon name="add" size={22} color="#000" />
+          <Text weight="bold" className="text-[17px] text-black">
+            New chat
+          </Text>
+        </Tap>
+      </View>
+      </Stagger>
+    </View>
+  );
+}

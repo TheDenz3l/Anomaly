@@ -1,0 +1,17 @@
+{
+  "id": "job-2",
+  "command": "sleep 1; lsof -ti :8081 | xargs kill 2>/dev/null; sleep 1; CI=1 npx expo start --web --port 8081 --clear",
+  "cwd": "/Users/bmar/Desktop/Atlas",
+  "pid": 23239,
+  "status": "stopped",
+  "origin": "background",
+  "startedAt": 1791156012712,
+  "logPath": "/Users/bmar/Desktop/Atlas/.empryo/jobs/job-2.log",
+  "bytes": 2098,
+  "tabId": "main",
+  "reported": true,
+  "logTruncated": false,
+  "finishedAt": 1791156165540,
+  "exitCode": 143,
+  "hostPid": 18812
+}

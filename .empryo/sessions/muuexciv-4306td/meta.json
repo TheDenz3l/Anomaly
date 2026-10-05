@@ -1,0 +1,90 @@
+{
+  "id": "muuexciv-4306td",
+  "title": "I need you to look the @PRD_Generative_UI_Chatbot.md and ...",
+  "cwd": "/Users/bmar/Desktop/Atlas",
+  "startedAt": 1791154135981,
+  "updatedAt": 1791173476810,
+  "activeTabId": "main",
+  "forgeMode": "auto",
+  "tabs": [
+    {
+      "id": "main",
+      "label": "Chatbot frontend build",
+      "activeModel": "subscriptions/claude-opus-5-5",
+      "sessionId": "muuexciv-4306td",
+      "planMode": false,
+      "planRequest": null,
+      "coAuthorCommits": false,
+      "forgeMode": "auto",
+      "tokenUsage": {
+        "prompt": 114572090,
+        "completion": 324936,
+        "total": 114897026,
+        "cacheRead": 113536503,
+        "cacheWrite": 1033363,
+        "cost": 37.481820600000006,
+        "modelBreakdown": {
+          "subscriptions/claude-opus-5-5": {
+            "input": 114572090,
+            "output": 324936,
+            "cacheRead": 113536503,
+            "cacheWrite": 1033363,
+            "costUSD": 37.481820600000006
+          }
+        },
+        "subagentInput": 0,
+        "subagentOutput": 0
+      },
+      "messageRange": {
+        "startLine": 0,
+        "endLine": 6
+      },
+      "lastRequest": {
+        "inputTokens": 591432,
+        "requestChars": 6828204,
+        "systemChars": 30872,
+        "overheadChars": 66862,
+        "tokenChars": 2387956
+      },
+      "effortByFamily": {
+        "claude": "xhigh"
+      }
+    },
+    {
+      "id": "t_muuqezso_044648490b2a_1",
+      "label": "Push Anomaly Build",
+      "activeModel": "subscriptions/claude-sonnet-5-5",
+      "sessionId": "muuexciv-4306td",
+      "planMode": false,
+      "planRequest": null,
+      "coAuthorCommits": false,
+      "forgeMode": "auto",
+      "tokenUsage": {
+        "prompt": 166,
+        "completion": 11,
+        "total": 177,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": 0.000442,
+        "modelBreakdown": {
+          "subscriptions/claude-sonnet-5-5": {
+            "input": 131581,
+            "output": 412,
+            "cacheRead": 119987,
+            "cacheWrite": 11416,
+            "costUSD": 0.0741374
+          }
+        },
+        "subagentInput": 0,
+        "subagentOutput": 0
+      },
+      "messageRange": {
+        "startLine": 6,
+        "endLine": 8
+      },
+      "effortByFamily": {
+        "claude": "low"
+      }
+    }
+  ]
+}

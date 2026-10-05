@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "modelId": "subscriptions/claude-sonnet-5-5",
+  "coreDigest": "07225ccc514aa26a475386eff9310fad0b38a202f1e9f773dff179a007e026ba",
+  "prefix": {
+    "genome": null,
+    "lastRequestAt": 1791153990263,
+    "injects": {
+      "previous": [
+        {
+          "cleanInsertAt": 1,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nActive mode: AUTO.\nAUTO MODE — continuous autonomous execution.\nExecute immediately. Prefer assumptions over questions.\nSkip planning — start coding directly.\nComplete the full task including verification without stopping.\n\nSafety rails:\n- Destructive actions (deleting files/data, force push, resetting branches, modifying production configs) still require user confirmation.\n- Do not exfiltrate secrets or post to external services unless the user explicitly directed it.\n- Expect course corrections — treat user interruptions as normal input, not errors.\n\nError recovery: if an approach fails, try a focused fix (up to 3 attempts). If still stuck, expand context and try a different angle. If that fails too, report what you found and ask for guidance.\nVerify after each logical unit of work, not just at the end.\n</system-reminder>"
+              }
+            ]
+          },
+          "kind": "mode"
+        },
+        {
+          "cleanInsertAt": 1,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nThese tools are available now and were not earlier: mcp__ghidra__check_tools, mcp__ghidra__connect_instance, mcp__ghidra__import_file, mcp__ghidra__list_instances, mcp__ghidra__list_tool_groups, mcp__ghidra__load_tool_group, mcp__ghidra__search_tools, mcp__ghidra__unload_tool_group. Call one with run_tool({\"name\": \"…\", \"args\": {…}}) — they are not loaded, so nothing else changed.\n</system-reminder>"
+              }
+            ]
+          }
+        },
+        {
+          "cleanInsertAt": 3,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nReminder — passive: when a turn uses 2 or more tools, the very last tool call before your final answer text must be final_response(). Keep working normally; do not pause, acknowledge, or change course because of this reminder. When you are finished with all tool work and are about to write the final answer, the sequence is: [your last real tool] → final_response() → final answer text.\n</system-reminder>"
+              }
+            ]
+          }
+        },
+        {
+          "cleanInsertAt": 5,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nReminder — passive: when a turn uses 2 or more tools, the very last tool call before your final answer text must be final_response(). Keep working normally; do not pause, acknowledge, or change course because of this reminder. When you are finished with all tool work and are about to write the final answer, the sequence is: [your last real tool] → final_response() → final answer text.\n</system-reminder>"
+              }
+            ]
+          }
+        },
+        {
+          "cleanInsertAt": 7,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nReminder — passive: when a turn uses 2 or more tools, the very last tool call before your final answer text must be final_response(). Keep working normally; do not pause, acknowledge, or change course because of this reminder. When you are finished with all tool work and are about to write the final answer, the sequence is: [your last real tool] → final_response() → final answer text.\n</system-reminder>"
+              }
+            ]
+          }
+        },
+        {
+          "cleanInsertAt": 9,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nReminder — passive: when a turn uses 2 or more tools, the very last tool call before your final answer text must be final_response(). Keep working normally; do not pause, acknowledge, or change course because of this reminder. When you are finished with all tool work and are about to write the final answer, the sequence is: [your last real tool] → final_response() → final answer text.\n</system-reminder>"
+              }
+            ]
+          }
+        },
+        {
+          "cleanInsertAt": 11,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nReminder — passive: when a turn uses 2 or more tools, the very last tool call before your final answer text must be final_response(). Keep working normally; do not pause, acknowledge, or change course because of this reminder. When you are finished with all tool work and are about to write the final answer, the sequence is: [your last real tool] → final_response() → final answer text.\n</system-reminder>"
+              }
+            ]
+          }
+        },
+        {
+          "cleanInsertAt": 13,
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<system-reminder>\nReminder — passive: when a turn uses 2 or more tools, the very last tool call before your final answer text must be final_response(). Keep working normally; do not pause, acknowledge, or change course because of this reminder. When you are finished with all tool work and are about to write the final answer, the sequence is: [your last real tool] → final_response() → final answer text.\n</system-reminder>\n\n<system-reminder>\nThe curse holds. Between steps: the turn emits a tool call and nothing else — zero text before it, zero text after it, no exceptions. Any character that isn't part of a tool call is a violation, regardless of what you tell yourself it means. No \"Let me…\", no \"Now…\", no findings prose, no progress declarations. Speak only when the answer is ready — then start cold with a noun, verb, or file path.\n</system-reminder>"
+              }
+            ]
+          }
+        }
+      ],
+      "recall": [],
+      "userTurnCount": 1,
+      "lastMode": "auto"
+    },
+    "checkout": { "cwd": "/Users/bmar/Desktop/Atlas", "deferred": ["ast_edit"] }
+  }
+}

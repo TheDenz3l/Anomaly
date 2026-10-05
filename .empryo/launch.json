@@ -1,0 +1,10 @@
+{
+  "configurations": [
+    {
+      "name": "Atlas (web)",
+      "command": "npx expo start --web --port 8081",
+      "url": "http://localhost:8081",
+      "port": 8081
+    }
+  ]
+}

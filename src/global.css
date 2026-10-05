@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "uniwind";
+
+@import "heroui-native/styles";
+
+/* End-user path: heroui-native lives in the project's node_modules, one
+   level up from this src/global.css file. */
+@source '../node_modules/heroui-native/lib';
+
+/* Atlas tokens (PRD §2.2). Dark only. */
+@theme {
+  --color-primary: #3b82f6;
+  --color-primary-soft: rgba(59, 130, 246, 0.15);
+  --color-primary-strong: #60a5fa;
+  --color-raised: #27272a;
+  --color-hairline: rgba(39, 39, 42, 0.6);
+  --color-ink: #fafafa;
+  --color-ink-muted: #a1a1aa;
+  --color-ink-faint: #71717a;
+  --color-canvas: #000000;
+  --color-card: #18181b;
+
+  --font-body: "Satoshi-Regular";
+  --font-body-medium: "Satoshi-Medium";
+  --font-body-bold: "Satoshi-Bold";
+  --font-body-italic: "Satoshi-Italic";
+  --font-display: "Moderniz";
+}
+
+/* Concrete hover colors: HeroUI derives these with color-mix(), which colorKit can't parse on web.
+   `static` makes sure they're emitted even though no utility class uses them. */
+@theme static {
+  --color-default-hover: #2c2c30;
+  --color-accent-hover: #4b8df7;
+  --color-danger-hover: #e05a54;
+  --color-danger-soft-hover: rgba(220, 74, 68, 0.2);
+}
+
+@layer theme {
+  :root {
+    @variant dark {
+      --background: #000000;
+      --foreground: #fafafa;
+
+      --surface: #18181b;
+      --surface-foreground: #fafafa;
+      --surface-secondary: #27272a;
+      --surface-secondary-foreground: #fafafa;
+      --surface-tertiary: #303036;
+      --surface-tertiary-foreground: #fafafa;
+
+      --overlay: #18181b;
+      --overlay-foreground: #fafafa;
+      --backdrop: rgba(0, 0, 0, 0.6);
+
+      --muted: #a1a1aa;
+
+      --default: #27272a;
+      --default-foreground: #fafafa;
+
+      --accent: #3b82f6;
+      --accent-foreground: #ffffff;
+
+      --field-background: #27272a;
+      --field-foreground: #fafafa;
+      --field-placeholder: #71717a;
+
+      --success: #17c964;
+      --success-foreground: #04120a;
+      --warning: #f5a524;
+      --warning-foreground: #1a1204;
+      --danger: #dc4a44;
+      --danger-foreground: #ffffff;
+
+      --segment: #3f3f46;
+      --segment-foreground: #fafafa;
+
+      --border: rgba(39, 39, 42, 0.6);
+      --separator: #27272a;
+      --focus: #3b82f6;
+      --link: #3b82f6;
+    }
+  }
+}

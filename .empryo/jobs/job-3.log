@@ -1,0 +1,826 @@
+Starting project at /Users/bmar/Desktop/Atlas
+Using src/app as the root directory for Expo Router.
+React Compiler enabled
+Starting Metro Bundler
+
+Unable to run simctl:
+Error: xcrun simctl help exited with non-zero code: 69
+Waiting on http://localhost:8081
+
+Logs for your project will appear below.
+Web Bundled 2093ms node_modules/expo-router/entry.js (2324 modules)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 23ms node_modules/expo-router/entry.js (1 module)
+Web Bundled 16ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  WARN  TouchableMixin is deprecated. Please use Pressable.
+Web  ERROR  
+
+Code: MapCard.tsx
+[0m [90m 45 |[39m         {w [33m>[39m [35m0[39m [33m?[39m (
+ [90m 46 |[39m           [33m<[39m[33mSvg[39m width[33m=[39m{w} height[33m=[39m{[33mH[39m}[33m>[39m
+[31m[1m>[22m[39m[90m 47 |[39m             [33m<[39m[33mG[39m rotation[33m=[39m{[33m-[39m[35m17[39m} origin[33m=[39m{[32m`${w / 2}, ${H / 2}`[39m}[33m>[39m
+ [90m    |[39m             [31m[1m^[22m[39m
+ [90m 48 |[39m               {streets[33m.[39mmap((i) [33m=>[39m (
+ [90m 49 |[39m                 [33m<[39m[33mLine[39m
+ [90m 50 |[39m                   key[33m=[39m{[32m`v${i}`[39m}[0m
+Call Stack
+  MapCard (src/genui/components/MapCard.tsx:47:13)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web  ERROR  
+
+Code: MapCard.tsx
+[0m [90m  98 |[39m               [36mconst[39m on [33m=[39m p[33m.[39mid [33m===[39m selected[33m;[39m
+ [90m  99 |[39m               [36mreturn[39m (
+[31m[1m>[22m[39m[90m 100 |[39m                 [33m<[39m[33mG[39m key[33m=[39m{p[33m.[39mid} onPress[33m=[39m{() [33m=>[39m setSelected(p[33m.[39mid)}[33m>[39m
+ [90m     |[39m                 [31m[1m^[22m[39m
+ [90m 101 |[39m                   [33m<[39m[33mCircle[39m
+ [90m 102 |[39m                     cx[33m=[39m{x(p[33m.[39mlng)}
+ [90m 103 |[39m                     cy[33m=[39m{y(p[33m.[39mlat)}[0m
+Call Stack
+  props.places.map$argument_0 (src/genui/components/MapCard.tsx:100:17)
+  MapCard (src/genui/components/MapCard.tsx:97:26)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web  ERROR  
+
+Code: MapCard.tsx
+[0m [90m  98 |[39m               [36mconst[39m on [33m=[39m p[33m.[39mid [33m===[39m selected[33m;[39m
+ [90m  99 |[39m               [36mreturn[39m (
+[31m[1m>[22m[39m[90m 100 |[39m                 [33m<[39m[33mG[39m key[33m=[39m{p[33m.[39mid} onPress[33m=[39m{() [33m=>[39m setSelected(p[33m.[39mid)}[33m>[39m
+ [90m     |[39m                 [31m[1m^[22m[39m
+ [90m 101 |[39m                   [33m<[39m[33mCircle[39m
+ [90m 102 |[39m                     cx[33m=[39m{x(p[33m.[39mlng)}
+ [90m 103 |[39m                     cy[33m=[39m{y(p[33m.[39mlat)}[0m
+Call Stack
+  props.places.map$argument_0 (src/genui/components/MapCard.tsx:100:17)
+  MapCard (src/genui/components/MapCard.tsx:97:26)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web  ERROR  
+
+Code: MapCard.tsx
+[0m [90m  98 |[39m               [36mconst[39m on [33m=[39m p[33m.[39mid [33m===[39m selected[33m;[39m
+ [90m  99 |[39m               [36mreturn[39m (
+[31m[1m>[22m[39m[90m 100 |[39m                 [33m<[39m[33mG[39m key[33m=[39m{p[33m.[39mid} onPress[33m=[39m{() [33m=>[39m setSelected(p[33m.[39mid)}[33m>[39m
+ [90m     |[39m                 [31m[1m^[22m[39m
+ [90m 101 |[39m                   [33m<[39m[33mCircle[39m
+ [90m 102 |[39m                     cx[33m=[39m{x(p[33m.[39mlng)}
+ [90m 103 |[39m                     cy[33m=[39m{y(p[33m.[39mlat)}[0m
+Call Stack
+  props.places.map$argument_0 (src/genui/components/MapCard.tsx:100:17)
+  MapCard (src/genui/components/MapCard.tsx:97:26)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web  ERROR  
+
+Code: MapCard.tsx
+[0m [90m  98 |[39m               [36mconst[39m on [33m=[39m p[33m.[39mid [33m===[39m selected[33m;[39m
+ [90m  99 |[39m               [36mreturn[39m (
+[31m[1m>[22m[39m[90m 100 |[39m                 [33m<[39m[33mG[39m key[33m=[39m{p[33m.[39mid} onPress[33m=[39m{() [33m=>[39m setSelected(p[33m.[39mid)}[33m>[39m
+ [90m     |[39m                 [31m[1m^[22m[39m
+ [90m 101 |[39m                   [33m<[39m[33mCircle[39m
+ [90m 102 |[39m                     cx[33m=[39m{x(p[33m.[39mlng)}
+ [90m 103 |[39m                     cy[33m=[39m{y(p[33m.[39mlat)}[0m
+Call Stack
+  props.places.map$argument_0 (src/genui/components/MapCard.tsx:100:17)
+  MapCard (src/genui/components/MapCard.tsx:97:26)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web  ERROR  
+
+Code: MapCard.tsx
+[0m [90m  98 |[39m               [36mconst[39m on [33m=[39m p[33m.[39mid [33m===[39m selected[33m;[39m
+ [90m  99 |[39m               [36mreturn[39m (
+[31m[1m>[22m[39m[90m 100 |[39m                 [33m<[39m[33mG[39m key[33m=[39m{p[33m.[39mid} onPress[33m=[39m{() [33m=>[39m setSelected(p[33m.[39mid)}[33m>[39m
+ [90m     |[39m                 [31m[1m^[22m[39m
+ [90m 101 |[39m                   [33m<[39m[33mCircle[39m
+ [90m 102 |[39m                     cx[33m=[39m{x(p[33m.[39mlng)}
+ [90m 103 |[39m                     cy[33m=[39m{y(p[33m.[39mlat)}[0m
+Call Stack
+  props.places.map$argument_0 (src/genui/components/MapCard.tsx:100:17)
+  MapCard (src/genui/components/MapCard.tsx:97:26)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web  ERROR  
+
+Code: MapCard.tsx
+[0m [90m  98 |[39m               [36mconst[39m on [33m=[39m p[33m.[39mid [33m===[39m selected[33m;[39m
+ [90m  99 |[39m               [36mreturn[39m (
+[31m[1m>[22m[39m[90m 100 |[39m                 [33m<[39m[33mG[39m key[33m=[39m{p[33m.[39mid} onPress[33m=[39m{() [33m=>[39m setSelected(p[33m.[39mid)}[33m>[39m
+ [90m     |[39m                 [31m[1m^[22m[39m
+ [90m 101 |[39m                   [33m<[39m[33mCircle[39m
+ [90m 102 |[39m                     cx[33m=[39m{x(p[33m.[39mlng)}
+ [90m 103 |[39m                     cy[33m=[39m{y(p[33m.[39mlat)}[0m
+Call Stack
+  props.places.map$argument_0 (src/genui/components/MapCard.tsx:100:17)
+  MapCard (src/genui/components/MapCard.tsx:97:26)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web Bundled 17ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 20ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 25ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 21ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  ERROR  [colorKit.RGB] An error occurred while attempting to convert the provided parameter into an `RGB` color. As a result, the default color "black" will be used instead. 
+
+Code: kit.tsx
+[0m [90m 87 |[39m     [90m// Disabled is enforced in onPress rather than `isDisabled`: on web, flipping isDisabled while the[39m
+ [90m 88 |[39m     [90m// pointer rests over a freshly rendered button fires a phantom press.[39m
+[31m[1m>[22m[39m[90m 89 |[39m     [33m<[39m[33mButton[39m
+ [90m    |[39m     [31m[1m^[22m[39m
+ [90m 90 |[39m       variant[33m=[39m{variant}
+ [90m 91 |[39m       size[33m=[39m{size}
+ [90m 92 |[39m       onPress[33m=[39m{() [33m=>[39m {[0m
+Call Stack
+  ActionButton (src/genui/kit.tsx:89:5)
+  SubagentPlan (src/genui/components/Agents.tsx:122:11)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web Bundled 33ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  ERROR  [colorKit.RGB] An error occurred while attempting to convert the provided parameter into an `RGB` color. As a result, the default color "black" will be used instead. 
+
+Code: kit.tsx
+[0m [90m 87 |[39m     [90m// Disabled is enforced in onPress rather than `isDisabled`: on web, flipping isDisabled while the[39m
+ [90m 88 |[39m     [90m// pointer rests over a freshly rendered button fires a phantom press.[39m
+[31m[1m>[22m[39m[90m 89 |[39m     [33m<[39m[33mButton[39m
+ [90m    |[39m     [31m[1m^[22m[39m
+ [90m 90 |[39m       variant[33m=[39m{variant}
+ [90m 91 |[39m       size[33m=[39m{size}
+ [90m 92 |[39m       onPress[33m=[39m{() [33m=>[39m {[0m
+Call Stack
+  ActionButton (src/genui/kit.tsx:89:5)
+  SubagentPlan (src/genui/components/Agents.tsx:122:11)
+  ComponentRenderer (src/genui/ComponentRenderer.tsx:74:7)
+  visible.map$argument_0 (src/components/chat/Messages.tsx:93:15)
+  AssistantMessage (src/components/chat/Messages.tsx:85:15)
+  messages.map$argument_0 (src/app/(tabs)/index.tsx:84:13)
+  ChatScreen (src/app/(tabs)/index.tsx:83:19)
+  AppTabs (src/components/navigation/AppTabs.tsx:71:5)
+  TabsLayout (src/app/(tabs)/_layout.tsx:4:10)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web Bundled 22ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 23ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 27ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 18ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 61ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 22ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/history.tsx"
+[0m [90m 3 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 5 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 6 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 7 |[39m [36mimport[39m { [33mIcon[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/history.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/history.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  3 | import { ScrollView, TextInput, View } from "react-native";
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 5 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  6 | import { Glass } from "@/components/ui/Glass";
+  7 | import { Icon } from "@/components/ui/Icon";
+  8 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/memory.tsx"
+[0m [90m 4 |[39m [36mimport[39m { [33mScrollView[39m[33m,[39m [33mTextInput[39m[33m,[39m [33mView[39m } [36mfrom[39m [32m"react-native"[39m[33m;[39m
+ [90m 5 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 6 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 7 |[39m [36mimport[39m { [33mGlass[39m } [36mfrom[39m [32m"@/components/ui/Glass"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mIcon[39m[33m,[39m type [33mIconName[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 9 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/memory.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/memory.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  4 | import { ScrollView, TextInput, View } from "react-native";
+  5 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+> 6 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  7 | import { Glass } from "@/components/ui/Glass";
+  8 | import { Icon, type IconName } from "@/components/ui/Icon";
+  9 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Unable to resolve "@/components/navigation/AppTabs" from "src/app/settings.tsx"
+[0m [90m 4 |[39m [36mimport[39m { useSafeAreaInsets } [36mfrom[39m [32m"react-native-safe-area-context"[39m[33m;[39m
+ [90m 5 |[39m [36mimport[39m { [33mModelPicker[39m } [36mfrom[39m [32m"@/components/chat/ModelPicker"[39m[33m;[39m
+[31m[1m>[22m[39m[90m 6 |[39m [36mimport[39m { [33mTAB_BAR_CLEARANCE[39m } [36mfrom[39m [32m"@/components/navigation/AppTabs"[39m[33m;[39m
+ [90m   |[39m                                    [31m[1m^[22m[39m
+ [90m 7 |[39m [36mimport[39m { [33mProviderSheet[39m } [36mfrom[39m [32m"@/components/settings/ProviderSheet"[39m[33m;[39m
+ [90m 8 |[39m [36mimport[39m { [33mIcon[39m[33m,[39m type [33mIconName[39m } [36mfrom[39m [32m"@/components/ui/Icon"[39m[33m;[39m
+ [90m 9 |[39m [36mimport[39m { [33mGroup[39m[33m,[39m [33mScreenHeader[39m } [36mfrom[39m [32m"@/components/ui/ScreenHeader"[39m[33m;[39m[0m
+
+Import stack:
+
+ src/app/settings.tsx
+ | import "@/components/navigation/AppTabs"
+
+ src/app (require.context)
+
+Web  ERROR  [UnableToResolveError: Unable to resolve module @/components/navigation/AppTabs from /Users/bmar/Desktop/Atlas/src/app/settings.tsx: @/components/navigation/AppTabs could not be found within the project or in these directories:
+  node_modules
+  ../../node_modules
+  4 | import { useSafeAreaInsets } from "react-native-safe-area-context";
+  5 | import { ModelPicker } from "@/components/chat/ModelPicker";
+> 6 | import { TAB_BAR_CLEARANCE } from "@/components/navigation/AppTabs";
+    |                                    ^
+  7 | import { ProviderSheet } from "@/components/settings/ProviderSheet";
+  8 | import { Icon, type IconName } from "@/components/ui/Icon";
+  9 | import { Group, ScreenHeader } from "@/components/ui/ScreenHeader";]
+Web Bundled 22ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 23ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  WARN  An error occurred in the <SideDrawer> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+Web  ERROR  [ReferenceError: Pressable is not defined] 
+
+Code: SideDrawer.tsx
+[0m [90m 134 |[39m               style[33m=[39m{[[33mStyleSheet[39m[33m.[39mabsoluteFill[33m,[39m styles[33m.[39mdim[33m,[39m { pointerEvents[33m:[39m isOpen [33m?[39m [32m"auto"[39m [33m:[39m [32m"none"[39m }[33m,[39m dimStyle]}
+ [90m 135 |[39m             [33m>[39m
+[31m[1m>[22m[39m[90m 136 |[39m               [33m<[39m[33mPressable[39m
+ [90m     |[39m                [31m[1m^[22m[39m
+ [90m 137 |[39m                 accessibilityRole[33m=[39m[32m"button"[39m
+ [90m 138 |[39m                 accessibilityLabel[33m=[39m[32m"Close menu"[39m
+ [90m 139 |[39m                 onPress[33m=[39m{close}[0m
+Call Stack
+  SideDrawer (src/components/navigation/SideDrawer.tsx:136:16) 
+
+Code: index.tsx
+[0m [90m 57 |[39m
+ [90m 58 |[39m   [36mreturn[39m (
+[31m[1m>[22m[39m[90m 59 |[39m     [33m<[39m[33mSideDrawer[39m panel[33m=[39m{[33m<[39m[33mNavPanel[39m [33m/[39m[33m>[39m}[33m>[39m
+ [90m    |[39m     [31m[1m^[22m[39m
+ [90m 60 |[39m       [33m<[39m[33mView[39m className[33m=[39m[32m"flex-1 bg-background"[39m[33m>[39m
+ [90m 61 |[39m         [33m<[39m[33mScrollView[39m
+ [90m 62 |[39m           ref[33m=[39m{scroller}[0m
+Call Stack
+  ChatScreen (src/app/index.tsx:59:5)
+  RootLayout (src/app/_layout.tsx:36:9)
+Web Bundled 24ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web Bundled 23ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web Bundled 24ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web  WARN  [Reanimated] Selected easing is not currently supported on web. Using linear easing instead.
+Web Bundled 24ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 20ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 22ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web Bundled 34ms node_modules/expo-router/entry.js (1 module)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  WARN  [Reanimated] Properties [opacity, transform] may be overwritten by a layout animation. Please wrap your component with an animated view and apply the layout animation on the wrapper.
+Web  WARN  [Reanimated] Properties [opacity, transform] may be overwritten by a layout animation. Please wrap your component with an animated view and apply the layout animation on the wrapper.
+Web  WARN  [Reanimated] Properties [opacity, transform] may be overwritten by a layout animation. Please wrap your component with an animated view and apply the layout animation on the wrapper.
+Web  WARN  [Reanimated] Properties [opacity, transform] may be overwritten by a layout animation. Please wrap your component with an animated view and apply the layout animation on the wrapper.
+Web  WARN  [Reanimated] Properties [opacity, transform] may be overwritten by a layout animation. Please wrap your component with an animated view and apply the layout animation on the wrapper.

@@ -1,0 +1,53 @@
+{
+  "id": "muuetrqt-5fcq1j",
+  "title": "I need you to install this skill - https://github.com/ant...",
+  "cwd": "/Users/bmar/Desktop/Atlas",
+  "startedAt": 1791153969083,
+  "updatedAt": 1791154075037,
+  "activeTabId": "main",
+  "forgeMode": "auto",
+  "tabs": [
+    {
+      "id": "main",
+      "label": "Install",
+      "activeModel": "subscriptions/claude-sonnet-5-5",
+      "sessionId": "muuetrqt-5fcq1j",
+      "planMode": false,
+      "planRequest": null,
+      "coAuthorCommits": false,
+      "forgeMode": "auto",
+      "tokenUsage": {
+        "prompt": 277279,
+        "completion": 1122,
+        "total": 278401,
+        "cacheRead": 267385,
+        "cacheWrite": 8838,
+        "cost": 0.10216099999999999,
+        "modelBreakdown": {
+          "subscriptions/claude-sonnet-5-5": {
+            "input": 277279,
+            "output": 1122,
+            "cacheRead": 267385,
+            "cacheWrite": 8838,
+            "costUSD": 0.102161
+          }
+        },
+        "subagentInput": 0,
+        "subagentOutput": 0
+      },
+      "messageRange": {
+        "startLine": 0,
+        "endLine": 2
+      },
+      "lastRequest": {
+        "inputTokens": 35291,
+        "requestChars": 125043,
+        "systemChars": 31494,
+        "overheadChars": 66865
+      },
+      "effortByFamily": {
+        "claude": "medium"
+      }
+    }
+  ]
+}

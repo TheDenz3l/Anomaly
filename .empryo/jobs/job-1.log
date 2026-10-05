@@ -1,0 +1,28 @@
+Starting project at /Users/bmar/Desktop/Atlas
+Using src/app as the root directory for Expo Router.
+React Compiler enabled
+Metro is running in CI mode, reloads are disabled. Remove CI=true to enable watch mode.
+Starting Metro Bundler
+
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://localhost:8081
+
+Logs for your project will appear below.
+Unable to run simctl:
+Error: xcrun simctl help exited with non-zero code: 69
+Web Bundled 7394ms node_modules/expo-router/entry.js (2127 modules)
+Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Web  LOG  Running application "main" with appParams:
+ {"hydrate": undefined, "rootTag": "#root"} 
+Development-level warnings: ON.
+Performance optimizations: OFF.
+Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+Web  INFO  [34mHeroUI Native Styling Principles[0m
+• className: this is your go-to styling solution. Use Tailwind CSS classes via className prop on all components.
+• StyleSheet precedence: The style prop (StyleSheet API) has precedence over className when both are provided. This allows you to override Tailwind classes when needed.
+• Animated styles: Some style properties are animated using react-native-reanimated and have precedence over className. To identify which styles are animated:
+  - Hover over className in your IDE - TypeScript definitions show which properties are occupied by animated styles
+  - Check component documentation - Each component page includes a link to the component's style source
+• If styles are occupied by animation, modify them via the animation prop on components that support it.
+• To deactivate animated style completely and apply your own styles, use isAnimatedStyleActive prop.
+[33m💡 To disable this message, set config.devInfo.stylingPrinciples to false[0m
