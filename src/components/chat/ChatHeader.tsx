@@ -94,7 +94,7 @@ export function ChatHeader() {
           }}
           className="flex-1 items-center"
         >
-          <Animated.View key={thread?.id ?? "new"} entering={fadeIn} className="items-center">
+          <Animated.View key={thread?.id ?? "new"} entering={fadeIn} className="w-full items-center">
             {thread ? (
               <Display className="text-[15px] leading-5" numberOfLines={1}>
                 {thread.title}

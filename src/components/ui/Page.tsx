@@ -22,14 +22,32 @@ const BAR = 56;
  * Page opened from the side menu. Sections rise in one after another on open; as you scroll,
  * the large title hands off to a compact one in the top bar (iOS large-title behaviour).
  */
-export function Page({ title, subtitle, right, children }: { title: string; subtitle?: string; right?: ReactNode; children: ReactNode }) {
+export function Page({
+  title,
+  subtitle,
+  kicker,
+  plainTitle,
+  right,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  /** Small line above the title, e.g. what kind of thing the page shows. */
+  kicker?: string;
+  /** Set the title in Satoshi instead of the Moderniz display face — for long, user-made titles. */
+  plainTitle?: boolean;
+  right?: ReactNode;
+  children: ReactNode;
+}) {
   const insets = useSafeAreaInsets();
   const y = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler((e) => {
     y.set(e.contentOffset.y);
   });
 
-  const barFill = useAnimatedStyle(() => ({ opacity: interpolate(y.get(), [24, 64], [0, 1], "clamp") }));
+  const barFill = useAnimatedStyle(() => ({
+    opacity: interpolate(y.get(), [24, 64], [0, 1], "clamp"),
+  }));
   const compactTitle = useAnimatedStyle(() => ({
     opacity: interpolate(y.get(), [44, 76], [0, 1], "clamp"),
     transform: [{ translateY: interpolate(y.get(), [44, 76], [8, 0], "clamp") }],
@@ -56,25 +74,51 @@ export function Page({ title, subtitle, right, children }: { title: string; subt
           alignSelf: "center",
         }}
       >
-        <Animated.View entering={enterUp(0)} style={[{ transformOrigin: "left center", paddingBottom: 18 }, largeTitle]}>
-          <Display accessibilityRole="header" className="text-[30px] leading-[38px]">
-            {title}
-          </Display>
-          {subtitle ? (
-            <Text muted className="mt-0.5 text-sm leading-5">
-              {subtitle}
-            </Text>
-          ) : null}
+        <Animated.View entering={enterUp(0)}>
+          <Animated.View
+            style={[{ transformOrigin: "left center", paddingBottom: 18 }, largeTitle]}
+          >
+            {kicker ? (
+              <Text muted weight="medium" className="mb-1 text-[13px]">
+                {kicker}
+              </Text>
+            ) : null}
+            {plainTitle ? (
+              <Text accessibilityRole="header" weight="bold" className="text-[26px] leading-[32px]">
+                {title}
+              </Text>
+            ) : (
+              <Display accessibilityRole="header" className="text-[30px] leading-[38px]">
+                {title}
+              </Display>
+            )}
+            {subtitle ? (
+              <Text muted className="mt-0.5 text-sm leading-5">
+                {subtitle}
+              </Text>
+            ) : null}
+          </Animated.View>
         </Animated.View>
         {sections.map((section, i) => (
-          <Animated.View key={section.key ?? i} entering={enterUp(i + 1)} exiting={fadeOut} layout={reflow}>
+          <Animated.View
+            key={section.key ?? i}
+            entering={enterUp(i + 1)}
+            exiting={fadeOut}
+            layout={reflow}
+          >
             <LayoutAnimationConfig skipEntering>{section}</LayoutAnimationConfig>
           </Animated.View>
         ))}
       </Animated.ScrollView>
 
-      <View pointerEvents="box-none" style={[styles.bar, { paddingTop: insets.top, height: insets.top + BAR }]}>
-        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.barFill, barFill]} />
+      <View
+        pointerEvents="box-none"
+        style={[styles.bar, { paddingTop: insets.top, height: insets.top + BAR }]}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.barFill, barFill]}
+        />
         <Tap accessibilityRole="button" accessibilityLabel="Back" onPress={goBack}>
           <Glass radius={20} interactive>
             <View className="h-10 w-10 items-center justify-center">
@@ -94,7 +138,15 @@ export function Page({ title, subtitle, right, children }: { title: string; subt
 }
 
 /** Inset grouped list section — the iOS Settings pattern on `surface`. */
-export function Group({ label, footer, children }: { label?: string; footer?: string; children: ReactNode }) {
+export function Group({
+  label,
+  footer,
+  children,
+}: {
+  label?: string;
+  footer?: string;
+  children: ReactNode;
+}) {
   return (
     <View className="mb-6">
       {label ? (
@@ -124,5 +176,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.hairline,
   },
-  compact: { position: "absolute", left: 72, right: 72, bottom: 0, height: BAR, alignItems: "center", justifyContent: "center" },
+  compact: {
+    position: "absolute",
+    left: 72,
+    right: 72,
+    bottom: 0,
+    height: BAR,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

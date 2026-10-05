@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { TextInput, View } from "react-native";
+import { Orb } from "@/components/orb/Orb";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { ShimmerText } from "@/components/ui/ShimmerText";
 import { Segmented } from "@/components/ui/Segmented";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
@@ -221,13 +223,13 @@ export function SubagentTimeline({ props, emit, live }: GenProps<"SubagentTimeli
                 className="flex-row items-center gap-3"
               >
                 <View
-                  className={`h-9 w-9 items-center justify-center rounded-full ${s === "running" ? "bg-primary-soft" : "bg-raised"}`}
+                  className="h-9 w-9 items-center justify-center rounded-full bg-raised"
                 >
-                  <Icon
-                    name={roleIcon[r.role]}
-                    size={16}
-                    color={s === "running" ? colors.primaryStrong : colors.textMuted}
-                  />
+                  {s === "running" ? (
+                    <Orb state="background" size={20} label="Running" />
+                  ) : (
+                    <Icon name={roleIcon[r.role]} size={16} color={colors.textMuted} />
+                  )}
                 </View>
                 <View className="flex-1">
                   <Text
@@ -434,18 +436,26 @@ export function ResearchProgress({ props, live }: GenProps<"ResearchProgress">) 
             p >= ph.end && (ph.end > 0 || p > 0) ? "done" : p >= prevEnd ? "active" : "todo";
           return (
             <View key={ph.id} className="flex-row items-center gap-3">
-              <View
-                className={`h-5 w-5 items-center justify-center rounded-full ${state === "done" ? "bg-primary" : state === "active" ? "border-2 border-primary" : "border-2 border-raised"}`}
-              >
-                {state === "done" ? <Icon name="checkmark" size={12} color="#fff" /> : null}
+              {state === "active" ? (
+                <View className="h-5 w-5 items-center justify-center">
+                  <Orb state={ph.id === "synthesize" ? "working" : ph.id === "reflect" ? "reasoning" : "searching"} size={20} />
+                </View>
+              ) : (
+                <View
+                  className={`h-5 w-5 items-center justify-center rounded-full ${state === "done" ? "bg-primary" : "border-2 border-raised"}`}
+                >
+                  {state === "done" ? <Icon name="checkmark" size={12} color="#fff" /> : null}
+                </View>
+              )}
+              <View className="flex-1">
+                {state === "active" ? (
+                  <ShimmerText text={ph.label} />
+                ) : (
+                  <Text weight="medium" muted={state === "todo"} className="text-[15px]">
+                    {ph.label}
+                  </Text>
+                )}
               </View>
-              <Text
-                weight={state === "active" ? "bold" : "medium"}
-                muted={state === "todo"}
-                className="flex-1 text-[15px]"
-              >
-                {ph.label}
-              </Text>
             </View>
           );
         })}

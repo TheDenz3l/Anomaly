@@ -8,6 +8,7 @@ export type Op =
   | { op: "think"; text: string }
   | { op: "text"; text: string }
   | { op: "component"; name: CatalogName; props: unknown; fallbackText: string; buildMs?: number }
+  | { op: "search"; queries: string[]; sources: Source[] }
   | { op: "sources"; sources: Source[] }
   | { op: "wait"; ms: number };
 
@@ -67,8 +68,17 @@ function moviesResults(city?: string): Script {
       think(
         "Location is near Queen & Spadina. Plan: TMDB now-playing for posters and runtimes, Overpass for cinemas within 3 km, then read each theatre's showtimes page. Mark times as coming from theatre sites."
       ),
+      {
+        op: "search",
+        queries: [
+          "movies playing tonight near Queen St W and Spadina Ave",
+          "cinemas within 3 km of Queen and Spadina",
+          "Scotiabank Theatre Toronto showtimes today",
+        ],
+        sources: fx.movieSources,
+      },
       say(
-        `Here's what's playing tonight near ${where}. **Northbound** has the most showings, and Scotiabank has the latest IMAX at **10:15 PM**.`
+        `Here's what's playing tonight near ${where} [1]. **Northbound** has the most showings, and Scotiabank has the latest IMAX at **10:15 PM** [3].`
       ),
       ui(
         "MovieShowtimes",
@@ -82,8 +92,9 @@ function moviesResults(city?: string): Script {
         "Five theatres within 3 km; the closest is Scotiabank Theatre, 0.4 km away.",
         900
       ),
-      say("Tap a time to pick it and I'll plan the rest of the evening around it."),
-      { op: "sources", sources: fx.movieSources },
+      say(
+        "Five theatres are within 3 km [2]. Times come from each theatre's own site [4][5], so tap one and I'll plan the rest of the evening around it."
+      ),
     ],
   };
 }
@@ -133,6 +144,7 @@ function research(stage: "clarify" | "plan" | "run"): Script {
         500
       ),
       { op: "wait", ms: fx.ebikeProgress.durationMs + 400 },
+      { op: "sources", sources: fx.ebikeSources },
       think(
         "Synthesis. Hub motors with torque sensors are fine for moderate hills; steep grades favour mid-drive. Claimed ranges overstate real-world by 20–35%. Verifier dropped two claims with no retrieved source."
       ),
@@ -147,7 +159,6 @@ function research(stage: "clarify" | "plan" | "run"): Script {
       say(
         "All 11 citations were checked against the retrieved pages. Two claims without a source were dropped."
       ),
-      { op: "sources", sources: fx.ebikeSources },
     ],
   };
 }
@@ -299,15 +310,19 @@ const scenarioScripts: Record<Scenario, (text: string, ctx: ScriptContext) => Sc
   weather: () => ({
     difficulty: "easy",
     ops: [
+      {
+        op: "search",
+        queries: ["Toronto weather this weekend", "Environment Canada Toronto forecast"],
+        sources: fx.weatherSources,
+      },
       say(
-        "Mild and mostly dry today. Rain moves in late tonight and sticks around Sunday, so **Saturday is the better day** to be outside."
+        "Mild and mostly dry today. Rain moves in late tonight and sticks around Sunday [1], so **Saturday is the better day** to be outside [2]."
       ),
       ui(
         "Weather",
         fx.weatherToronto,
         "Toronto: 14°C, sun and cloud. High 16, low 8. Rain from 10 PM; Sunday wet, 13°C."
       ),
-      { op: "sources", sources: fx.weatherSources },
     ],
   }),
   checklist: () => ({
@@ -323,27 +338,35 @@ const scenarioScripts: Record<Scenario, (text: string, ctx: ScriptContext) => Sc
   products: () => ({
     difficulty: "moderate",
     ops: [
+      {
+        op: "search",
+        queries: ["best noise cancelling headphones under $300", "Sony WH-1000XM6 price"],
+        sources: fx.headphoneSources,
+      },
       say(
-        "Four solid options. The **Sony WH-1000XM6** has the best noise cancelling for the price; the **Soundcore Space One** gets you most of the way for a third of the cost."
+        "Four solid options. The **Sony WH-1000XM6** has the best noise cancelling for the price [1][2]; the **Soundcore Space One** gets you most of the way for a third of the cost [3]."
       ),
       ui(
         "ProductGrid",
         fx.headphones,
         "Sony WH-1000XM6 $279; Bose QuietComfort Ultra $299; Sennheiser Momentum 4 $229; Soundcore Space One $99."
       ),
-      { op: "sources", sources: fx.headphoneSources },
     ],
   }),
   timeline: () => ({
     difficulty: "easy",
     ops: [
-      say("Eight moments that shaped the web. Tap one for detail."),
+      {
+        op: "search",
+        queries: ["history of the world wide web key milestones"],
+        sources: fx.webTimelineSources,
+      },
+      say("Eight moments that shaped the web, from a memo at CERN to HTML5 [1][2]. Tap one for detail."),
       ui(
         "Timeline",
         fx.webTimeline,
         "1989 proposal, 1991 first site, 1993 Mosaic, 1995 JavaScript, 1998 Google, 2004 Web 2.0, 2007 iPhone, 2014 HTML5."
       ),
-      { op: "sources", sources: fx.webTimelineSources },
     ],
   }),
   form: () => ({
@@ -382,7 +405,7 @@ const scenarioScripts: Record<Scenario, (text: string, ctx: ScriptContext) => Sc
     difficulty: "easy",
     ops: [
       say(
-        "This is a mock reply. No model is connected yet, so I can't answer that for real. Once you add a provider in Settings, messages go to your own model.\n\nThese prompts show what Atlas can build inline:"
+        "This is a mock reply. No model is connected yet, so I can't answer that for real. Once you add a provider in Settings, messages go to your own model.\n\nThese prompts show what Anomaly can build inline:"
       ),
       demoChips(),
     ],

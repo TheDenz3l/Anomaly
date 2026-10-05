@@ -102,6 +102,26 @@ export async function play(
         await sleep(120);
         break;
       }
+      case "search": {
+        const id = uid("search");
+        const started = Date.now();
+        sink.append({ id, type: "search", queries: [], sources: [], phase: "searching" });
+        for (const q of op.queries) {
+          await sleep(560);
+          if (sink.cancelled()) return "stopped";
+          sink.update(id, (p) => (p.type === "search" ? { ...p, queries: [...p.queries, q] } : p));
+        }
+        await sleep(380);
+        sink.update(id, (p) => (p.type === "search" ? { ...p, phase: "reading" } : p));
+        for (const s of op.sources) {
+          await sleep(190);
+          if (sink.cancelled()) return "stopped";
+          sink.update(id, (p) => (p.type === "search" ? { ...p, sources: [...p.sources, s] } : p));
+        }
+        await sleep(520);
+        sink.update(id, (p) => (p.type === "search" ? { ...p, phase: "done", durationMs: Date.now() - started } : p));
+        break;
+      }
       case "sources":
         sink.append({ id: uid("src"), type: "sources", sources: op.sources });
         break;
@@ -134,6 +154,15 @@ export function materialize(script: Script, showThinking: boolean): Part[] {
       const part = settle(componentPart(op));
       const props = part.props as Record<string, unknown>;
       parts.push("live" in props ? { ...part, props: { ...props, live: false } } : part);
+    } else if (op.op === "search") {
+      parts.push({
+        id: uid("search"),
+        type: "search",
+        queries: op.queries,
+        sources: op.sources,
+        phase: "done",
+        durationMs: 1800 + op.sources.length * 190,
+      });
     } else if (op.op === "sources") {
       parts.push({ id: uid("src"), type: "sources", sources: op.sources });
     }

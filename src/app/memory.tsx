@@ -103,7 +103,7 @@ export default function MemoryScreen() {
     <View className="flex-1 bg-background">
       <Page
         title="Memory"
-        subtitle="What Atlas keeps between chats"
+        subtitle="What Anomaly keeps between chats"
         right={
           <View className="flex-row gap-2">
             <HeaderButton
@@ -181,7 +181,7 @@ export default function MemoryScreen() {
         {shown.length === 0 ? (
           <View className="items-center gap-3 py-12">
             <Text muted className="text-center text-[15px]">
-              Nothing here yet. Tell Atlas something like “Remember that I’m vegetarian”, or add one
+              Nothing here yet. Tell Anomaly something like “Remember that I’m vegetarian”, or add one
               yourself.
             </Text>
             <ActionButton

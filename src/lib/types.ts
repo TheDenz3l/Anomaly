@@ -42,7 +42,17 @@ export type UiEventPart = {
   payload?: Record<string, unknown>;
 };
 
-export type Part = TextPart | ThinkingPart | ComponentPart | ImagePart | SourcesPart | UiEventPart;
+/** A web search step: the queries it ran and the pages it found, shown inline before the answer. */
+export type SearchPart = {
+  id: string;
+  type: "search";
+  queries: string[];
+  sources: Source[];
+  phase: "searching" | "reading" | "done";
+  durationMs?: number;
+};
+
+export type Part = TextPart | ThinkingPart | SearchPart | ComponentPart | ImagePart | SourcesPart | UiEventPart;
 
 export type ReplyMeta = {
   modelRef: string;

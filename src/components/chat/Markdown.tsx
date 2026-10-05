@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { Text as RNText, View } from "react-native";
 import { Text } from "@/components/ui/Text";
+import { CitationPill } from "./Citations";
 
 /** Drops a trailing unmatched `**` so half-streamed bold doesn't flash raw asterisks. */
 function balance(text: string): string {
@@ -12,7 +13,7 @@ function balance(text: string): string {
 
 function inline(text: string, keyBase: string): ReactNode[] {
   return balance(text)
-    .split(/(\*\*[^*]+\*\*|`[^`]+`|\[\d+\])/g)
+    .split(/(\*\*[^*]+\*\*|`[^`]+`|(?:\s?\[\d+\])+)/g)
     .filter(Boolean)
     .map((seg, i) => {
       const key = `${keyBase}-${i}`;
@@ -30,16 +31,9 @@ function inline(text: string, keyBase: string): ReactNode[] {
           </RNText>
         );
       }
-      if (/^\[\d+\]$/.test(seg)) {
-        return (
-          <RNText
-            key={key}
-            accessibilityLabel={`Source ${seg.slice(1, -1)}`}
-            className="font-body-bold text-[11px] text-primary"
-          >
-            {` ${seg.slice(1, -1)}`}
-          </RNText>
-        );
+      if (/^(\s?\[\d+\])+$/.test(seg)) {
+        const nums = [...seg.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
+        return <CitationPill key={key} nums={nums} />;
       }
       return <Fragment key={key}>{seg}</Fragment>;
     });

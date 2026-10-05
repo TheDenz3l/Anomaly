@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { create } from "zustand";
+import { collectArtifacts } from "@/lib/artifacts";
 import { decisions, reasoningTokensFor, resolveReasoning } from "@/lib/engine/decision";
 import { materialize, play, uid, type Sink } from "@/lib/engine/player";
 import {
@@ -44,6 +46,10 @@ type State = {
   researchArmed: boolean;
   locationGranted: boolean;
   savedMessageIds: string[];
+  /** Artifact ids pinned to the top of Artifacts. */
+  pinnedArtifacts: string[];
+  /** When each artifact was last opened, for "recently viewed" ordering. */
+  artifactViews: Record<string, number>;
   toast: Toast | null;
 };
 
@@ -61,6 +67,8 @@ type Actions = {
   stop(): void;
   regenerate(messageId: string): void;
   toggleSaved(messageId: string): void;
+  togglePin(artifactId: string): void;
+  markViewed(artifactId: string): void;
   updateSettings(patch: Partial<Settings>): void;
   addMemory(m: Omit<Memory, "id" | "createdAt">): string;
   updateMemory(id: string, patch: Partial<Memory>): void;
@@ -260,6 +268,16 @@ function seedThreads(): Pick<State, "threads" | "messages"> {
     { mode: "research" }
   );
 
+  make("Noise-cancelling headphones", 3 * DAY, [
+    { user: "Best noise cancelling headphones under $300" },
+    { script: scriptForPrompt("Best noise cancelling headphones under $300", ctx) },
+  ]);
+
+  make("WireGuard at home", 4 * DAY + 2 * HOUR, [
+    { user: "How do I set up WireGuard at home?" },
+    { script: scriptForPrompt("How do I set up WireGuard at home?", ctx) },
+  ]);
+
   make("Packing for Lisbon", 6 * DAY, [
     { user: "Packing list for 4 days in Lisbon" },
     { script: scriptForPrompt("Packing list for 4 days in Lisbon", ctx) },
@@ -274,6 +292,16 @@ function seedThreads(): Pick<State, "threads" | "messages"> {
     ],
     { incognito: true }
   );
+
+  make("History of the web", 10 * DAY, [
+    { user: "Give me a timeline of the history of the web" },
+    { script: scriptForPrompt("Give me a timeline of the history of the web", ctx) },
+  ]);
+
+  make("Pixel 11 vs iPhone 17", 12 * DAY, [
+    { user: "Compare Pixel 11 and iPhone 17" },
+    { script: scriptForPrompt("Compare Pixel 11 and iPhone 17", ctx) },
+  ]);
 
   return { threads, messages };
 }
@@ -296,6 +324,16 @@ const defaultSettings: Settings = {
   defaultModelRef: DEFAULT_MODEL_REF,
   researchModelRef: "openai/gpt-5",
 };
+
+/** Starts with the research report and the savings calculator pinned, so Artifacts shows both sections. */
+function seedPins(seed: Pick<State, "threads" | "messages">): string[] {
+  const all = collectArtifacts(seed.threads, seed.messages);
+  return [all.find((a) => a.type === "report"), all.find((a) => a.kind === "Calculator")]
+    .filter((a): a is NonNullable<typeof a> => Boolean(a))
+    .map((a) => a.id);
+}
+
+const seed = seedThreads();
 
 export const useApp = create<AppStore>()((set, get) => {
   const patchMessages = (threadId: string, fn: (list: Message[]) => Message[]) =>
@@ -377,7 +415,11 @@ export const useApp = create<AppStore>()((set, get) => {
       ...m,
       status: outcome,
       parts: m.parts.map((p) =>
-        p.type === "thinking" && !p.done ? { ...p, done: true, durationMs: 1000 } : p
+        p.type === "thinking" && !p.done
+          ? { ...p, done: true, durationMs: 1000 }
+          : p.type === "search" && p.phase !== "done"
+            ? { ...p, phase: "done" as const }
+            : p
       ),
     }));
     touch(threadId);
@@ -420,7 +462,7 @@ export const useApp = create<AppStore>()((set, get) => {
   return {
     providers: mockProviders,
     models: mockModels,
-    ...seedThreads(),
+    ...seed,
     activeThreadId: null,
     draft: { modelRef: DEFAULT_MODEL_REF, reasoningLevel: "auto", incognito: false },
     settings: defaultSettings,
@@ -429,6 +471,8 @@ export const useApp = create<AppStore>()((set, get) => {
     streaming: null,
     locationGranted: false,
     savedMessageIds: [],
+    pinnedArtifacts: seedPins(seed),
+    artifactViews: {},
     toast: null,
 
     newChat() {
@@ -579,6 +623,21 @@ export const useApp = create<AppStore>()((set, get) => {
       get().showToast(saved ? "Removed from saved" : "Saved");
     },
 
+    togglePin(artifactId) {
+      const s = get();
+      const pinned = s.pinnedArtifacts.includes(artifactId);
+      set({
+        pinnedArtifacts: pinned
+          ? s.pinnedArtifacts.filter((x) => x !== artifactId)
+          : [artifactId, ...s.pinnedArtifacts],
+      });
+      get().showToast(pinned ? "Unpinned" : "Pinned to Artifacts");
+    },
+
+    markViewed(artifactId) {
+      set((s) => ({ artifactViews: { ...s.artifactViews, [artifactId]: Date.now() } }));
+    },
+
     updateSettings(patch) {
       set((s) => ({ settings: { ...s.settings, ...patch } }));
     },
@@ -664,6 +723,13 @@ export function useComposerTarget() {
 }
 
 /** ui_events the user has sent back for a given component — lets components replay their chosen state. */
+/** Every artifact across non-incognito chats, newest first. */
+export function useArtifacts() {
+  const threads = useApp((s) => s.threads);
+  const messages = useApp((s) => s.messages);
+  return useMemo(() => collectArtifacts(threads, messages), [threads, messages]);
+}
+
 export function useComponentEvents(threadId: string, componentId: string): UiEventPart[] {
   const list = useApp((s) => s.messages[threadId]);
   const out: UiEventPart[] = [];

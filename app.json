@@ -1,22 +1,22 @@
 {
   "expo": {
-    "name": "Atlas",
-    "slug": "atlas",
+    "name": "Anomaly",
+    "slug": "anomaly",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "atlas",
+    "scheme": "anomaly",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.bmar.atlas",
+      "bundleIdentifier": "com.bmar.anomaly",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Atlas uses your location to find theatres, places and weather near you.",
-        "NSMicrophoneUsageDescription": "Atlas uses the microphone for hold-to-talk voice input.",
-        "NSSpeechRecognitionUsageDescription": "Atlas transcribes your voice on device.",
-        "NSPhotoLibraryUsageDescription": "Atlas attaches photos you choose to your messages.",
-        "NSCameraUsageDescription": "Atlas attaches photos you take to your messages."
+        "NSLocationWhenInUseUsageDescription": "Anomaly uses your location to find theatres, places and weather near you.",
+        "NSMicrophoneUsageDescription": "Anomaly uses the microphone for hold-to-talk voice input.",
+        "NSSpeechRecognitionUsageDescription": "Anomaly transcribes your voice on device.",
+        "NSPhotoLibraryUsageDescription": "Anomaly attaches photos you choose to your messages.",
+        "NSCameraUsageDescription": "Anomaly attaches photos you take to your messages."
       }
     },
     "android": {

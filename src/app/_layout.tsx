@@ -43,6 +43,8 @@ export default function RootLayout() {
           <Stack.Screen name="history" />
           <Stack.Screen name="memory" />
           <Stack.Screen name="settings" />
+          <Stack.Screen name="artifacts" />
+          <Stack.Screen name="artifact/[id]" />
         </Stack>
         <ToastHost />
         <StatusBar style="light" />

@@ -1,6 +1,7 @@
 import { Button, Skeleton } from "heroui-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
+import { ActivityRow } from "@/components/chat/Activity";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { Display, Text } from "@/components/ui/Text";
 import type { CatalogName, CatalogProps } from "@/genui/schemas";
@@ -138,6 +139,28 @@ export function Pill({
   );
 }
 
+/** What the activity line says while each component's arguments stream in. */
+const building: Record<string, string> = {
+  MovieShowtimes: "showtimes",
+  MapCard: "the map",
+  Chart: "your chart",
+  Table: "a table",
+  Compare: "the comparison",
+  Timeline: "a timeline",
+  Form: "a form",
+  Stepper: "the steps",
+  Checklist: "your checklist",
+  ChoiceChips: "options",
+  Weather: "the forecast",
+  ProductGrid: "product picks",
+  SubagentPlan: "a plan",
+  SubagentTimeline: "the workers",
+  ResearchPlan: "a research plan",
+  ResearchProgress: "the research run",
+  LocationRequest: "a location request",
+  MemoryConfirm: "a memory",
+};
+
 /** Skeleton shown while a tool call's arguments are still streaming. Shape hints at what's coming. */
 export function GenSkeleton({ name }: { name: string }) {
   const shape: Record<string, "media" | "map" | "chart" | "rows" | "grid" | "compact"> = {
@@ -156,12 +179,8 @@ export function GenSkeleton({ name }: { name: string }) {
       accessibilityLabel={`Building ${name}`}
       className="overflow-hidden rounded-3xl bg-card p-4"
     >
-      <View className="mb-4 flex-row items-center gap-3">
-        <Skeleton className="h-8 w-8 rounded-full" />
-        <View className="flex-1 gap-2">
-          <Skeleton className="h-3.5 w-36 rounded-md" />
-          <Skeleton className="h-3 w-52 rounded-md" />
-        </View>
+      <View className="mb-4">
+        <ActivityRow orb="working" live label={`Building ${building[name] ?? "a card"}`} />
       </View>
       {kind === "media" ? (
         <View className="flex-row gap-3">

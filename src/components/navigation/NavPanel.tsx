@@ -14,7 +14,7 @@ import type { Thread } from "@/lib/types";
 import { useDrawer } from "./SideDrawer";
 
 const destinations: { label: string; icon: IconName; href: Href }[] = [
-  { label: "History", icon: "time-outline", href: "/history" },
+  { label: "Artifacts", icon: "shapes-outline", href: "/artifacts" },
   { label: "Memory", icon: "sparkles-outline", href: "/memory" },
 ];
 
@@ -36,8 +36,8 @@ function Stagger({ index, children, reorder }: { index: number; children: ReactN
     return { opacity: p, transform: [{ translateX: (1 - p) * -22 }] };
   });
   return (
-    <Animated.View style={style} layout={reorder ? reflow : undefined}>
-      {children}
+    <Animated.View layout={reorder ? reflow : undefined}>
+      <Animated.View style={style}>{children}</Animated.View>
     </Animated.View>
   );
 }
@@ -69,7 +69,7 @@ export function NavPanel() {
     <View className="flex-1" style={{ paddingTop: insets.top + 10 }}>
       <Stagger index={0}>
       <View className="flex-row items-center justify-between pl-5 pr-4">
-        <Display className="text-[26px] leading-8">Atlas</Display>
+        <Display className="text-[26px] leading-8">Anomaly</Display>
         <Tap
           accessibilityRole="button"
           accessibilityLabel="Search chats"

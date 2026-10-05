@@ -38,7 +38,7 @@ export const seedMemories: Memory[] = [
   },
   {
     id: "mem_5",
-    text: "Building Atlas, a generative-UI chat app on Expo and Convex",
+    text: "Building Anomaly, a generative-UI chat app on Expo and Convex",
     category: "work",
     scope: "global",
     confidence: 0.93,

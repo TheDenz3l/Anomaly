@@ -37,7 +37,7 @@ export const mockProviders: Provider[] = [
     label: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
     keyHint: "sk-or-…91cd",
-    headers: [{ key: "HTTP-Referer", value: "https://atlas.app" }],
+    headers: [{ key: "HTTP-Referer", value: "https://anomaly.app" }],
     status: "connected",
   },
   {

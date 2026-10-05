@@ -1,9 +1,9 @@
 import * as Clipboard from "expo-clipboard";
 import * as Speech from "expo-speech";
 import { useEffect, useState } from "react";
-import { Linking, Share, View } from "react-native";
+import { Share, View } from "react-native";
 import Animated from "react-native-reanimated";
-import { domainOf, Favicon } from "@/components/ui/Favicon";
+import { Favicon } from "@/components/ui/Favicon";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
@@ -12,6 +12,7 @@ import { fadeIn, popIn } from "@/lib/motion";
 import { findModel, useApp } from "@/lib/store";
 import { colors } from "@/lib/theme";
 import type { Message, Source } from "@/lib/types";
+import { SourceRow } from "./SourceRow";
 
 /** Plain text for copy, share and speech. Components contribute their fallbackText (PRD §3.3). */
 export function plainText(message: Message): string {
@@ -27,11 +28,6 @@ export function plainText(message: Message): string {
     .join("\n\n");
 }
 
-const originLabel: Record<Source["origin"], string> = {
-  native: "from model web search",
-  app: "fetched by Atlas",
-  subagent: "read by a sub-agent",
-};
 
 function ActionIcon({
   icon,
@@ -184,32 +180,11 @@ export function SourcesBar({ message, sources }: { message: Message; sources: So
         open={open}
         onClose={() => setOpen(false)}
         title={`${sources.length} sources`}
-        subtitle="Merged across web search, Atlas fetches and sub-agents. Every citation was matched to one of these."
+        subtitle="Merged across web search, Anomaly’s own fetches and sub-agents. Every citation in the answer points to one of these."
       >
         <View className="gap-1">
           {sources.map((s, i) => (
-            <Tap
-              key={s.id}
-              accessibilityRole="link"
-              onPress={() => void Linking.openURL(s.url)}
-              className="flex-row gap-3 rounded-2xl px-1 py-3"
-            >
-              <Text weight="bold" className="w-5 pt-0.5 text-right text-xs text-ink-faint">
-                {i + 1}
-              </Text>
-              <Favicon url={s.url} size={26} />
-              <View className="flex-1">
-                <Text weight="bold" className="text-[15px] leading-5" numberOfLines={2}>
-                  {s.title}
-                </Text>
-                <Text muted className="mt-0.5 text-[13px] leading-[18px]" numberOfLines={2}>
-                  {s.snippet}
-                </Text>
-                <Text className="mt-1 text-xs text-ink-faint">
-                  {domainOf(s.url)}, {originLabel[s.origin]}
-                </Text>
-              </View>
-            </Tap>
+            <SourceRow key={s.id} source={s} index={i + 1} />
           ))}
         </View>
       </Sheet>

@@ -149,7 +149,7 @@ export default function SettingsScreen() {
               onBlur={() => update({ customInstructions: instructions })}
               multiline
               maxLength={1500}
-              placeholder="How should Atlas respond? What should it know about you?"
+              placeholder="How should Anomaly respond? What should it know about you?"
               placeholderTextColor={colors.textFaint}
               accessibilityLabel="Custom instructions"
               style={
@@ -201,10 +201,10 @@ export default function SettingsScreen() {
             />
             <Text muted className="text-[13px] leading-[18px]">
               {settings.webMode === "auto"
-                ? "Uses the model's own web search when it has one, otherwise Atlas fetches pages itself."
+                ? "Uses the model's own web search when it has one, otherwise Anomaly fetches pages itself."
                 : settings.webMode === "native"
                   ? "Only the model's built-in search. Costs go to your key; models without it can't browse."
-                  : "Atlas always fetches pages itself, even when the model could search."}
+                  : "Anomaly always fetches pages itself, even when the model could search."}
             </Text>
           </Stack>
           <Stack label="Search fallback" last>

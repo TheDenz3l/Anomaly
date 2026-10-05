@@ -7,7 +7,7 @@
    level up from this src/global.css file. */
 @source '../node_modules/heroui-native/lib';
 
-/* Atlas tokens (PRD §2.2). Dark only. */
+/* Anomaly tokens (PRD §2.2). Dark only. */
 @theme {
   --color-primary: #3b82f6;
   --color-primary-soft: rgba(59, 130, 246, 0.15);
