@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { Tap } from "@/components/ui/Tap";
 import { withLinkUrls } from "@/lib/links";
@@ -18,6 +18,7 @@ import { ActivityRow } from "./Activity";
 import { CitationProvider } from "./Citations";
 import { LinkedText } from "./LinkedText";
 import { SearchBlock } from "./SearchBlock";
+import { replyFinished } from "@/lib/haptics";
 
 const hoverable = Platform.OS === "web";
 
@@ -176,6 +177,12 @@ function displayParts(parts: Part[]): Part[] {
 /** Assistant replies have no bubble: text on black, components on surface cards (PRD §2.4). */
 export function AssistantMessage({ message, last }: { message: Message; last: boolean }) {
   const streaming = message.status === "streaming";
+  // A reply finishing in front of you gets one soft tap, after its text has played out.
+  const wasStreaming = useRef(streaming);
+  useEffect(() => {
+    if (wasStreaming.current && message.status === "done") replyFinished();
+    wasStreaming.current = streaming;
+  }, [streaming, message.status]);
   const sources = collectSources(message);
   const visible = displayParts(message.parts);
   const reasoning = message.meta && message.meta.levelSent !== "off";

@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/Composer";
@@ -11,13 +10,16 @@ import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { bubbleIn, popIn, popOut, replyIn, threadIn } from "@/lib/motion";
 import { useApp } from "@/lib/store";
-import { View } from "react-native";
 import {
   KeyboardChatScrollView,
   KeyboardStickyView,
   useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
-import Animated, { useAnimatedStyle } from "react-native-reanimated";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Keyboard, View } from "react-native";
+import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import { setChatVisible } from "@/lib/haptics";
 
 /** Distance from the bottom (px) beyond which we stop following new content and offer a jump button. */
 const FOLLOW_SLACK = 140;
@@ -47,6 +49,14 @@ export default function ChatScreen() {
     [keyboardOffset]
   );
 
+  // Reply haptics only play while the chat is on screen.
+  useFocusEffect(
+    useCallback(() => {
+      setChatVisible(true);
+      return () => setChatVisible(false);
+    }, [])
+  );
+
   // Switching chats remounts the conversation (one settle-in animation) and marks the messages that were
   // already there, so only messages that arrive afterwards animate in. Sending the first message of a new
   // chat continues the same view rather than counting as a switch.
@@ -63,7 +73,82 @@ export default function ChatScreen() {
     }
   }
 
+  // A sent message is parked just under the header, with the reply filling the space below it
+  // (ChatGPT-style). Blank space past the end of the content (a scroll inset, not layout) makes
+  // room for that even while the reply is still short.
+  const blank = useSharedValue(0);
+  const viewH = useRef(0);
+  const contentH = useRef(0);
+  /** Where each user message sits in the conversation, by key. */
+  const userY = useRef(new Map<string, number>());
+  const anchor = useRef<string | null>(null);
+  const parkPending = useRef(false);
+  let latestUser: string | null = null;
+  let latestUserAt = 0;
+  for (let i = count - 1; i >= 0 && messages; i--) {
+    if (messages[i].role === "user") {
+      latestUser = messages[i].key ?? messages[i].id;
+      latestUserAt = messages[i].createdAt;
+      break;
+    }
+  }
+
+  const syncBlank = () => {
+    const y = anchor.current ? userY.current.get(anchor.current) : undefined;
+    blank.set(y === undefined ? 0 : Math.max(0, y + viewH.current - contentH.current));
+  };
+
+  const park = () => {
+    const y = anchor.current ? userY.current.get(anchor.current) : undefined;
+    if (!parkPending.current || y === undefined) return;
+    parkPending.current = false;
+    syncBlank();
+    // Two frames: the blank inset lands before the scroll that needs it.
+    const go = () =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          smoothUntil.current = Date.now() + 500;
+          scroller.current?.scrollTo({
+            y: userY.current.get(anchor.current ?? "") ?? y,
+            animated: true,
+          });
+        })
+      );
+    if (!Keyboard.isVisible()) return go();
+    // Let the keyboard finish closing first, so its own offset change doesn't fight the scroll.
+    let done = false;
+    const once = () => {
+      if (done) return;
+      done = true;
+      sub.remove();
+      go();
+    };
+    const sub = Keyboard.addListener("keyboardDidHide", once);
+    setTimeout(once, 700);
+  };
+
   useEffect(() => {
+    anchor.current = null;
+    parkPending.current = false;
+    userY.current.clear();
+    blank.set(0);
+  }, [generation, blank]);
+
+  useEffect(() => {
+    // Only a message just sent parks the view; history arriving after a switch doesn't.
+    if (!latestUser || existing.has(latestUser) || Date.now() - latestUserAt > 15_000) return;
+    // Stop following the end and park the new message instead.
+    stick.current = false;
+    anchor.current = latestUser;
+    parkPending.current = true;
+    park();
+    // park reads refs only; it must not re-run when its identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestUser, existing]);
+
+  useEffect(() => {
+    // A send in this chat parks the view itself.
+    if (anchor.current) return;
     stick.current = threadId !== null;
     settleUntil.current = Date.now() + 1500;
     requestAnimationFrame(() => {
@@ -71,19 +156,6 @@ export default function ChatScreen() {
       else scroller.current?.scrollTo({ y: 0, animated: false });
     });
   }, [threadId]);
-
-  useEffect(() => {
-    if (count === 0) return;
-    stick.current = true;
-    settleUntil.current = Date.now() + 1500;
-    smoothUntil.current = Date.now() + 400;
-    scroller.current?.scrollToEnd({ animated: true });
-    // Content that grew while the smooth scroll ran: finish the trip.
-    const t = setTimeout(() => {
-      if (stick.current) scroller.current?.scrollToEnd({ animated: true });
-    }, 420);
-    return () => clearTimeout(t);
-  }, [count]);
 
   const jumpToLatest = () => {
     stick.current = true;
@@ -99,26 +171,37 @@ export default function ChatScreen() {
           // message. The empty state recentres itself instead of scrolling away.
           keyboardLiftBehavior={count === 0 ? "never" : "whenAtEnd"}
           offset={keyboardOffset}
+          blankSpace={blank}
           // A new chat is a fixed screen, not a list: the keyboard inset must not make the orb
           // draggable. Tapping the empty space still puts the keyboard away.
           scrollEnabled={count > 0}
           showsVerticalScrollIndicator={count > 0}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
+          onLayout={(e) => {
+            viewH.current = e.nativeEvent.layout.height;
+            syncBlank();
+          }}
           onScroll={(e) => {
             if (Date.now() < smoothUntil.current) return;
             const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-            const distance = contentSize.height - contentOffset.y - layoutMeasurement.height;
-            stick.current = distance < FOLLOW_SLACK;
+            // The end includes the blank space a parked send leaves below the reply.
+            const distance =
+              contentSize.height + blank.get() - contentOffset.y - layoutMeasurement.height;
+            stick.current = !anchor.current && distance < FOLLOW_SLACK;
             const isAway = count > 0 && distance > FOLLOW_SLACK * 2;
             if (isAway !== away) setAway(isAway);
           }}
           scrollEventThrottle={32}
-          onContentSizeChange={() => {
-            // Follow new content while a reply streams or a thread settles in. Growth the user caused
-            // (opening a thinking block, expanding a card) must not drag the view to the bottom.
+          onContentSizeChange={(_, h) => {
+            contentH.current = h;
+            syncBlank();
+            // Follow new content while a thread settles in. A parked send stays put while the
+            // reply streams below it; growth the user caused (opening a thinking block,
+            // expanding a card) never drags the view either.
             const now = Date.now();
-            if (!stick.current || count === 0 || now < smoothUntil.current) return;
+            if (anchor.current || !stick.current || count === 0 || now < smoothUntil.current)
+              return;
             if (useApp.getState().streaming || now < settleUntil.current)
               scroller.current?.scrollToEnd({ animated: false });
           }}
@@ -134,20 +217,33 @@ export default function ChatScreen() {
         >
           <Animated.View key={generation} entering={threadIn} style={{ flexGrow: 1, gap: 22 }}>
             {messages && messages.length > 0 ? (
-              messages.map((m, i) => (
-                <Animated.View
-                  key={m.key ?? m.id}
-                  entering={
-                    existing.has(m.key ?? m.id) ? undefined : m.role === "user" ? bubbleIn : replyIn
-                  }
-                >
-                  {m.role === "user" ? (
-                    <UserMessage message={m} />
-                  ) : (
-                    <AssistantMessage message={m} last={i === messages.length - 1} />
-                  )}
-                </Animated.View>
-              ))
+              messages.map((m, i) => {
+                const key = m.key ?? m.id;
+                return (
+                  <Animated.View
+                    key={key}
+                    entering={
+                      existing.has(key) ? undefined : m.role === "user" ? bubbleIn : replyIn
+                    }
+                    onLayout={
+                      m.role === "user"
+                        ? (e) => {
+                            userY.current.set(key, e.nativeEvent.layout.y);
+                            if (key !== anchor.current) return;
+                            syncBlank();
+                            park();
+                          }
+                        : undefined
+                    }
+                  >
+                    {m.role === "user" ? (
+                      <UserMessage message={m} />
+                    ) : (
+                      <AssistantMessage message={m} last={i === messages.length - 1} />
+                    )}
+                  </Animated.View>
+                );
+              })
             ) : (
               <Animated.View style={[{ flexGrow: 1 }, recentre]}>
                 <EmptyState />

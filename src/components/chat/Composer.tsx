@@ -8,6 +8,7 @@ import {
   TextInput,
   View,
   type LayoutChangeEvent,
+  Keyboard,
 } from "react-native";
 import Animated from "react-native-reanimated";
 import { Glass } from "@/components/ui/Glass";
@@ -144,6 +145,8 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
 
   const submit = () => {
     if (!canSend) return;
+    // The keyboard goes away so the sent message and the reply below it get the screen.
+    Keyboard.dismiss();
     send(text, attachments);
     setText("");
     setAttachments([]);
