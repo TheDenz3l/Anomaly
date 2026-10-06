@@ -12,6 +12,9 @@ import Svg, { Circle, Path } from "react-native-svg";
 import { colors } from "@/lib/theme";
 import { BANDS, makeOrb, orbFrame, type OrbFrame, type OrbState } from "./orb-core";
 
+/** Redraws at most this often; 15 rather than 16.7 so a 60 Hz screen never drops one. */
+const MIN_FRAME_MS = 15;
+
 export type { OrbState } from "./orb-core";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -56,10 +59,19 @@ export function Orb({
   );
   const initial = useMemo(() => orbFrame(0, cfg), [cfg]);
   const t = useSharedValue(0);
+  const pending = useSharedValue(0);
 
   const clock = useFrameCallback((info) => {
     // A frame's gap is capped so a backgrounded app carries on instead of jumping.
-    t.set(t.get() + Math.min(info.timeSincePreviousFrame ?? 16, 100) * speed);
+    const elapsed = pending.get() + Math.min(info.timeSincePreviousFrame ?? 16, 100);
+    // At 120 Hz every other frame is skipped: slow dots look the same at 60, and the UI thread
+    // keeps half the frames for scrolling and sheets.
+    if (elapsed < MIN_FRAME_MS) {
+      pending.set(elapsed);
+      return;
+    }
+    pending.set(0);
+    t.set(t.get() + elapsed * speed);
   }, !still);
 
   useEffect(() => {

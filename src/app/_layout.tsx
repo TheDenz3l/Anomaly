@@ -16,6 +16,7 @@ import { colors } from "@/lib/theme";
 
 import "../global.css";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { PortalHost } from "@/components/ui/Portal";
 
 Uniwind.setTheme("dark");
 void SplashScreen.preventAutoHideAsync();
@@ -66,6 +67,7 @@ export default function RootLayout() {
               <Stack.Screen name="artifacts" />
               <Stack.Screen name="artifact/[id]" />
             </Stack>
+            <PortalHost />
             <ToastHost />
             <StatusBar style="light" />
           </HeroUINativeProvider>

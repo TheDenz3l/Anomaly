@@ -1,8 +1,7 @@
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   Keyboard,
-  PanResponder,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -10,7 +9,6 @@ import {
   useWindowDimensions,
 } from "react-native";
 import Reanimated, {
-  Easing,
   interpolate,
   useAnimatedStyle,
   useReducedMotion,
@@ -27,6 +25,9 @@ import { findModel, useApp } from "@/lib/store";
 import { colors, fonts, LIST_RADIUS } from "@/lib/theme";
 
 import type { Model } from "@/lib/types";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { scheduleOnRN } from "react-native-worklets";
+import { clampedOut } from "@/lib/motion";
 
 /** Space between the bottom of a page's scroll window and the sheet's edge. */
 const WINDOW_GAP = 12;
@@ -135,7 +136,7 @@ type Sub = "thinking" | "all";
 type Page = "main" | Sub;
 
 /** Push and pop between pages: a quick ease-out that settles without a bounce, as in iOS. */
-const SLIDE = { duration: 380, easing: Easing.bezier(0.32, 0.72, 0, 1) };
+const SLIDE = { duration: 380, easing: clampedOut };
 
 /**
  * Model and thinking level in one sheet, the iOS way: the models you use on top, a Thinking row
@@ -176,44 +177,33 @@ export function ModelPicker({
   const [thinkH, setThinkH] = useState(0);
   /** 0 shows the first page, 1 the page pushed on top of it. */
   const slide = useSharedValue(0);
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) {
-      setPage("main");
-      setQuery("");
-    }
-  }
-  useEffect(() => {
-    if (open) slide.set(0);
-  }, [open, slide]);
 
-  const go = useCallback(
-    (next: Page) => {
-      Keyboard.dismiss();
-      if (next !== "main") setSub(next);
-      setPage(next);
-      const to = next === "main" ? 0 : 1;
-      slide.set(reduced ? to : withTiming(to, SLIDE));
-    },
-    [reduced, slide]
-  );
+  const go = (next: Page) => {
+    Keyboard.dismiss();
+    if (next !== "main") setSub(next);
+    setPage(next);
+    const to = next === "main" ? 0 : 1;
+    slide.set(reduced ? to : withTiming(to, SLIDE));
+  };
+  const popped = () => {
+    Keyboard.dismiss();
+    setPage("main");
+  };
 
-  // Swipe right on a pushed page to go back, following the finger.
-  const pan = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) =>
-          page !== "main" && g.dx > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6,
-        onPanResponderMove: (_, g) => slide.set(Math.min(1, Math.max(0, 1 - g.dx / W))),
-        onPanResponderRelease: (_, g) => {
-          if (g.dx > W * 0.32 || g.vx > 0.6) go("main");
-          else slide.set(withTiming(1, SLIDE));
-        },
-        onPanResponderTerminate: () => slide.set(withTiming(1, SLIDE)),
-      }),
-    [page, W, go, slide]
-  );
+  // Swipe right on a pushed page to go back, following the finger on the UI thread.
+  const back = Gesture.Pan()
+    .enabled(page !== "main")
+    .activeOffsetX(12)
+    .failOffsetY([-12, 12])
+    .onUpdate((e) => {
+      slide.set(Math.min(1, Math.max(0, 1 - e.translationX / W)));
+    })
+    .onEnd((e) => {
+      if (e.translationX > W * 0.32 || e.velocityX > 600) {
+        slide.set(withTiming(0, SLIDE));
+        scheduleOnRN(popped);
+      } else slide.set(withTiming(1, SLIDE));
+    });
 
   const firstStyle = useAnimatedStyle(
     () => ({
@@ -239,10 +229,9 @@ export function ModelPicker({
   // An unset choice falls back to a model; mark that one, as the composer shows it.
   const resolved = findModel(models, requested);
   const value = resolved.providerId ? modelRef(resolved) : requested;
-  const current = models.find((m) => modelRef(m) === value);
 
   // The models you reach for: this one, those of your latest chats, then your defaults.
-  const short = useMemo(() => {
+  const recent = useMemo(() => {
     const byRef = new Map(models.map((m) => [modelRef(m), m]));
     const refs = [
       value,
@@ -260,6 +249,24 @@ export function ModelPicker({
     }
     return out.length ? out : models.slice(0, 4);
   }, [models, threads, settings.defaultModelRef, settings.researchModelRef, value]);
+
+  // What shapes the sheet is held from the moment it opens until it has slid away, so a pick
+  // doesn't reorder the list or resize the sheet on its way out. Only the checkmark moves.
+  const [held, setHeld] = useState<{ value: string; short: Model[] } | null>(null);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setHeld({ value, short: recent });
+  }
+  const short = held?.short ?? recent;
+  const current = models.find((m) => modelRef(m) === (held?.value ?? value));
+  /** Back to the first page once out of sight, ready for the next open. */
+  const reset = () => {
+    setHeld(null);
+    setPage("main");
+    setQuery("");
+    slide.set(0);
+  };
 
   const reasoning = current?.profile.reasoning;
   const thinking = Boolean(
@@ -425,6 +432,8 @@ export function ModelPicker({
       onClose={onClose}
       fit
       bare
+      keepMounted
+      onHidden={reset}
       title={page === "thinking" ? "Thinking" : page === "all" ? "All models" : title}
       leading={
         page === "main"
@@ -460,24 +469,25 @@ export function ModelPicker({
             </View>
           </ScrollView>
         </Reanimated.View>
-        <Reanimated.View
-          {...pan.panHandlers}
-          accessibilityElementsHidden={page === "main"}
-          importantForAccessibility={page === "main" ? "no-hide-descendants" : "auto"}
-          style={[styles.page, { width: W, height: bodyH }, pushedStyle]}
-        >
-          {sub === "all" ? (
-            allPage
-          ) : (
-            <ScrollView
-              style={styles.window}
-              showsVerticalScrollIndicator={false}
-              bounces={thinkH + WINDOW_GAP > bodyH}
-            >
-              <View style={styles.pageBody}>{thinkingPage}</View>
-            </ScrollView>
-          )}
-        </Reanimated.View>
+        <GestureDetector gesture={back}>
+          <Reanimated.View
+            accessibilityElementsHidden={page === "main"}
+            importantForAccessibility={page === "main" ? "no-hide-descendants" : "auto"}
+            style={[styles.page, { width: W, height: bodyH }, pushedStyle]}
+          >
+            {sub === "all" ? (
+              allPage
+            ) : (
+              <ScrollView
+                style={styles.window}
+                showsVerticalScrollIndicator={false}
+                bounces={thinkH + WINDOW_GAP > bodyH}
+              >
+                <View style={styles.pageBody}>{thinkingPage}</View>
+              </ScrollView>
+            )}
+          </Reanimated.View>
+        </GestureDetector>
       </View>
     </FormSheet>
   );

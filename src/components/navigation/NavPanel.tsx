@@ -79,8 +79,10 @@ export function NavPanel() {
       );
   };
 
+  // The screen slides over the open drawer, which shuts once covered (see SideDrawer): one motion
+  // instead of the drawer closing while the screen pushes. Web has no native transition to wait for.
   const go = (href: Href) => {
-    close();
+    if (Platform.OS === "web") close();
     router.push(href);
   };
 

@@ -6,6 +6,7 @@ import {
   LinearTransition,
   ZoomIn,
   ZoomOut,
+  Easing,
 } from "react-native-reanimated";
 
 /**
@@ -24,6 +25,28 @@ export const springs = {
   snappy: { damping: 20, stiffness: 380, mass: 0.6 },
   /** Things travelling a distance — drawer, sheets, indicators. */
   glide: { damping: 26, stiffness: 240, mass: 0.9 },
+};
+
+const iosOut = Easing.bezierFn(0.32, 0.72, 0, 1);
+/**
+ * The iOS sheet curve, clamped: a timing's first frame can land a hair before its start time,
+ * and the curve extrapolated below 0 nudges a sheet the wrong way for a frame.
+ */
+export function clampedOut(t: number) {
+  "worklet";
+  return iosOut(Math.min(1, Math.max(0, t)));
+}
+
+/**
+ * Sheets open on a critically damped spring, quick off the mark with no bounce (a bottom-anchored
+ * sheet that overshoots shows a gap under it), and close on an ease-out that covers most of the
+ * distance in its first third, so the screen under them is usable again at once.
+ */
+export const sheetMotion = {
+  open: { damping: 34, stiffness: 340, mass: 0.9, overshootClamping: true },
+  close: { duration: 260, easing: clampedOut },
+  /** A drag let go before it dismisses settles back. */
+  settle: { damping: 30, stiffness: 320, overshootClamping: true },
 };
 
 /** Section entrance when a page opens: rise and fade, staggered by position (capped so long pages don't crawl). */

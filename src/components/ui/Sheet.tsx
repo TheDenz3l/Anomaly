@@ -1,20 +1,26 @@
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { sheetMotion } from "@/lib/motion";
 import { colors, LIST_RADIUS } from "@/lib/theme";
 import { Glass } from "./Glass";
 import { Icon } from "./Icon";
+import { Portal, useCover } from "./Portal";
 import { Tap } from "./Tap";
 import { Text } from "./Text";
 import Reanimated, {
   interpolate,
   useAnimatedStyle,
   useReducedMotion,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
 import {
-  Animated,
+  BackHandler,
   Keyboard,
-  Modal,
   Platform,
   Pressable,
+  StyleSheet,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -35,7 +41,8 @@ type Props = {
   scroll?: boolean;
 };
 
-const native = Platform.OS !== "web";
+/** Hidden this far past its own edge, so the glass rim leaves the screen too. */
+const MARGIN = 24;
 
 /**
  * Bottom sheet on glass. Slides up; respects reduced motion.
@@ -43,11 +50,21 @@ const native = Platform.OS !== "web";
  * With the keyboard up the sheet keeps its size (no relayout when the keyboard comes or goes) and
  * moves with the keyboard frame by frame: it rises as far as the room above it allows, the footer
  * rides on top of the keyboard, and the body scrolls the focused field into the space between.
+ *
+ * Renders above every screen through the PortalHost rather than in a Modal; its motion runs on the
+ * UI thread.
  */
-export function Sheet({ open, onClose, title, subtitle, children, footer, scroll = true }: Props) {
+export function Sheet(props: Props) {
+  return (
+    <Portal>
+      <SheetLayer {...props} />
+    </Portal>
+  );
+}
+
+function SheetLayer({ open, onClose, title, subtitle, children, footer, scroll = true }: Props) {
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
-  const [progress] = useState(() => new Animated.Value(0));
   const reduced = useReducedMotion();
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
@@ -59,6 +76,13 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, scroll
   // for the sheet to land (an autofocused field would otherwise scroll itself out of view).
   const [landed, setLanded] = useState(false);
   if (!open && landed) setLanded(false);
+  useCover(open);
+
+  /** How far down the sheet hides once measured; until then it waits below the whole screen. */
+  const travel = useRef<number | null>(null);
+  const waiting = useRef(false);
+  const y = useSharedValue(height);
+  const reach = useSharedValue(height);
 
   // How far the whole sheet can rise before its top would reach the status bar.
   const room = Math.max(0, height - insets.top - 8 - sheetH);
@@ -80,56 +104,108 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, scroll
       backgroundColor: `rgba(20,20,23,${interpolate(covered, [0, 12], [0, 1], "clamp")})`,
     };
   }, [room, homeIndicator]);
+  const slide = useAnimatedStyle(() => ({ transform: [{ translateY: y.get() }] }));
+  const dim = useAnimatedStyle(() => ({
+    opacity: interpolate(y.get(), [0, reach.get()], [1, 0], "clamp"),
+  }));
+
+  const slideIn = () => {
+    const land = () => setLanded(true);
+    const done = (finished?: boolean) => {
+      "worklet";
+      if (finished) scheduleOnRN(land);
+    };
+    y.set(reduced ? withTiming(0, { duration: 0 }, done) : withSpring(0, sheetMotion.open, done));
+  };
+
+  const hidden = () => {
+    travel.current = null;
+    y.set(height);
+    setMounted(false);
+  };
 
   useEffect(() => {
+    if (!mounted) return;
     if (open) {
-      const land = ({ finished }: { finished: boolean }) => finished && setLanded(true);
-      if (reduced)
-        Animated.timing(progress, { toValue: 1, duration: 0, useNativeDriver: native }).start(land);
-      else
-        Animated.spring(progress, {
-          toValue: 1,
-          damping: 24,
-          stiffness: 260,
-          mass: 0.9,
-          useNativeDriver: native,
-        }).start(land);
-    } else {
-      Animated.timing(progress, {
-        toValue: 0,
-        duration: reduced ? 0 : 170,
-        useNativeDriver: native,
-      }).start(() => setMounted(false));
+      // Wait one layout pass so the slide starts at the screen's edge, not far below it.
+      if (travel.current === null && !reduced) waiting.current = true;
+      else slideIn();
+      return;
     }
-  }, [open, reduced, progress]);
+    waiting.current = false;
+    Keyboard.dismiss();
+    y.set(
+      withTiming(
+        travel.current ?? height,
+        reduced ? { duration: 0 } : sheetMotion.close,
+        (finished) => {
+          if (finished) scheduleOnRN(hidden);
+        }
+      )
+    );
+    // slideIn/hidden only touch refs, shared values and setters; re-running on their identity
+    // would restart the animation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mounted, reduced]);
 
   useEffect(() => {
     if (landed) body.current?.assureFocusedInputVisible();
   }, [landed]);
 
+  useEffect(() => {
+    if (!open) return;
+    if (Platform.OS === "web") {
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") onClose();
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [open, onClose]);
+
   if (!mounted) return null;
 
-  const translateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [Math.min(520, height * 0.6), 0],
-  });
   const maxHeight = height * 0.88;
 
   return (
-    <Modal transparent visible animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Animated.View style={{ flex: 1, opacity: progress, backgroundColor: "rgba(0,0,0,0.55)" }}>
+    <View
+      accessibilityViewIsModal={open}
+      accessibilityElementsHidden={!open}
+      importantForAccessibility={open ? "auto" : "no-hide-descendants"}
+      // Closing hands touches back at once; the slide-out never blocks the screen under it.
+      style={[StyleSheet.absoluteFill, { pointerEvents: open ? "auto" : "none" }]}
+    >
+      <Reanimated.View
+        style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0,0,0,0.55)" }, dim]}
+      >
         <Pressable accessibilityLabel="Close" style={{ flex: 1 }} onPress={onClose} />
-      </Animated.View>
-      <Animated.View
-        onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
-        style={{
-          position: "absolute",
-          bottom: 0,
-          alignSelf: "center",
-          width: Math.min(width, 560),
-          maxHeight,
-          transform: [{ translateY }],
+      </Reanimated.View>
+      <Reanimated.View
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          setSheetH(h);
+          travel.current = h + MARGIN;
+          reach.set(h + MARGIN);
+          if (!waiting.current) return;
+          waiting.current = false;
+          y.set(h + MARGIN);
+          slideIn();
         }}
+        style={[
+          {
+            position: "absolute",
+            bottom: 0,
+            alignSelf: "center",
+            width: Math.min(width, 560),
+            maxHeight,
+          },
+          slide,
+        ]}
       >
         <Reanimated.View style={[{ maxHeight, flexShrink: 1 }, sheetLift]}>
           <Glass
@@ -211,7 +287,7 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, scroll
             ) : null}
           </Glass>
         </Reanimated.View>
-      </Animated.View>
-    </Modal>
+      </Reanimated.View>
+    </View>
   );
 }
