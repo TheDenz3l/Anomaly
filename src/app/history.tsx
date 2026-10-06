@@ -109,6 +109,9 @@ export default function HistoryScreen() {
             value={query}
             onChangeText={setQuery}
             placeholder="Search chats"
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
             placeholderTextColor={colors.textFaint}
             accessibilityLabel="Search chats"
             style={

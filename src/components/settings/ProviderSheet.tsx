@@ -1,5 +1,5 @@
 import { Spinner } from "heroui-native";
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, useRef } from "react";
 import { TextInput, View } from "react-native";
 import { Icon } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
@@ -225,6 +225,10 @@ export function ProviderSheet({
     }
   );
   const [apiKey, setApiKey] = useState("");
+  // Return moves through the form like an iOS settings sheet; the last field closes the keyboard.
+  const nameRef = useRef<TextInput>(null);
+  const urlRef = useRef<TextInput>(null);
+  const keyRef = useRef<TextInput>(null);
   const [fetching, setFetching] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -319,6 +323,10 @@ export function ProviderSheet({
               setForm({ ...form, providerId: providerId.toLowerCase() })
             }
             placeholder="together"
+            autoCorrect={false}
+            returnKeyType="next"
+            submitBehavior="submit"
+            onSubmitEditing={() => nameRef.current?.focus()}
             placeholderTextColor={colors.textFaint}
             autoCapitalize="none"
             accessibilityLabel="Provider ID"
@@ -327,6 +335,10 @@ export function ProviderSheet({
         </Field>
         <Field label="Name">
           <TextInput
+            ref={nameRef}
+            returnKeyType="next"
+            submitBehavior="submit"
+            onSubmitEditing={() => urlRef.current?.focus()}
             value={form.label}
             onChangeText={(label) => setForm({ ...form, label })}
             placeholder="Together AI"
@@ -337,6 +349,11 @@ export function ProviderSheet({
         </Field>
         <Field label="Base URL">
           <TextInput
+            ref={urlRef}
+            returnKeyType="next"
+            submitBehavior="submit"
+            onSubmitEditing={() => keyRef.current?.focus()}
+            autoCorrect={false}
             value={form.baseUrl}
             onChangeText={(baseUrl) => setForm({ ...form, baseUrl })}
             placeholder="https://api.together.xyz/v1"
@@ -352,6 +369,8 @@ export function ProviderSheet({
           hint="Encrypted at rest on the server and never sent back to this device."
         >
           <TextInput
+            ref={keyRef}
+            returnKeyType="done"
             value={apiKey}
             onChangeText={(t) => setApiKey(t.replace(/\s+/g, ""))}
             placeholder={

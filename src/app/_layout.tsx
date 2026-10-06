@@ -15,6 +15,7 @@ import { ConvexSync } from "@/lib/sync";
 import { colors } from "@/lib/theme";
 
 import "../global.css";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 
 Uniwind.setTheme("dark");
 void SplashScreen.preventAutoHideAsync();
@@ -48,23 +49,27 @@ export default function RootLayout() {
     <ConvexAuthProvider client={convex} storage={secureStorage}>
       <ConvexSync />
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
-        <HeroUINativeProvider config={{ devInfo: { stylingPrinciples: false }, toast: "disabled" }}>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: colors.background },
-            }}
+        <KeyboardProvider>
+          <HeroUINativeProvider
+            config={{ devInfo: { stylingPrinciples: false }, toast: "disabled" }}
           >
-            <Stack.Screen name="index" />
-            <Stack.Screen name="history" />
-            <Stack.Screen name="memory" />
-            <Stack.Screen name="settings" />
-            <Stack.Screen name="artifacts" />
-            <Stack.Screen name="artifact/[id]" />
-          </Stack>
-          <ToastHost />
-          <StatusBar style="light" />
-        </HeroUINativeProvider>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.background },
+              }}
+            >
+              <Stack.Screen name="index" />
+              <Stack.Screen name="history" />
+              <Stack.Screen name="memory" />
+              <Stack.Screen name="settings" />
+              <Stack.Screen name="artifacts" />
+              <Stack.Screen name="artifact/[id]" />
+            </Stack>
+            <ToastHost />
+            <StatusBar style="light" />
+          </HeroUINativeProvider>
+        </KeyboardProvider>
       </GestureHandlerRootView>
     </ConvexAuthProvider>
   );

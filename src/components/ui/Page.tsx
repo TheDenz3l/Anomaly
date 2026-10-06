@@ -15,6 +15,7 @@ import { Glass } from "./Glass";
 import { Icon } from "./Icon";
 import { Tap } from "./Tap";
 import { Display, Text } from "./Text";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 
 const BAR = 56;
 
@@ -61,10 +62,12 @@ export function Page({
 
   return (
     <View className="flex-1 bg-background">
-      <Animated.ScrollView
+      <KeyboardAwareScrollView
         onScroll={onScroll}
         scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        bottomOffset={48}
         contentContainerStyle={{
           paddingTop: insets.top + BAR + 4,
           paddingBottom: insets.bottom + 32,
@@ -109,7 +112,7 @@ export function Page({
             <LayoutAnimationConfig skipEntering>{section}</LayoutAnimationConfig>
           </Animated.View>
         ))}
-      </Animated.ScrollView>
+      </KeyboardAwareScrollView>
 
       <View
         pointerEvents="box-none"

@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
-import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/Composer";
@@ -13,25 +11,13 @@ import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { bubbleIn, popIn, popOut, replyIn, threadIn } from "@/lib/motion";
 import { useApp } from "@/lib/store";
-
-function useKeyboardVisible() {
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    const show = Keyboard.addListener(
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
-      () => setVisible(true)
-    );
-    const hide = Keyboard.addListener(
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
-      () => setVisible(false)
-    );
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-  return visible;
-}
+import { View } from "react-native";
+import {
+  KeyboardChatScrollView,
+  KeyboardStickyView,
+  useReanimatedKeyboardAnimation,
+} from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 
 /** Distance from the bottom (px) beyond which we stop following new content and offer a jump button. */
 const FOLLOW_SLACK = 140;
@@ -40,17 +26,26 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const threadId = useApp((s) => s.activeThreadId);
   const messages = useApp((s) => (s.activeThreadId ? s.messages[s.activeThreadId] : undefined));
-  const keyboard = useKeyboardVisible();
   const [composerH, setComposerH] = useState(110);
   const [away, setAway] = useState(false);
-  const scroller = useRef<ScrollView>(null);
+  const scroller = useRef<Animated.ScrollView>(null);
   const stick = useRef(true);
   /** Until then, layout growth (a thread loading, images settling) keeps the view pinned to the end. */
   const settleUntil = useRef(0);
   /** A smooth scroll is in flight; jumping now would cut it short. */
   const smoothUntil = useRef(0);
   const count = messages?.length ?? 0;
-  const bottom = keyboard ? 8 : Math.max(insets.bottom, 12);
+  const bottom = Math.max(insets.bottom, 12);
+  // With the keyboard up the composer rides 8pt above it; the home-indicator gap slides under.
+  const keyboardOffset = bottom - 8;
+  const kb = useReanimatedKeyboardAnimation();
+  // Keep the empty-state orb centred in the space left between the header and the composer.
+  const recentre = useAnimatedStyle(
+    () => ({
+      transform: [{ translateY: (kb.height.value + keyboardOffset * kb.progress.value) / 2 }],
+    }),
+    [keyboardOffset]
+  );
 
   // Switching chats remounts the conversation (one settle-in animation) and marks the messages that were
   // already there, so only messages that arrive afterwards animate in. Sending the first message of a new
@@ -98,8 +93,16 @@ export default function ChatScreen() {
   return (
     <SideDrawer panel={<NavPanel />}>
       <View className="flex-1 bg-background">
-        <ScrollView
+        <KeyboardChatScrollView
           ref={scroller}
+          // ChatGPT-style: lift the conversation with the keyboard only when reading the latest
+          // message. The empty state recentres itself instead of scrolling away.
+          keyboardLiftBehavior={count === 0 ? "never" : "whenAtEnd"}
+          offset={keyboardOffset}
+          // A new chat is a fixed screen, not a list: the keyboard inset must not make the orb
+          // draggable. Tapping the empty space still puts the keyboard away.
+          scrollEnabled={count > 0}
+          showsVerticalScrollIndicator={count > 0}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           onScroll={(e) => {
@@ -146,35 +149,39 @@ export default function ChatScreen() {
                 </Animated.View>
               ))
             ) : (
-              <EmptyState />
+              <Animated.View style={[{ flexGrow: 1 }, recentre]}>
+                <EmptyState />
+              </Animated.View>
             )}
           </Animated.View>
-        </ScrollView>
+        </KeyboardChatScrollView>
 
         <ChatHeader />
 
-        {away ? (
-          <Animated.View
-            entering={popIn}
-            exiting={popOut}
-            style={{ position: "absolute", alignSelf: "center", bottom: composerH + bottom + 12 }}
-          >
-            <Tap
-              accessibilityRole="button"
-              accessibilityLabel="Jump to latest"
-              onPress={jumpToLatest}
-            >
-              <Glass radius={20} interactive>
-                <View className="h-10 w-10 items-center justify-center">
-                  <Icon name="arrow-down" size={18} />
-                </View>
-              </Glass>
-            </Tap>
-          </Animated.View>
-        ) : null}
+        <KeyboardStickyView
+          offset={{ opened: keyboardOffset }}
+          pointerEvents="box-none"
+          style={{ position: "absolute", alignSelf: "center", bottom: composerH + bottom + 12 }}
+        >
+          {away ? (
+            <Animated.View entering={popIn} exiting={popOut}>
+              <Tap
+                accessibilityRole="button"
+                accessibilityLabel="Jump to latest"
+                onPress={jumpToLatest}
+              >
+                <Glass radius={20} interactive>
+                  <View className="h-10 w-10 items-center justify-center">
+                    <Icon name="arrow-down" size={18} />
+                  </View>
+                </Glass>
+              </Tap>
+            </Animated.View>
+          ) : null}
+        </KeyboardStickyView>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        <KeyboardStickyView
+          offset={{ opened: keyboardOffset }}
           pointerEvents="box-none"
           style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}
         >
@@ -184,7 +191,7 @@ export default function ChatScreen() {
           >
             <Composer onLayout={(e) => setComposerH(e.nativeEvent.layout.height)} />
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardStickyView>
       </View>
     </SideDrawer>
   );
