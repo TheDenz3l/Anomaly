@@ -130,9 +130,17 @@ export function Pill({
     danger: colors.danger,
   }[tone];
   return (
-    <View className={`flex-row items-center gap-1 self-start rounded-full px-2 py-0.5 ${bg}`}>
+    <View
+      style={{ maxWidth: "100%" }}
+      className={`flex-row items-center gap-1 self-start rounded-full px-2 py-0.5 ${bg}`}
+    >
       {icon ? <Icon name={icon} size={11} color={fg} /> : null}
-      <Text weight="medium" className="text-[11px] leading-4" style={{ color: fg }}>
+      <Text
+        weight="medium"
+        numberOfLines={1}
+        className="shrink text-[11px] leading-4"
+        style={{ color: fg }}
+      >
         {label}
       </Text>
     </View>

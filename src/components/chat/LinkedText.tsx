@@ -1,6 +1,7 @@
-import { Linking, Platform, Text as RNText, StyleSheet, View } from "react-native";
+import { Platform, Text as RNText, StyleSheet, View } from "react-native";
 import { LinkIcon } from "@/components/ui/LinkIcon";
-import { domainOf, parseLinks, useLinkTitle } from "@/lib/links";
+import { domainOf, parseLinks, useLinkTitle, openLink } from "@/lib/links";
+import { fonts } from "@/lib/theme";
 
 const ICON = 17;
 
@@ -10,8 +11,8 @@ function LinkSpan({ title, url, color }: { title: string; url: string; color: st
     <RNText
       accessibilityRole="link"
       accessibilityLabel={title}
-      onPress={() => void Linking.openURL(url)}
-      style={{ color }}
+      onPress={() => void openLink(url)}
+      style={{ color, fontFamily: fonts.bold }}
     >
       <RNText style={styles.keep}>
         <View style={styles.slot} importantForAccessibility="no-hide-descendants">

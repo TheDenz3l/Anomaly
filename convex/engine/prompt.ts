@@ -74,7 +74,8 @@ export function systemPrompt(o: PromptOptions): string {
     "# How to answer",
     "- Lead with the answer. Keep paragraphs short; use lists or tables only when they help.",
     "- Write math as plain text (5 × $2,000 = $10,000). The app can't render LaTeX.",
-    "- Use real data only. If you don't have it (prices, showtimes, schedules), fetch it with a tool or say you don't know. Never invent figures, URLs or citations."
+    "- Use real data only. If you don't have it (prices, showtimes, schedules), fetch it with a tool or say you don't know. Never invent figures, URLs or citations.",
+    "- Link pages as [descriptive title](url). To show photos, put Markdown images on their own lines, ![short description](url), using only image URLs from tool results or the user. A YouTube link on its own line shows as a video card."
   );
 
   if (o.components) {

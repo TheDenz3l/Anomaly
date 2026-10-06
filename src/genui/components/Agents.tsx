@@ -471,14 +471,16 @@ export function ResearchProgress({ props, live }: GenProps<"ResearchProgress">) 
         {props.workers.map((w, i) => {
           const wp = Math.min(1, Math.max(0, (p - i * 0.04) / 0.55));
           return (
+            // A long step wraps inside its own pill instead of running past the card.
             <View
               key={w.id}
-              className="flex-row items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"
+              style={{ maxWidth: "100%" }}
+              className="flex-row items-center gap-1.5 rounded-2xl bg-raised px-3 py-1.5"
             >
               <View
                 className={`h-1.5 w-1.5 rounded-full ${wp >= 1 ? "bg-success" : "bg-primary"}`}
               />
-              <Text weight="medium" className="text-xs">
+              <Text weight="medium" className="shrink text-xs leading-4">
                 {w.label}
               </Text>
               <Text muted className="text-xs">

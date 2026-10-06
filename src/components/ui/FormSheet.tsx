@@ -14,9 +14,9 @@ import {
   useReanimatedKeyboardAnimation,
   type KeyboardAwareScrollViewRef,
 } from "react-native-keyboard-controller";
-import Reanimated, { useAnimatedStyle, useReducedMotion } from "react-native-reanimated";
+import Reanimated, { FadeIn, useAnimatedStyle, useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors } from "@/lib/theme";
+import { colors, LIST_RADIUS } from "@/lib/theme";
 import { Glass } from "./Glass";
 import { Icon, type IconName } from "./Icon";
 import { Tap } from "./Tap";
@@ -46,6 +46,13 @@ type Props = {
   page?: string;
   /** A fixed body that ends at the keyboard instead of scrolling, for text editors. */
   fill?: boolean;
+  /**
+   * A content-height sheet floating just above the bottom edge on glass (the iOS 26 partial
+   * sheet). It grows with its content up to the full height, then scrolls.
+   */
+  fit?: boolean;
+  /** Children lay out the body themselves (no scroll view), e.g. a sheet with sliding pages. */
+  bare?: boolean;
   children: ReactNode;
 };
 
@@ -75,15 +82,48 @@ function ToolbarButton({ action, prominent }: { action: SheetAction; prominent?:
           {action.busy ? (
             <ActivityIndicator color={colors.text} />
           ) : (
-            <Icon
-              name={action.icon}
-              size={20}
-              color={action.disabled ? colors.textFaint : colors.text}
-            />
+            <Reanimated.View key={action.icon} entering={FadeIn.duration(200)}>
+              <Icon
+                name={action.icon}
+                size={20}
+                color={action.disabled ? colors.textFaint : colors.text}
+              />
+            </Reanimated.View>
           )}
         </View>
       </Glass>
     </Tap>
+  );
+}
+
+/** Gap between a floating sheet and the screen edges. */
+const FLOAT = 8;
+/** Toolbar height; a bare body gets what's left of the sheet. */
+export const TOOLBAR_H = 64;
+
+/** Inner width and the most body height a floating (`fit`) sheet has on this screen. */
+export function floatingSheetBox(screen: { width: number; height: number }, insetTop: number) {
+  return {
+    width: Math.min(screen.width - FLOAT * 2, 560),
+    maxBody: screen.height - insetTop - 10 - FLOAT * 2 - TOOLBAR_H,
+  };
+}
+
+/** A floating sheet sits on Liquid Glass; a full-height one is opaque. */
+function Wrap({
+  fit,
+  maxHeight,
+  children,
+}: {
+  fit?: boolean;
+  maxHeight: number;
+  children: ReactNode;
+}) {
+  if (!fit) return <>{children}</>;
+  return (
+    <Glass radius={38} tint="rgba(24,24,27,0.55)" style={{ maxHeight, flexShrink: 1 }}>
+      {children}
+    </Glass>
   );
 }
 
@@ -113,6 +153,8 @@ export function FormSheet({
   onShown,
   page,
   fill,
+  fit,
+  bare,
   children,
 }: Props) {
   const insets = useSafeAreaInsets();
@@ -204,35 +246,60 @@ export function FormSheet({
         <Pressable accessibilityLabel="Close" style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
       <Animated.View
-        style={[styles.sheet, { top, width: Math.min(width, 560), transform: [{ translateY }] }]}
+        style={[
+          fit ? styles.floating : styles.sheet,
+          fit
+            ? { maxHeight: height - top - FLOAT, width: Math.min(width - FLOAT * 2, 560) }
+            : { top, width: Math.min(width, 560) },
+          { transform: [{ translateY }] },
+        ]}
       >
-        <View {...pan.panHandlers} style={styles.toolbar}>
-          <ToolbarButton action={leading ?? { label: "Close", icon: "close", onPress: onClose }} />
-          <View pointerEvents="none" style={styles.titleWrap}>
-            <Text weight="bold" accessibilityRole="header" numberOfLines={1} style={styles.title}>
-              {title}
-            </Text>
+        <Wrap fit={fit} maxHeight={height - top - FLOAT}>
+          <View {...pan.panHandlers} style={styles.toolbar}>
+            <ToolbarButton
+              action={leading ?? { label: "Close", icon: "close", onPress: onClose }}
+            />
+            <View pointerEvents="none" style={styles.titleWrap}>
+              <Reanimated.View key={title} entering={FadeIn.duration(240)}>
+                <Text
+                  weight="bold"
+                  accessibilityRole="header"
+                  numberOfLines={1}
+                  style={styles.title}
+                >
+                  {title}
+                </Text>
+              </Reanimated.View>
+            </View>
+            {confirm ? (
+              <ToolbarButton action={confirm} prominent />
+            ) : (
+              <View style={styles.button} />
+            )}
           </View>
-          {confirm ? <ToolbarButton action={confirm} prominent /> : <View style={styles.button} />}
-        </View>
-        {fill ? (
-          <FillBody>{children}</FillBody>
-        ) : (
-          <KeyboardAwareScrollView
-            ref={body}
-            enabled={landed}
-            bottomOffset={28}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            contentContainerStyle={{
-              paddingHorizontal: 16,
-              paddingTop: 6,
-              paddingBottom: insets.bottom + 28,
-            }}
-          >
-            {children}
-          </KeyboardAwareScrollView>
-        )}
+          {bare ? (
+            children
+          ) : fill ? (
+            <FillBody>{children}</FillBody>
+          ) : (
+            <View style={[styles.clip, fit ? styles.clipFit : styles.clipFull]}>
+              <KeyboardAwareScrollView
+                ref={body}
+                enabled={landed}
+                bottomOffset={28}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="interactive"
+                style={fit ? { flexGrow: 0, flexShrink: 1 } : undefined}
+                contentContainerStyle={{
+                  paddingTop: 6,
+                  paddingBottom: fit ? 8 : insets.bottom + 28,
+                }}
+              >
+                {children}
+              </KeyboardAwareScrollView>
+            </View>
+          )}
+        </Wrap>
       </Animated.View>
     </Modal>
   );
@@ -251,8 +318,14 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.10)",
     overflow: "hidden",
   },
+  floating: {
+    position: "absolute",
+    bottom: FLOAT,
+    alignSelf: "center",
+    borderRadius: 38,
+  },
   toolbar: {
-    height: 64,
+    height: TOOLBAR_H,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
@@ -270,4 +343,8 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 17, color: colors.text },
   fill: { flex: 1, paddingHorizontal: 16 },
+  /** The scroll area is a rounded window, so lists scrolled under the toolbar stay rounded. */
+  clip: { marginHorizontal: 16, borderRadius: LIST_RADIUS, overflow: "hidden" },
+  clipFit: { flexShrink: 1, marginBottom: 12 },
+  clipFull: { flex: 1 },
 });

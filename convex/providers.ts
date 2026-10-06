@@ -177,6 +177,35 @@ async function remoteRules(ctx: Parameters<typeof webCache>[0]): Promise<RemoteR
   }
 }
 
+/** The /models request got the site's HTML (or nothing) instead of the API's JSON. */
+function isWebPage(e: unknown): boolean {
+  return e instanceof LlmError && e.message === "Provider returned non-JSON";
+}
+
+/**
+ * Lists the endpoint's models. People often paste the site's address (api.example.com) rather
+ * than the API's base (api.example.com/v1), which answers /models with a web page or a 404; in
+ * that case /v1 is tried before giving up, and the working base URL is returned.
+ */
+async function discoverModels(ep: Endpoint): Promise<{ raw: any[]; baseUrl: string }> {
+  try {
+    return { raw: await listModels(ep), baseUrl: ep.baseUrl };
+  } catch (e) {
+    const missingVersion = !/\/v\d+[a-z0-9]*\/?$/i.test(new URL(ep.baseUrl).pathname);
+    if (!missingVersion || !(isWebPage(e) || (e instanceof LlmError && e.kind === "not_found")))
+      throw e;
+    const baseUrl = `${ep.baseUrl.replace(/\/+$/, "")}/v1`;
+    try {
+      return { raw: await listModels({ ...ep, baseUrl }), baseUrl };
+    } catch (retry) {
+      // The /v1 answer says more than the web page did (a bad key, say), unless it's also a miss.
+      throw retry instanceof LlmError && retry.kind !== "not_found" && !isWebPage(retry)
+        ? retry
+        : e;
+    }
+  }
+}
+
 export const refreshInternal = internalAction({
   args: { userId: v.id("users"), providerId: v.string() },
   handler: async (
@@ -187,7 +216,16 @@ export const refreshInternal = internalAction({
     if (!ep) throw new ConvexError("Provider not found.");
     await ctx.runMutation(internal.providers.setStatus, { userId, providerId, status: "checking" });
     try {
-      const raw = await listModels(ep);
+      const found = await discoverModels(ep);
+      const raw = found.raw;
+      if (found.baseUrl !== ep.baseUrl) {
+        ep.baseUrl = found.baseUrl;
+        await ctx.runMutation(internal.providers.setBaseUrl, {
+          userId,
+          providerId,
+          baseUrl: found.baseUrl,
+        });
+      }
       const rules = await remoteRules(ctx);
       const models = raw
         .filter((m) => typeof m?.id === "string" && m.id)
@@ -211,9 +249,11 @@ export const refreshInternal = internalAction({
       const msg =
         e instanceof LlmError && e.kind === "auth"
           ? "The provider rejected the API key."
-          : e instanceof LlmError && e.kind === "not_found"
-            ? "No /models endpoint at this base URL. Check it ends in /v1 (or the provider's equivalent)."
-            : errorMessage(e);
+          : isWebPage(e)
+            ? "This URL answered with a web page, not the API. Check the base URL; most end in /v1."
+            : e instanceof LlmError && e.kind === "not_found"
+              ? "No /models endpoint at this base URL. Check it ends in /v1 (or the provider's equivalent)."
+              : errorMessage(e);
       await ctx.runMutation(internal.providers.setStatus, {
         userId,
         providerId,
@@ -273,6 +313,17 @@ export const setStatus = internalMutation({
       .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", providerId))
       .first();
     if (row) await ctx.db.patch(row._id, { status, lastError: error });
+  },
+});
+
+export const setBaseUrl = internalMutation({
+  args: { userId: v.id("users"), providerId: v.string(), baseUrl: v.string() },
+  handler: async (ctx, { userId, providerId, baseUrl }) => {
+    const row = await ctx.db
+      .query("providers")
+      .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", providerId))
+      .first();
+    if (row) await ctx.db.patch(row._id, { baseUrl });
   },
 });
 

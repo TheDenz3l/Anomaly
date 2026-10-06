@@ -12,14 +12,11 @@ const CATCH_UP_S = 3;
 /** After the reply ends, the rest plays out over about this long, easing into the last word. */
 const FINISH_S = 0.8;
 const FINISH_MIN_CPS = 70;
-/** Typing ticks come at most this often, spreading out by up to TICK_FADE_MS as the reply ends. */
-const TICK_MS = 70;
-const TICK_FADE_MS = 190;
 
 /**
  * Reveals streamed text a few characters per frame instead of a chunk per network update. The
  * reveal trails the model at a steady reading pace (catching up only when far behind), then plays
- * out the rest with an easing finish. Each new word gives a light typing tick.
+ * out the rest with an easing finish. New words feed the reply haptics.
  */
 export function useSmoothText(text: string, streaming: boolean): string {
   const reduced = useReducedMotion();
@@ -28,13 +25,10 @@ export function useSmoothText(text: string, streaming: boolean): string {
   const target = useRef(text.length);
   const source = useRef(text);
   const live = useRef(streaming);
-  /** Backlog when the reply ended; the typing ticks spread out as it drains. */
-  const finishFrom = useRef(0);
   const frame = useRef<number | null>(null);
   const lastT = useRef(0);
 
   useEffect(() => {
-    if (live.current && !streaming) finishFrom.current = Math.max(1, text.length - pos.current);
     target.current = text.length;
     source.current = text;
     live.current = streaming;
@@ -56,10 +50,7 @@ export function useSmoothText(text: string, streaming: boolean): string {
       const before = Math.floor(pos.current);
       pos.current = Math.min(target.current, pos.current + cps * dt);
       const n = Math.floor(pos.current);
-      if (n > before && /\s/.test(source.current.slice(before, n))) {
-        const winding = live.current ? 0 : 1 - backlog / finishFrom.current;
-        typingTick(TICK_MS + winding * TICK_FADE_MS);
-      }
+      if (n > before && /\s/.test(source.current.slice(before, n))) typingTick();
       setShown((s) => (s === n ? s : n));
       if (pos.current < target.current) frame.current = requestAnimationFrame(step);
       else {

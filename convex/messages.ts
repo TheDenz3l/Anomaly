@@ -94,6 +94,18 @@ export const send = mutation({
       if (args.research && thread.mode !== "research") {
         await ctx.db.patch(thread._id, { mode: "research" });
         thread = { ...thread, mode: "research" };
+      } else if (!args.research && thread.mode === "research") {
+        // Deep Research runs once per request. Once its report is in (or it ended), a reply
+        // carries on as a normal chat that can see the report; mid-run replies still answer it.
+        const run = await ctx.db
+          .query("researchRuns")
+          .withIndex("by_thread", (q) => q.eq("threadId", thread._id))
+          .order("desc")
+          .first();
+        if (!run || ["done", "failed", "cancelled"].includes(run.status)) {
+          await ctx.db.patch(thread._id, { mode: "chat" });
+          thread = { ...thread, mode: "chat" };
+        }
       }
     } else {
       const settings = await loadSettings(ctx, userId);

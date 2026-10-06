@@ -45,7 +45,8 @@
       "expo-image-picker",
       "expo-image",
       "expo-secure-store",
-      "expo-speech-recognition"
+      "expo-speech-recognition",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

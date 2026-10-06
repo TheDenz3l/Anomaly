@@ -11,7 +11,7 @@ import { SourceCollector } from "../web/sources";
 import { spawnTool, type SpawnEnv } from "./agents";
 import { modelEngine, note, type Engine } from "./context";
 import { failTurn, finishTurn } from "./finish";
-import { lastInput, toChatMessages } from "./history";
+import { conversationContext, lastInput, toChatMessages } from "./history";
 import { runModelLoop, type LoopTool } from "./loop";
 import { recallMemories } from "./memory";
 import { systemPrompt } from "./prompt";
@@ -130,12 +130,14 @@ export async function runTurn(
           mode: "research",
         });
         engine.thread = { ...engine.thread, mode: "research" };
-        if (await researchTurn(engine, sink, messageId, { text: q, event: null })) return;
+        const context = conversationContext(history);
+        if (await researchTurn(engine, sink, messageId, { text: q, event: null, context })) return;
       }
     }
 
     if (thread.mode === "research" && !opts.injected) {
-      if (await researchTurn(engine, sink, messageId, input)) return;
+      const context = conversationContext(history);
+      if (await researchTurn(engine, sink, messageId, { ...input, context })) return;
     }
 
     const dp = engine.dp;

@@ -1,5 +1,5 @@
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors } from "@/lib/theme";
+import { colors, LIST_RADIUS } from "@/lib/theme";
 import { Glass } from "./Glass";
 import { Icon } from "./Icon";
 import { Tap } from "./Tap";
@@ -172,21 +172,29 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, scroll
               ) : null}
             </Pressable>
             {scroll ? (
-              <KeyboardAwareScrollView
-                style={{ flexGrow: 0, flexShrink: 1 }}
-                contentContainerStyle={{
-                  paddingHorizontal: 20,
-                  paddingBottom: footer ? 12 : insets.bottom + 20,
+              // A rounded window, so lists scrolled under the header keep their corners.
+              <View
+                style={{
+                  flexShrink: 1,
+                  marginHorizontal: 20,
+                  marginBottom: footer ? 0 : insets.bottom + 8,
+                  borderRadius: LIST_RADIUS,
+                  overflow: "hidden",
                 }}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="interactive"
-                ref={body}
-                enabled={landed && !short}
-                // Clear the footer riding on the keyboard; the sheet's own rise already counts.
-                bottomOffset={(footer ? footerH : 0) + 40 - room}
               >
-                {children}
-              </KeyboardAwareScrollView>
+                <KeyboardAwareScrollView
+                  style={{ flexGrow: 0, flexShrink: 1 }}
+                  contentContainerStyle={{ paddingBottom: 12 }}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="interactive"
+                  ref={body}
+                  enabled={landed && !short}
+                  // Clear the footer riding on the keyboard; the sheet's own rise already counts.
+                  bottomOffset={(footer ? footerH : 0) + 40 - room}
+                >
+                  {children}
+                </KeyboardAwareScrollView>
+              </View>
             ) : (
               children
             )}

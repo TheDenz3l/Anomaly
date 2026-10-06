@@ -178,6 +178,25 @@ function readFocus(env: ToolEnv): string {
   return (part?.queries ?? []).slice(-2).join(" ");
 }
 
+const MD_IMAGE = /!\[([^\]\n]*)\]\((https:\/\/[^)\s]+)[^)]*\)/g;
+/** Page chrome rather than photos: icons, logos, badges, tracking pixels, animations. */
+const NOT_PHOTO =
+  /\.(svg|gif|ico)(\?|$)|logo|icon|sprite|avatar|badge|pixel|tracking|spacer|emoji|1x1|blank\./i;
+
+/** The page's first few real photos as Markdown images, for the model to show in its reply. */
+function pageImages(markdown: string, max = 4): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of markdown.matchAll(MD_IMAGE)) {
+    const url = m[2];
+    if (NOT_PHOTO.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    out.push(`![${m[1].replace(/[[\]]/g, "").trim().slice(0, 80)}](${url})`);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 export function readUrlTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
@@ -229,8 +248,12 @@ export function readUrlTool(env: ToolEnv): LoopTool {
         const note = view.trimmed
           ? `\n(Long page: navigation removed; showing the opening and the passages about "${truncate(focus, 80)}". […] marks skipped parts. Call read_url again with a different focus for other details.)`
           : "";
+        const images = pageImages(page.text);
+        const extra = images.length
+          ? `\n\nPhotos on this page (show any that help with Markdown image syntax):\n${images.join("\n")}`
+          : "";
         return {
-          content: `[${n}] ${page.title} — ${page.url}${note}\n${wrapUntrusted(page.url, view.text)}`,
+          content: `[${n}] ${page.title} — ${page.url}${note}\n${wrapUntrusted(page.url, view.text + extra)}`,
         };
       } catch (e) {
         if (searchId)

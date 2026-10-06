@@ -130,6 +130,14 @@ export function LinkInput({ value, onChangeValue, onSelectionChange, ref, ...res
   const selection = useRef<Selection | null>(null);
   const [forced, setForced] = useState<Selection | undefined>();
   const [scrollY, setScrollY] = useState(0);
+  // iOS keeps a multiline field at its tallest when its text is cleared from outside (a sent
+  // message), so a clear that didn't come from typing gives the field a fresh native view.
+  const [typed, setTyped] = useState(value);
+  const [generation, setGeneration] = useState(0);
+  if (value !== typed) {
+    setTyped(value);
+    if (value === "") setGeneration((g) => g + 1);
+  }
   const latest = useRef({ value, onChangeValue });
   useEffect(() => {
     latest.current = { value, onChangeValue };
@@ -214,6 +222,7 @@ export function LinkInput({ value, onChangeValue, onSelectionChange, ref, ...res
     const rb = toRaw(pieces, b);
     const edited = value.slice(0, ra) + inserted + value.slice(rb);
     const { raw, urls } = autolink(edited, inserted.length > 1 ? [ra, ra + inserted.length] : null);
+    setTyped(raw);
     onChangeValue(raw);
     const shown = joined(layout(raw));
     if (shown !== next) place(Math.max(0, shown.length - (prev.length - b)));
@@ -267,6 +276,7 @@ export function LinkInput({ value, onChangeValue, onSelectionChange, ref, ...res
   return (
     <View>
       <TextInput
+        key={generation}
         {...shared}
         onScroll={(e) => setScrollY(e.nativeEvent.contentOffset.y)}
         style={[styles.text, styles.pad, styles.nativeInput]}

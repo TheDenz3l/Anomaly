@@ -19,7 +19,12 @@ import { focusPage } from "../web/relevance";
  * reflect/loop → synthesize (convex/research.ts) → verify citations → deliver.
  */
 
-type Input = { text: string; event: Extract<Part, { type: "ui_event" }> | null };
+type Input = {
+  text: string;
+  event: Extract<Part, { type: "ui_event" }> | null;
+  /** The chat so far, so a request like "now research the second one" can be resolved. */
+  context?: string;
+};
 type Plan = { steps: { id: string; title: string; queries: string[] }[]; depth: number };
 
 function highest(engine: Engine): string {
@@ -71,18 +76,22 @@ async function clarify(
   engine: Engine,
   sink: PartWriter,
   messageId: Id<"messages">,
-  question: string
+  request: string,
+  context = ""
 ) {
   const p = await planner(engine);
   const { value } = await askJson<{
+    question?: string;
     intro?: string;
     prompt?: string;
     choices?: { id: string; label: string }[];
   }>(
     p,
-    'You scope research requests. Offer 3-6 short options that would most change how the research is done (focus, constraints, audience, region, timeframe). Shape: {"intro": one friendly sentence, "prompt": short question, "choices": [{"id": slug, "label": 2-6 words}]}',
-    question
+    'You scope research requests. The request may build on the conversation so far ("research that", "the second option", "go deeper on pricing"): "question" restates it as a complete, standalone research question with every name, item and constraint it refers to spelled out. Then offer 3-6 short options that would most change how the research is done (focus, constraints, audience, region, timeframe). Shape: {"question": string, "intro": one friendly sentence, "prompt": short question, "choices": [{"id": slug, "label": 2-6 words}]}',
+    context ? `Conversation so far:\n${context}\n\nResearch request: ${request}` : request
   );
+  const question =
+    typeof value?.question === "string" && value.question.trim() ? value.question.trim() : request;
   const choices = (value?.choices ?? [])
     .filter((c) => c && typeof c.label === "string")
     .slice(0, 6)
@@ -440,7 +449,7 @@ export async function researchTurn(
 
   if (!run || ["done", "failed", "cancelled"].includes(run.status)) {
     if (ev || !input.text.trim()) return false;
-    await clarify(engine, sink, messageId, input.text);
+    await clarify(engine, sink, messageId, input.text, input.context);
     return true;
   }
   if (run.status === "clarifying") {

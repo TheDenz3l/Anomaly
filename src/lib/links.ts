@@ -1,5 +1,8 @@
+import * as WebBrowser from "expo-web-browser";
 import { useEffect, useSyncExternalStore } from "react";
+import { Linking, Platform } from "react-native";
 import { api, convex } from "@/lib/convex";
+import { colors } from "@/lib/theme";
 
 /**
  * Links in message text. The composer writes them as Markdown, `[Page title](url)`, so the model
@@ -11,6 +14,26 @@ export type LinkSegment =
 
 const TOKEN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>"'`]+/g;
 const MARKDOWN_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+
+/**
+ * Opens a link without leaving the app: web pages slide up in a Safari sheet the user swipes away
+ * to come back. Other schemes (mail, phone, maps) go to their own apps.
+ */
+export async function openLink(url: string) {
+  if (Platform.OS !== "web" && /^https?:\/\//i.test(url)) {
+    try {
+      await WebBrowser.openBrowserAsync(url, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+        controlsColor: colors.primaryStrong,
+        dismissButtonStyle: "close",
+      });
+      return;
+    } catch {
+      // Fall through to the system handler.
+    }
+  }
+  await Linking.openURL(url);
+}
 
 export function domainOf(url: string): string {
   return url

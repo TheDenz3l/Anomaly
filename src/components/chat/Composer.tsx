@@ -21,8 +21,7 @@ import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-spe
 import { modelRef } from "@/lib/models";
 import { colors } from "@/lib/theme";
 import { LinkInput } from "./LinkInput";
-import { ModelPicker } from "./ModelPicker";
-import { levelLabel, ThinkingPicker } from "./ThinkingPicker";
+import { levelLabel, ModelPicker } from "./ModelPicker";
 
 function Chip({
   icon,
@@ -44,16 +43,18 @@ function Chip({
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected: active }}
       onPress={onPress}
-      className={`h-8 flex-row items-center gap-1.5 rounded-full px-2.5 ${active ? "bg-primary-soft" : "bg-white/[0.07]"}`}
+      className={`h-8 flex-row items-center gap-1.5 rounded-full ${label ? "px-2.5" : "w-8 justify-center"} ${active ? "bg-primary-soft" : "bg-white/[0.07]"}`}
     >
       <Icon name={icon} size={14} color={active ? colors.primaryStrong : colors.textMuted} />
-      <Text
-        weight="medium"
-        className={`text-[13px] ${active ? "text-primary-strong" : "text-ink"}`}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
+      {label ? (
+        <Text
+          weight="medium"
+          className={`text-[13px] ${active ? "text-primary-strong" : "text-ink"}`}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      ) : null}
     </Tap>
   );
 }
@@ -127,7 +128,7 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
 
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [picker, setPicker] = useState<"model" | "thinking" | null>(null);
+  const [picker, setPicker] = useState(false);
   const voice = useVoice(setText, (message) => showToast(message, "danger"));
   const input = useRef<TextInput>(null);
 
@@ -253,30 +254,33 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
             >
               <Icon name="add" size={20} color={colors.text} />
             </Tap>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              className="flex-1"
-              contentContainerStyle={{ gap: 6 }}
-            >
-              <Chip
-                icon="cube-outline"
-                label={model.name}
-                accessibilityLabel={`Model: ${model.name}`}
-                onPress={() => setPicker("model")}
-              />
-              {thinkingSupported ? (
-                <Chip
-                  icon="bulb-outline"
-                  label={levelLabel(target.reasoningLevel)}
-                  accessibilityLabel={`Thinking: ${levelLabel(target.reasoningLevel)}`}
-                  active={target.reasoningLevel !== "auto" && target.reasoningLevel !== "off"}
-                  onPress={() => setPicker("thinking")}
-                />
-              ) : null}
+            <View className="flex-1 flex-row items-center gap-1.5">
+              {/* One label for the model and its thinking level, as in Claude's composer. */}
+              <Tap
+                haptic
+                accessibilityRole="button"
+                accessibilityLabel={
+                  thinkingSupported
+                    ? `Model: ${model.name}, thinking ${levelLabel(target.reasoningLevel)}`
+                    : `Model: ${model.name}`
+                }
+                accessibilityHint="Choose the model and how much it thinks"
+                onPress={() => setPicker(true)}
+                style={{ flexShrink: 1 }}
+                className="h-8 flex-row items-center gap-1.5 rounded-full bg-white/[0.07] px-3"
+              >
+                <Text weight="medium" className="shrink text-[14px]" numberOfLines={1}>
+                  {model.name}
+                </Text>
+                {thinkingSupported ? (
+                  <Text weight="medium" muted className="text-[14px]" numberOfLines={1}>
+                    {levelLabel(target.reasoningLevel)}
+                  </Text>
+                ) : null}
+              </Tap>
               <Chip
                 icon="telescope-outline"
-                label="Research"
+                label={researchArmed ? "Research" : ""}
                 accessibilityLabel="Deep research"
                 active={researchArmed}
                 onPress={() => {
@@ -284,7 +288,7 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
                   if (!researchArmed) showToast("Deep research on for the next message");
                 }}
               />
-            </ScrollView>
+            </View>
             <View className="h-9 w-9">
               {streaming ? (
                 <Animated.View
@@ -344,17 +348,12 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
       </Glass>
 
       <ModelPicker
-        open={picker === "model"}
-        onClose={() => setPicker(null)}
+        open={picker}
+        onClose={() => setPicker(false)}
         value={target.modelRef}
         onSelect={setModel}
-      />
-      <ThinkingPicker
-        open={picker === "thinking"}
-        onClose={() => setPicker(null)}
-        model={model}
-        value={target.reasoningLevel}
-        onSelect={setReasoningLevel}
+        level={target.reasoningLevel}
+        onLevel={setReasoningLevel}
       />
     </View>
   );

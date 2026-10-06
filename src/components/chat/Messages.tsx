@@ -18,7 +18,7 @@ import { ActivityRow } from "./Activity";
 import { CitationProvider } from "./Citations";
 import { LinkedText } from "./LinkedText";
 import { SearchBlock } from "./SearchBlock";
-import { replyFinished } from "@/lib/haptics";
+import { replyEnded } from "@/lib/haptics";
 
 const hoverable = Platform.OS === "web";
 
@@ -177,10 +177,10 @@ function displayParts(parts: Part[]): Part[] {
 /** Assistant replies have no bubble: text on black, components on surface cards (PRD §2.4). */
 export function AssistantMessage({ message, last }: { message: Message; last: boolean }) {
   const streaming = message.status === "streaming";
-  // A reply finishing in front of you gets one soft tap, after its text has played out.
+  // The end of a reply settles the haptics: a soft tap once a finished reply has played out.
   const wasStreaming = useRef(streaming);
   useEffect(() => {
-    if (wasStreaming.current && message.status === "done") replyFinished();
+    if (wasStreaming.current && !streaming) replyEnded(message.status === "done");
     wasStreaming.current = streaming;
   }, [streaming, message.status]);
   const sources = collectSources(message);

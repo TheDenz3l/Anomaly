@@ -5,7 +5,7 @@ import { Text } from "@/components/ui/Text";
 import { ActionButton, Pill } from "@/genui/kit";
 import { modelRef } from "@/lib/models";
 import { useApp } from "@/lib/store";
-import { colors, fonts } from "@/lib/theme";
+import { colors, fonts, LIST_RADIUS } from "@/lib/theme";
 import type { CapabilityProfile, Model, Provider } from "@/lib/types";
 import * as Clipboard from "expo-clipboard";
 import { useRef, useState, ReactNode, RefObject } from "react";
@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
-  Linking,
   Pressable,
   StyleSheet,
   TextInput,
@@ -23,6 +22,7 @@ import {
 import Animated, { SlideInLeft, SlideInRight } from "react-native-reanimated";
 import { Favicon } from "@/components/ui/Favicon";
 import { FormSheet, GROUP_BG } from "@/components/ui/FormSheet";
+import { openLink } from "@/lib/links";
 
 type Preset = {
   id: string;
@@ -777,6 +777,8 @@ export function ProviderSheet({
       onChangeText={setKey}
       placeholder={keyHint ? `Saved ${keyHint}` : preset ? "Paste your key" : "Optional"}
       secureTextEntry
+      // An API key, not an account password: keeps iOS from offering to save it to Passwords.
+      textContentType="oneTimeCode"
       autoCapitalize="none"
       autoCorrect={false}
       spellCheck={false}
@@ -990,7 +992,7 @@ export function ProviderSheet({
               <Tap
                 accessibilityRole="link"
                 hitSlop={6}
-                onPress={() => void Linking.openURL(preset.keys)}
+                onPress={() => void openLink(preset.keys)}
                 className="flex-row items-center gap-1 self-start"
               >
                 <Text weight="medium" className="text-[13px]" style={{ color: colors.link }}>
@@ -1103,7 +1105,7 @@ export function ProviderSheet({
 }
 
 const styles = StyleSheet.create({
-  group: { backgroundColor: GROUP_BG, borderRadius: 22, overflow: "hidden" },
+  group: { backgroundColor: GROUP_BG, borderRadius: LIST_RADIUS, overflow: "hidden" },
   row: {
     minHeight: 52,
     flexDirection: "row",

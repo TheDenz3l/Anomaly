@@ -118,6 +118,32 @@ export async function toChatMessages(
   return { messages: out, droppedImages };
 }
 
+/**
+ * The conversation before the latest user message, as plain "User:"/"Assistant:" turns, newest
+ * last and cut to `maxChars` from the front. Gives one-shot prompts (like research scoping) the
+ * context a follow-up such as "research that" depends on.
+ */
+export function conversationContext(history: Doc<"messages">[], maxChars = 12_000): string {
+  let last = history.length - 1;
+  while (last >= 0 && history[last].role !== "user") last--;
+  const turns: string[] = [];
+  for (let i = 0; i < last; i++) {
+    const m = history[i];
+    const text =
+      m.role === "assistant"
+        ? assistantText(m, false)
+        : m.parts
+            .map((p) =>
+              p.type === "text" ? p.text : p.type === "ui_event" ? `[picked: ${p.label}]` : ""
+            )
+            .filter(Boolean)
+            .join("\n");
+    if (text.trim()) turns.push(`${m.role === "user" ? "User" : "Assistant"}: ${text.trim()}`);
+  }
+  const all = turns.join("\n\n");
+  return all.length > maxChars ? `…${all.slice(-maxChars)}` : all;
+}
+
 /** The input that triggered this turn: the last user message before the reply. */
 export function lastInput(history: Doc<"messages">[]): {
   text: string;

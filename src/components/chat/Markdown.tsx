@@ -1,8 +1,20 @@
+import MaskedView from "@react-native-masked-view/masked-view";
 import { Fragment, type ReactNode, memo } from "react";
-import { Text as RNText, View, Linking, ScrollView } from "react-native";
+import {
+  Text as RNText,
+  View,
+  ScrollView,
+  StyleSheet,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
+import Svg, { Defs, Pattern, Rect } from "react-native-svg";
+import { colors, fonts } from "@/lib/theme";
+import { IMAGE_URL, ImageGallery, VideoCard, youtubeId, type ImageRef } from "./Media";
 import { Text } from "@/components/ui/Text";
 import { CitationPill } from "./Citations";
 import { useSmoothText } from "./useSmoothText";
+import { domainOf, openLink, trimUrl } from "@/lib/links";
 
 /** Drops a trailing unmatched `**` so half-streamed bold doesn't flash raw asterisks. */
 function balance(text: string): string {
@@ -13,59 +25,173 @@ function balance(text: string): string {
 }
 
 const LINK = /^\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)$/;
+const BARE_URL = /^https?:\/\/[^\s<>()\]]+$/;
 
-function inline(text: string, keyBase: string): ReactNode[] {
+/** A bare URL reads as its site and path, shortened: example.com/news/2026/… */
+function shortUrl(url: string): string {
+  const rest = url.replace(/^https?:\/\/(www\.)?[^/?#]+/, "").replace(/\/$/, "");
+  const path = rest.length > 22 ? `${rest.slice(0, 21)}…` : rest;
+  return domainOf(url) + path;
+}
+
+const ARROW = "\u2009↗";
+const HIDE = { color: "transparent" } as const;
+
+/**
+ * A link in reply text: bold, with an arrow, opening in the in-app browser. Its dotted underline
+ * is drawn by RichText. In a mask it is an opaque block where the dots should show.
+ */
+function LinkRun({ label, url, mask }: { label: ReactNode; url: string; mask?: boolean }) {
+  if (mask) {
+    return (
+      <RNText style={styles.maskLink}>
+        {label}
+        <RNText style={styles.maskArrow}>{ARROW}</RNText>
+      </RNText>
+    );
+  }
+  return (
+    <RNText accessibilityRole="link" onPress={() => void openLink(url)} style={styles.link}>
+      {label}
+      <RNText style={styles.arrow}>{ARROW}</RNText>
+    </RNText>
+  );
+}
+
+/** `mask` lays the same text out invisibly, with only the link runs filled in. */
+function inline(text: string, keyBase: string, mask = false): ReactNode[] {
   return balance(text)
     .split(
-      /(\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|\*\*[^*]+\*\*|\*[^*\s][^*\n]*?\*|`[^`]+`|(?:\s?\[\d+\])+)/g
+      /(\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()\]]+|\*\*[^*]+\*\*|\*[^*\s][^*\n]*?\*|`[^`]+`|(?:\s?\[\d+\])+)/g
     )
     .filter(Boolean)
     .map((seg, i) => {
       const key = `${keyBase}-${i}`;
       const link = seg.match(LINK);
-      if (link) {
-        const url = link[2];
+      if (link) return <LinkRun key={key} label={link[1]} url={link[2]} mask={mask} />;
+      if (BARE_URL.test(seg)) {
+        const url = trimUrl(seg);
         return (
-          <RNText
-            key={key}
-            accessibilityRole="link"
-            onPress={() => void Linking.openURL(url)}
-            className="text-primary-strong"
-          >
-            {link[1]}
-          </RNText>
+          <Fragment key={key}>
+            <LinkRun label={shortUrl(url)} url={url} mask={mask} />
+            {seg.slice(url.length)}
+          </Fragment>
         );
       }
       if (seg.startsWith("**") && seg.endsWith("**") && seg.length > 4) {
         return (
-          <RNText key={key} className="font-body-bold text-ink">
+          <RNText key={key} className="font-body-bold text-ink" style={mask ? HIDE : undefined}>
             {seg.slice(2, -2)}
           </RNText>
         );
       }
       if (seg.startsWith("*") && seg.endsWith("*") && seg.length > 2) {
         return (
-          <RNText key={key} className="font-body-italic text-ink">
+          <RNText key={key} className="font-body-italic text-ink" style={mask ? HIDE : undefined}>
             {seg.slice(1, -1)}
           </RNText>
         );
       }
       if (seg.startsWith("`") && seg.endsWith("`")) {
         return (
-          <RNText key={key} className="font-body-medium text-[14px] text-primary-strong">
+          <RNText
+            key={key}
+            className="font-body-medium text-[14px] text-primary-strong"
+            style={mask ? HIDE : undefined}
+          >
             {seg.slice(1, -1)}
           </RNText>
         );
       }
       if (/^(\s?\[\d+\])+$/.test(seg)) {
         const nums = [...seg.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
-        return <CitationPill key={key} nums={nums} />;
+        return mask ? (
+          <View key={key} style={{ opacity: 0 }}>
+            <CitationPill nums={nums} />
+          </View>
+        ) : (
+          <CitationPill key={key} nums={nums} />
+        );
       }
       return <Fragment key={key}>{seg}</Fragment>;
     });
 }
 
-type BlockKind = "heading" | "para" | "list" | "quote" | "table" | "code" | "rule" | "gap";
+/**
+ * The dots sit this far below where iOS draws a plain underline, level with the descenders.
+ * Sizes are whole pixels at 3x, so every dot renders the same.
+ */
+const DOT_BAND = [2, 2 + 1 / 3];
+const DOT_STEP = 10 / 3;
+const DOT_SIZE = 4 / 3;
+const HAS_LINK = /\]\(https?:\/\/|https?:\/\//;
+
+/**
+ * Evenly spaced dot columns. The mask keeps only a thin band under each link, which cuts the
+ * columns into a row of dots wherever that link's text runs, on every line it wraps to.
+ */
+function Dots() {
+  return (
+    <Svg width="100%" height="100%">
+      <Defs>
+        <Pattern id="dots" patternUnits="userSpaceOnUse" width={DOT_STEP} height={10}>
+          <Rect x={0} y={0} width={DOT_SIZE} height={10} fill="rgba(250,250,250,0.6)" />
+        </Pattern>
+      </Defs>
+      <Rect width="100%" height="100%" fill="url(#dots)" />
+    </Svg>
+  );
+}
+
+/**
+ * Body text whose links get a dotted underline. iOS's own "dotted" underline draws short dashes,
+ * so dots are shown through a mask: invisible copies of the same text (same line breaks) whose
+ * only ink is a plain underline under each link, stacked a hair apart to make a band just below
+ * where that underline normally sits.
+ */
+function RichText({
+  text,
+  keyBase,
+  className,
+  style,
+}: {
+  text: string;
+  keyBase: string;
+  className: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const body = <Text className={className}>{inline(text, keyBase)}</Text>;
+  if (!HAS_LINK.test(text)) return style ? <View style={style}>{body}</View> : body;
+  return (
+    <View style={style}>
+      {body}
+      <MaskedView
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={StyleSheet.absoluteFill}
+        maskElement={
+          <View style={StyleSheet.absoluteFill}>
+            {DOT_BAND.map((dy) => (
+              <Text
+                key={dy}
+                className={className}
+                style={[HIDE, styles.maskCopy, { transform: [{ translateY: dy }] }]}
+              >
+                {inline(text, keyBase, true)}
+              </Text>
+            ))}
+          </View>
+        }
+      >
+        <Dots />
+      </MaskedView>
+    </View>
+  );
+}
+
+type BlockKind =
+  "heading" | "para" | "list" | "quote" | "table" | "code" | "rule" | "gap" | "images" | "video";
 /** `raw` keeps the block's source lines so memoized views skip blocks that stopped changing. */
 type Block = { kind: BlockKind; raw: string };
 
@@ -120,7 +246,62 @@ function blocks(text: string): Block[] {
     if (kind !== "para" && last?.kind === kind) last.raw += `\n${line}`;
     else out.push({ kind, raw: line });
   }
-  return out.filter((b) => b.kind !== "gap");
+  return withMedia(out.filter((b) => b.kind !== "gap"));
+}
+
+const IMAGE = /!\[([^\]\n]*)\]\((https?:\/\/[^)\s]+)(?:\s+"[^"]*")?\)/g;
+const URLS = /\[([^\]\n]*)\]\((https?:\/\/[^)\s]+)\)|https?:\/\/[^\s<>()\]]+/g;
+const ITEM_MARK = /^\s*(?:[-*+]|\d+[.)])\s+/;
+
+/**
+ * Lifts media out of the text: Markdown images (and image URLs on their own line) gather into a
+ * gallery after their block, consecutive galleries merge, and each YouTube link adds a video card
+ * under the block that mentions it. Each image and video shows once per reply.
+ */
+function withMedia(list: Block[]): Block[] {
+  const out: Block[] = [];
+  const seenImages = new Set<string>();
+  const seenVideos = new Set<string>();
+  for (const b of list) {
+    if (b.kind === "code" || b.kind === "table" || b.kind === "rule") {
+      out.push(b);
+      continue;
+    }
+    const images: ImageRef[] = [];
+    const raw = b.raw
+      .replace(IMAGE, (_, alt: string, url: string) => {
+        images.push({ url, alt });
+        return "";
+      })
+      .split("\n")
+      .filter((line) => {
+        const t = line.replace(ITEM_MARK, "").trim();
+        if (IMAGE_URL.test(t)) {
+          images.push({ url: t, alt: "" });
+          return false;
+        }
+        // An item left empty once its image moved to the gallery.
+        return !(b.kind === "list" && /^\s*(?:[-*+]|\d+[.)])\s*$/.test(line));
+      })
+      .join("\n");
+    if (raw.trim()) out.push({ kind: b.kind, raw });
+    const fresh = images.filter((i) => !seenImages.has(i.url));
+    fresh.forEach((i) => seenImages.add(i.url));
+    if (fresh.length) {
+      const lines = fresh.map((i) => `${i.url}\t${i.alt}`).join("\n");
+      const last = out[out.length - 1];
+      if (last?.kind === "images") last.raw += `\n${lines}`;
+      else out.push({ kind: "images", raw: lines });
+    }
+    for (const m of raw.matchAll(URLS)) {
+      const url = m[2] ?? trimUrl(m[0]);
+      const id = youtubeId(url);
+      if (!id || seenVideos.has(id)) continue;
+      seenVideos.add(id);
+      out.push({ kind: "video", raw: `${id}\t${url}\t${m[1] ?? ""}` });
+    }
+  }
+  return out;
 }
 
 function TableView({ raw, index }: { raw: string; index: number }) {
@@ -149,12 +330,20 @@ function TableView({ raw, index }: { raw: string; index: number }) {
                 style={{ width: w }}
                 className={`px-3 py-2 ${ci > 0 ? "border-l border-raised" : ""}`}
               >
-                <Text
-                  weight={header && ri === 0 ? "bold" : "regular"}
-                  className={`text-[14px] leading-5 ${align[ci] === "right" ? "text-right" : ""}`}
-                >
-                  {inline(r[ci] ?? "", `${index}-${ri}-${ci}`)}
-                </Text>
+                {header && ri === 0 ? (
+                  <Text
+                    weight="bold"
+                    className={`text-[14px] leading-5 ${align[ci] === "right" ? "text-right" : ""}`}
+                  >
+                    {inline(r[ci] ?? "", `${index}-${ri}-${ci}`)}
+                  </Text>
+                ) : (
+                  <RichText
+                    text={r[ci] ?? ""}
+                    keyBase={`${index}-${ri}-${ci}`}
+                    className={`text-[14px] leading-5 ${align[ci] === "right" ? "text-right" : ""}`}
+                  />
+                )}
               </View>
             ))}
           </View>
@@ -185,6 +374,25 @@ const BlockView = memo(function BlockView({
     );
   }
   if (kind === "rule") return <View className="my-1 h-px bg-raised" />;
+  if (kind === "images") {
+    const images = raw.split("\n").map((l) => {
+      const [url, alt = ""] = l.split("\t");
+      return { url, alt };
+    });
+    return (
+      <View className="my-1">
+        <ImageGallery images={images} />
+      </View>
+    );
+  }
+  if (kind === "video") {
+    const [id, url, label = ""] = raw.split("\t");
+    return (
+      <View className="my-1">
+        <VideoCard id={id} url={url} label={label} />
+      </View>
+    );
+  }
   if (kind === "code") {
     return (
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -202,9 +410,12 @@ const BlockView = memo(function BlockView({
         {lines
           .filter((l) => l.trim())
           .map((l, li) => (
-            <Text key={li} className="text-base leading-[25px]">
-              {inline(l, `${index}-${li}`)}
-            </Text>
+            <RichText
+              key={li}
+              text={l}
+              keyBase={`${index}-${li}`}
+              className="text-base leading-[25px]"
+            />
           ))}
       </View>
     );
@@ -225,16 +436,19 @@ const BlockView = memo(function BlockView({
               >
                 {numbered ? mark.replace(")", ".") : depth ? "◦" : "•"}
               </Text>
-              <Text className="flex-1 text-base leading-[25px]">
-                {inline(body, `${index}-${li}`)}
-              </Text>
+              <RichText
+                text={body}
+                keyBase={`${index}-${li}`}
+                className="text-base leading-[25px]"
+                style={{ flex: 1 }}
+              />
             </View>
           );
         })}
       </View>
     );
   }
-  return <Text className="text-base leading-[25px]">{inline(raw, String(index))}</Text>;
+  return <RichText text={raw} keyBase={String(index)} className="text-base leading-[25px]" />;
 });
 
 /**
@@ -247,7 +461,10 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
   // A citation (" [1") or link ("[label](https://ex") still arriving would flash as raw brackets.
   const visible =
     smooth.length < text.length
-      ? smooth.replace(/\s?\[\d*$/, "").replace(/\[[^\]\n]*\]\([^)\s]*$/, "")
+      ? smooth
+          .replace(/\s?\[\d*$/, "")
+          .replace(/!?\[[^\]\n]*\]\([^)\s]*$/, "")
+          .replace(/!\[[^\]\n]*$/, "")
       : smooth;
   return (
     <View className="gap-2.5">
@@ -257,3 +474,16 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  link: { fontFamily: fonts.bold, color: colors.text },
+  arrow: { color: colors.textMuted, fontSize: 13 },
+  maskLink: {
+    fontFamily: fonts.bold,
+    color: "transparent",
+    textDecorationLine: "underline",
+    textDecorationColor: "#000",
+  },
+  maskArrow: { fontSize: 13, color: "transparent", textDecorationLine: "none" },
+  maskCopy: { position: "absolute", top: 0, left: 0, right: 0 },
+});

@@ -20,6 +20,12 @@ export const colors = {
   warning: "#F5A524",
 } as const;
 
+/**
+ * Corner radius of grouped lists, and of the scroll areas that hold them: a list scrolled under
+ * an edge keeps rounded corners instead of being cut straight.
+ */
+export const LIST_RADIUS = 24;
+
 export const fonts = {
   body: "Satoshi-Regular",
   medium: "Satoshi-Medium",

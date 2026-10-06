@@ -221,6 +221,7 @@ export default function SettingsScreen() {
                 }
                 placeholderTextColor={colors.textFaint}
                 secureTextEntry={settings.searchProvider !== "searxng"}
+                textContentType="oneTimeCode"
                 autoCapitalize="none"
                 accessibilityLabel="Search provider key or URL"
                 style={{

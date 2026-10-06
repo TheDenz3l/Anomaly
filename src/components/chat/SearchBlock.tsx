@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Linking, View } from "react-native";
+import { View } from "react-native";
 import Animated from "react-native-reanimated";
 import { Favicon } from "@/components/ui/Favicon";
-import { domainOf } from "@/lib/links";
+import { domainOf, openLink } from "@/lib/links";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
@@ -81,7 +81,7 @@ export function SearchBlock({ part, animate }: { part: SearchPart; animate: bool
                 <Tap
                   accessibilityRole="link"
                   accessibilityLabel={`${s.title}, ${domainOf(s.url)}`}
-                  onPress={() => void Linking.openURL(s.url)}
+                  onPress={() => void openLink(s.url)}
                   className="flex-row items-center gap-2.5 py-1.5"
                 >
                   <Favicon url={s.url} size={16} />

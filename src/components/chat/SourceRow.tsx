@@ -1,6 +1,6 @@
-import { Linking, View } from "react-native";
+import { View } from "react-native";
 import { Favicon } from "@/components/ui/Favicon";
-import { domainOf } from "@/lib/links";
+import { domainOf, openLink } from "@/lib/links";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import type { Source } from "@/lib/types";
@@ -17,7 +17,7 @@ export function SourceRow({ source, index }: { source: Source; index: number }) 
     <Tap
       accessibilityRole="link"
       accessibilityHint={`Opens ${domainOf(source.url)}`}
-      onPress={() => void Linking.openURL(source.url)}
+      onPress={() => void openLink(source.url)}
       className="flex-row gap-3 rounded-2xl px-1 py-3"
     >
       <Text weight="bold" className="w-5 pt-0.5 text-right text-xs text-ink-faint">
