@@ -10,6 +10,7 @@ import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { findModel, useApp } from "@/lib/store";
 import { colors, fonts } from "@/lib/theme";
+import { InstructionsSheet } from "@/components/settings/InstructionsSheet";
 
 function Row({
   icon,
@@ -79,7 +80,8 @@ export default function SettingsScreen() {
   const update = useApp((s) => s.updateSettings);
   const [providerSheet, setProviderSheet] = useState<{ id: string | null } | null>(null);
   const [picker, setPicker] = useState<"default" | "research" | null>(null);
-  const [instructions, setInstructions] = useState(settings.customInstructions);
+  const [editingInstructions, setEditingInstructions] = useState(false);
+  const instructions = settings.customInstructions.trim();
 
   return (
     <View className="flex-1 bg-background">
@@ -139,34 +141,26 @@ export default function SettingsScreen() {
           label="Custom instructions"
           footer="Added to every conversation, separate from memory."
         >
-          <View className="p-3">
-            <TextInput
-              value={instructions}
-              onChangeText={setInstructions}
-              onBlur={() => update({ customInstructions: instructions })}
-              multiline
-              maxLength={1500}
-              placeholder="How should Anomaly respond? What should it know about you?"
-              placeholderTextColor={colors.textFaint}
-              accessibilityLabel="Custom instructions"
-              style={
-                {
-                  fontFamily: fonts.body,
-                  fontSize: 16,
-                  lineHeight: 22,
-                  color: colors.text,
-                  minHeight: 96,
-                  padding: 6,
-                  textAlignVertical: "top",
-                  outlineStyle: "none",
-                  resize: "none",
-                } as object
-              }
-            />
-            <Text className="px-1.5 text-right text-xs text-ink-faint">
-              {instructions.length} / 1500
+          <Tap
+            accessibilityRole="button"
+            accessibilityLabel={instructions ? "Custom instructions" : "Add custom instructions"}
+            accessibilityHint="Opens an editor"
+            onPress={() => setEditingInstructions(true)}
+            className="flex-row items-start gap-3 px-4 py-3.5"
+          >
+            <Text
+              className="flex-1 text-[15px] leading-[21px]"
+              style={instructions ? undefined : { color: colors.textFaint }}
+              numberOfLines={6}
+            >
+              {instructions || "How should Anomaly respond? What should it know about you?"}
             </Text>
-          </View>
+            <Icon
+              name={instructions ? "chevron-forward" : "add-circle"}
+              size={instructions ? 16 : 19}
+              color={instructions ? colors.textFaint : colors.primary}
+            />
+          </Tap>
         </Group>
 
         <Group
@@ -320,6 +314,12 @@ export default function SettingsScreen() {
         open={providerSheet !== null}
         onClose={() => setProviderSheet(null)}
         providerId={providerSheet?.id ?? null}
+      />
+      <InstructionsSheet
+        open={editingInstructions}
+        onClose={() => setEditingInstructions(false)}
+        value={settings.customInstructions}
+        onSave={(customInstructions) => update({ customInstructions })}
       />
       <ModelPicker
         open={picker !== null}

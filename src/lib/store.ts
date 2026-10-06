@@ -66,6 +66,8 @@ type State = {
   toast: Toast | null;
 };
 
+export type ProviderResult = { ok: boolean; saved: boolean; error?: string };
+
 export type ProviderInput = {
   providerId: string;
   label: string;
@@ -93,8 +95,9 @@ type Actions = {
   addMemory(m: Omit<Memory, "id" | "createdAt">): void;
   updateMemory(id: string, patch: Partial<Memory>): void;
   deleteMemory(id: string): void;
-  saveProvider(input: ProviderInput, apiKey?: string): Promise<boolean>;
-  refreshProvider(providerId: string): Promise<void>;
+  /** `saved` is true when the server stored the provider, even if it could not connect yet. */
+  saveProvider(input: ProviderInput, apiKey?: string): Promise<ProviderResult>;
+  refreshProvider(providerId: string): Promise<ProviderResult>;
   removeProvider(providerId: string): void;
   overrideProfile(ref: string, patch: Partial<CapabilityProfile>): void;
   runProbes(ref: string): Promise<string[]>;
@@ -616,22 +619,23 @@ export const useApp = create<AppStore>()((set, get) => {
           }),
           45_000
         );
-        if (res.status === "connected") get().showToast(`Connected: ${res.models} models`);
-        else get().showToast(`Saved. ${res.error ?? "Couldn't list its models."}`, "danger");
-        return res.status === "connected";
+        // Failures are shown inline by the provider sheet, which sits above the toast layer.
+        if (res.status !== "connected")
+          return { ok: false, saved: true, error: res.error ?? "Couldn't list its models." };
+        get().showToast(`Connected: ${res.models} models`);
+        return { ok: true, saved: true };
       } catch (e) {
-        toastError(e);
-        return false;
+        return { ok: false, saved: false, error: errorText(e) };
       }
     },
 
     async refreshProvider(providerId) {
       try {
         const res = await within(convex.action(api.providers.refresh, { providerId }), 45_000);
-        if (res.status === "connected") get().showToast(`Fetched ${res.models} models`);
-        else get().showToast(res.error ?? "Couldn't fetch models.", "danger");
+        if (res.status === "connected") return { ok: true, saved: true };
+        return { ok: false, saved: true, error: res.error ?? "Couldn't fetch models." };
       } catch (e) {
-        toastError(e);
+        return { ok: false, saved: true, error: errorText(e) };
       }
     },
 
