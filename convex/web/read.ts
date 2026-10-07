@@ -53,7 +53,8 @@ function describe(markdown: string): string {
 
 async function fetchRobots(origin: string): Promise<string> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
+  // Fetched before the page on a site's first read; a slow answer counts as no robots.txt.
+  const timer = setTimeout(() => controller.abort(), 2000);
   try {
     const res = await fetch(`${origin}/robots.txt`, {
       headers: { "User-Agent": UA },

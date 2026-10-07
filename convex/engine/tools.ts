@@ -14,10 +14,11 @@ import {
   type NowPlaying,
 } from "../data/movies";
 import { forecast, weatherFallback } from "../data/weather";
-import { parseLooseJson, sleep, truncate, uid } from "../lib/util";
+import { errorMessage, parseLooseJson, sleep, truncate, uid } from "../lib/util";
 import { HOUR } from "../web/cache";
 import type { GeoLocation, MemoryCategory, Part, SourceOrigin } from "../lib/validators";
-import { searchWeb } from "../web/providers";
+import { searchImages, searchWeb, type Recency } from "../web/providers";
+import type { ImageResult } from "../web/firecrawl";
 import { publicUrl } from "../web/guard";
 import { readPage, robotsAllowed } from "../web/read";
 import { makeSource, type SourceCollector, normalizeUrl } from "../web/sources";
@@ -44,6 +45,10 @@ export type ToolEnv = {
   prefetched?: Map<string, ShowtimeData>;
   /** Work that keeps filling cards after a tool returned; the turn waits for it before finishing. */
   background?: Promise<unknown>[];
+  /** The user asked to see photos: a search also brings back photos. */
+  photos?: boolean;
+  /** A search already went for photos this reply (one is enough; they share a rate limit). */
+  photosClaimed?: boolean;
 };
 
 function fn(
@@ -61,6 +66,22 @@ function fn(
     },
   };
 }
+
+const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+  Promise.race([p, sleep(ms).then(() => fallback)]);
+
+/**
+ * The longest a live reply waits on one search or page read. Fallback backends can take 10–25 s
+ * each; past this the model is better off answering, or trying other wording, than waiting.
+ * Sub-agents run without it.
+ */
+const SEARCH_DEADLINE_MS = 10_000;
+const READ_DEADLINE_MS = 12_000;
+/** Pages read for photos alongside a search; the slowest is left behind rather than waited on. */
+const PHOTO_PAGES = 3;
+const PHOTO_READ_MS = 6_000;
+/** Image search usually answers in ~2 s; it runs alongside the web search, not after it. */
+const PHOTO_SEARCH_MS = 6_000;
 
 /* ------------------------------------------------------------------ search part */
 
@@ -117,6 +138,123 @@ function finishSearch(
 
 /* ------------------------------------------------------------------ web */
 
+type SearchRun = Awaited<ReturnType<typeof searchWeb>> & { images?: ImageResult[] };
+
+const RECENT = /\b(latest|newest|new|recent|recently|today|this (week|month))\b/i;
+
+/**
+ * Image search ranks by relevance, not date, so a "new" or "latest" ask names this month instead:
+ * "new photos released recently gta 6" → "photos released gta 6 October 2026".
+ */
+function imageQuery(query: string): string {
+  if (!RECENT.test(query) || /\b20\d\d\b/.test(query)) return query;
+  const now = new Date();
+  const month = now.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  const rest = query.replace(new RegExp(RECENT.source, "gi"), " ").replace(/\s+/g, " ").trim();
+  return `${rest} ${month} ${now.getUTCFullYear()}`;
+}
+
+/**
+ * Starts a search; showSearch puts it on screen. Split so a turn can start one before the router
+ * has decided (a pre-search) and show it once it has. A live reply stops waiting at the deadline.
+ * With photos, an image search runs alongside, so photos cost no extra round trip.
+ */
+export function startSearch(
+  engine: Engine,
+  query: string,
+  opts: { limit?: number; recency?: Recency; deadline: boolean; photos?: boolean }
+): Promise<SearchRun> {
+  // Never rejects: a failed search comes back as no results with the reason, so a pre-search the
+  // turn ends up not using can't surface as an unhandled rejection.
+  const web = searchWeb(engine.ctx, engine.search, query, {
+    limit: opts.limit ?? 6,
+    recency: opts.recency,
+    live: opts.deadline,
+  }).catch((e) => ({ results: [], provider: "none", errors: [errorMessage(e).slice(0, 160)] }));
+  const timed = opts.deadline
+    ? withTimeout(web, SEARCH_DEADLINE_MS, {
+        results: [],
+        provider: "none",
+        errors: [`search took longer than ${SEARCH_DEADLINE_MS / 1000} s`],
+      })
+    : web;
+  if (!opts.photos) return timed;
+  const images = withTimeout(
+    searchImages(engine.ctx, engine.search, imageQuery(query)).catch(() => []),
+    PHOTO_SEARCH_MS,
+    [] as ImageResult[]
+  );
+  return Promise.all([timed, images]).then(([run, found]) => ({ ...run, images: found }));
+}
+
+/** Shows a search in the reply's search section and numbers its results for the model. */
+export async function showSearch(
+  env: ToolEnv,
+  query: string,
+  run: Promise<SearchRun>,
+  startedAt = Date.now()
+): Promise<ToolOutcome> {
+  env.budget.searches++;
+  const partId = env.render || env.origin === "app" ? trackSearch(env, query) : null;
+  const { results, provider, errors, images } = await run;
+  // No photos came back: a later search in this reply may go for them again.
+  if (images && !images.length) env.photosClaimed = false;
+  const found = results.map((r) => makeSource(r.url, r.title, r.snippet, env.origin));
+  // Photos come from the image search; reading the top pages is the slower fallback.
+  const readForPhotos = Boolean(env.photos && results.length && !images?.length);
+  if (partId) finishSearch(env, partId, found, startedAt, readForPhotos ? "reading" : "done");
+  const photos = images?.length
+    ? images.map((i) => `![${i.title.replace(/[[\]]/g, "")}](${i.imageUrl})`)
+    : readForPhotos
+      ? await photosFrom(env, results)
+      : [];
+  if (partId && readForPhotos)
+    env.sink.update(partId, (p) => ({
+      ...(p as Extract<Part, { type: "search" }>),
+      phase: "done",
+    }));
+  if (!results.length && !photos.length) {
+    return {
+      content: `No results for "${query}".${errors.length ? ` (${errors.join("; ")})` : ""}`,
+      web: "empty",
+    };
+  }
+  const lines = results.map((r) => {
+    const n = env.sources.add(makeSource(r.url, r.title, r.snippet, env.origin));
+    return `[${n}] ${r.title} — ${r.url}\n${truncate(r.snippet, 400)}`;
+  });
+  const gallery = photos.length
+    ? `\n\nPhotos. Show the ones that fit the question inline as Markdown images, each on its own line (they render as a swipeable gallery):\n${photos.join("\n")}`
+    : "";
+  return {
+    content: `Results for "${query}" (${provider}):\n${wrapUntrusted("search results", lines.join("\n\n") + gallery)}`,
+    web: "results",
+  };
+}
+
+/**
+ * Photos from the top results, read in parallel with the search's own budget: pages are cached,
+ * and one that's slow or blocked is skipped. No extra model round trip, unlike read_url.
+ */
+async function photosFrom(env: ToolEnv, results: { url: string }[]): Promise<string[]> {
+  const pages = await Promise.all(
+    results.slice(0, PHOTO_PAGES).map((r) =>
+      withTimeout(
+        readPage(env.engine.ctx, env.engine.search, r.url)
+          .then((p) => pageImages(p.text))
+          .catch(() => [] as string[]),
+        PHOTO_READ_MS,
+        [] as string[]
+      )
+    )
+  );
+  const seen = new Set<string>();
+  return pages.flat().filter((img) => {
+    const url = img.slice(img.lastIndexOf("(") + 1, -1);
+    return !seen.has(url) && !!seen.add(url);
+  });
+}
+
 export function webSearchTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
@@ -141,32 +279,15 @@ export function webSearchTool(env: ToolEnv): LoopTool {
           content: `Search budget for this reply is used up (${env.budget.maxSearches}). Answer with what you have.`,
         };
       }
-      env.budget.searches++;
-      const started = Date.now();
-      const partId = env.render || env.origin === "app" ? trackSearch(env, query) : null;
-      const { results, provider, errors } = await searchWeb(
-        env.engine.ctx,
-        env.engine.search,
-        query,
-        {
-          limit: Number(args.limit) || 6,
-          recency: args.recency,
-        }
-      );
-      const found = results.map((r) => makeSource(r.url, r.title, r.snippet, env.origin));
-      if (partId) finishSearch(env, partId, found, started);
-      if (!results.length) {
-        return {
-          content: `No results for "${query}".${errors.length ? ` (${errors.join("; ")})` : ""}`,
-        };
-      }
-      const lines = results.map((r) => {
-        const n = env.sources.add(makeSource(r.url, r.title, r.snippet, env.origin));
-        return `[${n}] ${r.title} — ${r.url}\n${truncate(r.snippet, 400)}`;
+      const photos = Boolean(env.photos && !env.photosClaimed);
+      if (photos) env.photosClaimed = true;
+      const run = startSearch(env.engine, query, {
+        limit: Number(args.limit) || 6,
+        recency: args.recency,
+        deadline: env.origin === "app",
+        photos,
       });
-      return {
-        content: `Results for "${query}" (${provider}):\n${wrapUntrusted("search results", lines.join("\n\n"))}\nUse read_url on the best results before relying on details.`,
-      };
+      return showSearch(env, query, run);
     },
   };
 }
@@ -225,7 +346,16 @@ export function readUrlTool(env: ToolEnv): LoopTool {
           phase: "reading",
         }));
       try {
-        const page = await readPage(env.engine.ctx, env.engine.search, url);
+        const read = readPage(env.engine.ctx, env.engine.search, url);
+        const page =
+          env.origin === "app"
+            ? await Promise.race([
+                read,
+                sleep(READ_DEADLINE_MS).then((): never => {
+                  throw new Error(`the page took longer than ${READ_DEADLINE_MS / 1000} s to load`);
+                }),
+              ])
+            : await read;
         const n = env.sources.add(
           makeSource(page.url, page.title, page.description || page.text.slice(0, 280), env.origin)
         );
@@ -254,6 +384,7 @@ export function readUrlTool(env: ToolEnv): LoopTool {
           : "";
         return {
           content: `[${n}] ${page.title} — ${page.url}${note}\n${wrapUntrusted(page.url, view.text + extra)}`,
+          web: "results",
         };
       } catch (e) {
         if (searchId)
@@ -261,7 +392,7 @@ export function readUrlTool(env: ToolEnv): LoopTool {
             ...(p as Extract<Part, { type: "search" }>),
             phase: "done",
           }));
-        return { content: `Couldn't read ${url}: ${(e as Error).message}` };
+        return { content: `Couldn't read ${url}: ${(e as Error).message}`, web: "empty" };
       }
     },
   };
@@ -677,9 +808,6 @@ async function cinemaTimes(
 }
 
 const TIMES_BUDGET_MS = 60_000;
-
-const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
-  Promise.race([p, sleep(ms).then(() => fallback)]);
 
 export function showtimesTool(env: ToolEnv): LoopTool {
   return {

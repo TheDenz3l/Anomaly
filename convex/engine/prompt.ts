@@ -8,7 +8,8 @@ export type PromptOptions = {
   incognito: boolean;
   components: boolean;
   promptedCatalog?: string;
-  web: "native" | "app" | "both" | "none";
+  /** "provided": results were searched up front and are in `extra`; no web tools this reply. */
+  web: "native" | "app" | "both" | "provided" | "none";
   locationTool: boolean;
   subagents: "off" | "available" | "requested";
   memoryTool: boolean;
@@ -83,6 +84,9 @@ export function systemPrompt(o: PromptOptions): string {
       "",
       "# Cards",
       "- When a card fits the answer, call its ui_* tool instead of writing the same data as text, then add at most one or two sentences. Never output HTML, JS or code to draw UI.",
+      "- One card per reply unless the user asks for more. News, updates and facts from a search read best as text with citations and photos; use a card only when the results really are a table, a dated timeline or products to buy.",
+      "- ProductGrid is only for things the user can buy, with real prices and each product's page url.",
+      "- Cards show on a phone about 360 points wide: titles under 40 characters, names and labels a few words, values brief. Long explanations go in the text, not the card.",
       "- Every card needs fallbackText: a plain-sentence version used for voice.",
       "- Use ChoiceChips for clarifying questions or a few useful next steps, not after every reply.",
       "- When the user interacts with a card you'll get a [UI event] message describing what they did. Continue from it."
@@ -95,11 +99,15 @@ export function systemPrompt(o: PromptOptions): string {
     lines.push("", "# Web");
     if (o.web === "app" || o.web === "both") {
       lines.push(
-        "- Use web_search for anything time-sensitive, niche, or that you're unsure about; use read_url to read the most promising results before relying on them, passing `focus` with the exact fact you need.",
+        "- Use web_search for anything time-sensitive, niche, or that you're unsure about. To cover several angles, run the searches in parallel in one go. Answer from the result snippets when they cover the question; use read_url only for a URL the user gave or a detail the snippets don't have, passing `focus` with the exact fact you need.",
         "- If results are about something other than what was asked (another product, model, place or year), search again with sharper wording instead of answering about the substitute. Products you don't recognise may be newer than your training data.",
         "- get_weather, find_places, geocode and find_showtimes return live data; prefer them over web search for those tasks."
       );
     }
+    if (o.web === "provided")
+      lines.push(
+        "- The app already searched the web for this message; the results are below. Answer from them. If they don't cover what was asked, say what you found and what's still unclear rather than guessing, and don't answer about a different subject than the one asked."
+      );
     if (o.web === "native")
       lines.push("- You have built-in web search; use it for current information.");
     if (o.web === "both")
@@ -107,7 +115,7 @@ export function systemPrompt(o: PromptOptions): string {
         "- You may also have built-in web search. If it isn't available or comes back empty, use web_search; never say you can't browse."
       );
     lines.push(
-      "- Cite sources inline as [n] using the numbers given in tool results, right after the claim they support. Only cite numbers you were given.",
+      "- Cite sources inline as [n] using the numbers given in search results, right after the claim they support. Only cite numbers you were given.",
       `- ${UNTRUSTED_RULE}`
     );
   }

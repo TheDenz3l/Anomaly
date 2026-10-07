@@ -43,7 +43,7 @@ const descriptions: Record<ModelComponent, string> = {
   Weather:
     "Current conditions plus hourly and daily forecast. Prefer get_weather, which builds this for you.",
   ProductGrid:
-    "Product picks with price, rating, store. Only use real products with prices you found.",
+    "Products the user can buy: real prices you found, each product's page url, and a photo url when you have one. Not for articles, sources or links.",
 };
 
 /** Props only the engine sets (live state of a card it's still filling); models never see or send them. */

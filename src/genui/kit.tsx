@@ -49,7 +49,7 @@ export function GenCard({
             </View>
           ) : null}
           <View className="flex-1">
-            <Display className="text-[15px] leading-5" numberOfLines={1}>
+            <Display className="text-[15px] leading-5" numberOfLines={2}>
               {title}
             </Display>
             {subtitle ? (

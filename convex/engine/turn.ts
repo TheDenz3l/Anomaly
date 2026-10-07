@@ -2,7 +2,15 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import { MODEL_COMPONENTS, promptedCatalog } from "../ai/catalog";
-import { band, THRESHOLDS, type Decision } from "../ai/decisions";
+import {
+  band,
+  heuristicDecisions,
+  searchQueryFrom,
+  THRESHOLDS,
+  wantsPhotos,
+  type Decision,
+} from "../ai/decisions";
+import { routingLevel } from "../ai/reasoning";
 import { geocode } from "../data/geo";
 import { textOf } from "../lib/messages";
 import { uid } from "../lib/util";
@@ -23,8 +31,10 @@ import {
   readUrlTool,
   rememberTool,
   requestLocationTool,
+  showSearch,
   showtimeData,
   showtimesTool,
+  startSearch,
   weatherTool,
   webSearchTool,
 } from "./tools";
@@ -78,6 +88,7 @@ export async function runTurn(
   messageId: Id<"messages">,
   opts: { injected?: string; sources?: Source[] } = {}
 ): Promise<void> {
+  const startedAt = Date.now();
   const data = await ctx.runQuery(internal.engine.data.turnContext, { messageId });
   if (!data || data.message.status !== "streaming") return;
   const { thread, settings, history } = data;
@@ -154,6 +165,39 @@ export async function runTurn(
             return [];
           })
         : Promise.resolve([]);
+    const profile = engine.profile;
+    const canTools = profile.features.tools;
+    const nativeAvailable = profile.features.webSearch && settings.webMode !== "app";
+    const photos = Boolean(text) && !input.event && wantsPhotos(text);
+    // Pre-search: a chat's first question that reads as current events is searched while the router
+    // decides, so the first model call already has results and answers in one round trip instead of
+    // two (pick a search, then answer). Follow-ups lean on context a raw-text query wouldn't carry.
+    let pre: { at: number; query: string; run: ReturnType<typeof startSearch> } | null = null;
+    if (
+      canTools &&
+      !nativeAvailable &&
+      !previous &&
+      !input.event &&
+      !input.images &&
+      !opts.injected &&
+      text.trim().length >= 8 &&
+      !/https?:\/\//i.test(text)
+    ) {
+      const [hi, hs] = await Promise.all([
+        heuristicDecisions.intent({ text, hasImages: false, researchMode: false }),
+        heuristicDecisions.search(text),
+      ]);
+      // Photos come from pages on the web, so asking for them is a search whatever the wording.
+      if (photos || (hi.choice === "search" && hs.choice.timeSensitive)) {
+        const query = searchQueryFrom(text);
+        // One search has to cover the question, so it asks for the most results a search returns.
+        pre = {
+          at: Date.now(),
+          query,
+          run: startSearch(engine, query, { deadline: true, photos, limit: 10 }),
+        };
+      }
+    }
     // Jev router (PRD §3.3/§4): one Decisions request answers every per-turn question; heuristics
     // stand in when Jev is unavailable or below the 0.5 confidence floor.
     const td = await dp.turn({
@@ -180,14 +224,13 @@ export async function runTurn(
     const act = (d: { confidence: number }) => band(d.confidence) === "act";
 
     const decidedAt = Date.now();
-    const profile = engine.profile;
-    const canTools = profile.features.tools;
     const memories = await recalled;
     const recalledAt = Date.now();
     const sources = new SourceCollector(opts.sources);
 
     // Search decision → auto web access: none skips web tools, quick/deep size the budget.
-    const searchMode = search.choice.mode;
+    // Photos only come from the web, so a photo request searches even when the router says no.
+    const searchMode = photos && search.choice.mode === "none" ? "quick" : search.choice.mode;
     const skipWeb = act(search) && searchMode === "none";
     const env: SpawnEnv = {
       engine,
@@ -205,6 +248,7 @@ export async function runTurn(
       setLocation,
       memory: memoryOn ? { threadId: thread._id, used: false } : undefined,
       stoppedRef: () => sink.stopped,
+      photos,
       // Jev leaned toward delegating but wasn't sure: show the plan card before any worker runs.
       forceApproval:
         !delegation.choice.explicit &&
@@ -221,7 +265,6 @@ export async function runTurn(
     // Web: the model's own search when it has one, plus app tools (SearXNG by default) whenever the
     // model can call tools in Auto. A profile flag alone doesn't prove search runs through a chat
     // completions endpoint, and a model with no working search refuses current-events questions.
-    const nativeAvailable = profile.features.webSearch && settings.webMode !== "app";
     const appWeb =
       (settings.webMode === "app" ||
         !nativeAvailable ||
@@ -261,14 +304,38 @@ export async function runTurn(
     if (canTools && wantsData && location && (probs.MovieShowtimes ?? 0) > THRESHOLDS.act)
       showtimeData(env, location);
 
+    // Every round of searching is another full model round trip before the answer starts.
+    const webRounds = searchMode === "deep" ? 3 : 1;
+    let webRoundsDone = 0;
+    let preLog = pre ? "dropped" : "no";
     const extra: string[] = [];
-    if (!canTools && appWeb && searchMode !== "none" && text) {
-      const pre = await webSearchTool(env).run({ query: text.slice(0, 300) }, "pre");
-      extra.push("# Search results gathered for this question (cite as [n])", pre.content);
+    // The router agrees it's a plain search: the pre-search stands in for the model's first round.
+    if (
+      pre &&
+      appWeb &&
+      (intent.choice === "search" || photos) &&
+      searchMode !== "none" &&
+      !spawnOffered
+    ) {
+      const waitFrom = Date.now();
+      env.photosClaimed = photos;
+      const found = await showSearch(env, pre.query, pre.run, pre.at);
+      preLog = `${Date.now() - pre.at}ms(waited ${Date.now() - waitFrom}ms,${found.web})`;
+      if (found.web === "results") {
+        extra.push("# Search results for this message (cite as [n])", found.content);
+        webRoundsDone = 1;
+      }
+    } else if (!canTools && appWeb && searchMode !== "none" && text) {
+      const found = await webSearchTool(env).run({ query: text.slice(0, 300) }, "pre");
+      extra.push("# Search results gathered for this question (cite as [n])", found.content);
     }
+    // With the rounds already spent the first call has no app tools: it answers.
+    const toolsAtStart = webRoundsDone < webRounds;
     if (search.choice.timeSensitive && searchMode !== "none") {
       extra.push(
-        "This question depends on current information: search before answering and say how recent the sources are."
+        webRoundsDone
+          ? "This question depends on current information: say how recent the sources are."
+          : "This question depends on current information: search before answering and say how recent the sources are."
       );
     }
     if (searchMode === "deep")
@@ -313,11 +380,18 @@ export async function runTurn(
             ? "both"
             : "native"
           : appWeb
-            ? "app"
+            ? toolsAtStart
+              ? "app"
+              : "provided"
             : "none",
-      locationTool: canTools && wantsData && !location,
-      subagents: !canTools || !spawnOffered ? "off" : delegate.explicit ? "requested" : "available",
-      memoryTool: canTools && memoryOn,
+      locationTool: canTools && toolsAtStart && wantsData && !location,
+      subagents:
+        !canTools || !toolsAtStart || !spawnOffered
+          ? "off"
+          : delegate.explicit
+            ? "requested"
+            : "available",
+      memoryTool: canTools && toolsAtStart && memoryOn,
       extra,
     });
 
@@ -335,12 +409,29 @@ export async function runTurn(
       nativeSearch: useNative,
       sources,
       signal,
+      webRounds,
+      webRoundsDone,
+      // After searching, only cards that lay out what was found; photos answer for themselves.
+      answerCards: photos ? [] : ["Table", "Timeline", "Compare", "ProductGrid", "MapCard"],
+      // Only when a search is near certain: if the model answers from what it knows instead, that
+      // first step is the answer, and it must be written at the level the user picked.
+      routeLevel:
+        appWeb && searchMode !== "none" && (search.choice.timeSensitive || act(search) || photos)
+          ? routingLevel(profile, thread.reasoningLevel)
+          : undefined,
     });
     const loopDoneAt = Date.now();
     // Cards still filling in (showtimes read from theatre sites) finish before the reply does.
     if (env.background?.length && !sink.stopped) await Promise.allSettled(env.background);
+    const stepLog = result.timings
+      .map(
+        (s) =>
+          `${s.level}:${s.textMs !== undefined ? `text@${s.textMs}` : `first@${s.firstMs ?? "-"}`}ms` +
+          (s.tools ? `+${s.tools}tool/${s.toolsMs}ms` : "")
+      )
+      .join(" | ");
     console.log(
-      `[turn] ${messageId} decide=${decidedAt - t0}ms recallWait=${recalledAt - decidedAt}ms model+tools=${loopDoneAt - recalledAt}ms cards=${Date.now() - loopDoneAt}ms steps=${result.steps} tools=${result.usedTools.join(",") || "none"}`
+      `[turn] ${messageId} firstText=${result.firstTextAt ? `${result.firstTextAt - startedAt}ms` : "none"} setup=${t0 - startedAt}ms pre=${preLog} decide=${decidedAt - t0}ms recallWait=${recalledAt - decidedAt}ms model+tools=${loopDoneAt - recalledAt}ms cards=${Date.now() - loopDoneAt}ms steps=${result.steps} [${stepLog}] tools=${result.usedTools.join(",") || "none"}`
     );
 
     // Memory write gate: act → auto-save, confirm → inline chip, fallback → skip.

@@ -1,9 +1,15 @@
 import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
-import { errorMessage } from "../lib/util";
+import { errorMessage, sleep } from "../lib/util";
 import type { SearchProviderId } from "../lib/validators";
 import { HOUR, type WebCache, webCache } from "./cache";
-import { benchKey, firecrawlKeys, firecrawlSearch } from "./firecrawl";
+import {
+  benchKey,
+  firecrawlImages,
+  firecrawlKeys,
+  firecrawlSearch,
+  type ImageResult,
+} from "./firecrawl";
 import { judgeResults } from "./relevance";
 import { hostname, normalizeUrl } from "./sources";
 
@@ -45,6 +51,19 @@ export type SearchOutcome = {
 type Judged = Pick<SearchOutcome, "results" | "provider" | "ok" | "score">;
 
 const SEARXNG_TIMEOUT = 12_000;
+/** How long Firecrawl runs alone before the backup chain starts alongside it. */
+const HEDGE_MS = 2_500;
+
+/** The first result that isn't null; null once every one has settled without one. */
+function firstOf<T>(runs: Promise<T | null>[]): Promise<T | null> {
+  return new Promise((resolve) => {
+    let left = runs.length;
+    const miss = () => {
+      if (--left === 0) resolve(null);
+    };
+    for (const run of runs) run.then((v) => (v ? resolve(v) : miss()), miss);
+  });
+}
 
 /** Server-wide SearXNG pool (SEARXNG_URLS, comma-separated); the first healthy instance is used. */
 function searxngPool(): string[] {
@@ -136,7 +155,8 @@ export async function searchWeb(
   ctx: ActionCtx,
   cfg: SearchConfig,
   query: string,
-  opts: { limit?: number; recency?: Recency } = {}
+  /** live: a reply is waiting, so the slow public SearXNG pool (6–25 s) is skipped. */
+  opts: { limit?: number; recency?: Recency; live?: boolean } = {}
 ): Promise<{ results: SearchResult[]; provider: string; errors: string[] }> {
   const cache = webCache(ctx);
   const limit = Math.min(Math.max(opts.limit ?? 6, 1), 10);
@@ -183,32 +203,52 @@ export async function searchWeb(
   }
 
   // Firecrawl: the user's own key when Firecrawl is their provider, then the deployment's.
-  for (const k of await firecrawlKeys(cache, cfg.provider === "firecrawl" ? cfg.key : undefined)) {
-    try {
-      const found = await firecrawlSearch(k.key, query, Math.min(limit + 4, 10), recency);
-      const j: Judged = { ...judgeResults(query, found), provider: "firecrawl" };
-      if (j.ok) return finish(j);
-      errors.push("firecrawl: off-topic results");
-      if (j.results.length) failed.push(j);
-      break;
-    } catch (err) {
-      errors.push(errorMessage(err).slice(0, 160));
-      await benchKey(cache, k, err);
+  const viaFirecrawl = async (): Promise<Judged | null> => {
+    for (const k of await firecrawlKeys(
+      cache,
+      cfg.provider === "firecrawl" ? cfg.key : undefined
+    )) {
+      try {
+        const found = await firecrawlSearch(k.key, query, Math.min(limit + 4, 10), recency);
+        const j: Judged = { ...judgeResults(query, found), provider: "firecrawl" };
+        if (j.ok) return j;
+        errors.push("firecrawl: off-topic results");
+        if (j.results.length) failed.push(j);
+        return null;
+      } catch (err) {
+        errors.push(errorMessage(err).slice(0, 160));
+        await benchKey(cache, k, err);
+      }
     }
-  }
-
-  const r: SearchOutcome = await ctx.runAction(internal.web.access.search, {
-    query,
-    limit,
-    recency,
-    chain: true,
-  });
-  errors.push(...r.errors);
-  if (r.ok) return finish(r);
-  failed.push(r);
+    return null;
+  };
+  const viaChain = async (): Promise<Judged | null> => {
+    try {
+      const r: SearchOutcome = await ctx.runAction(internal.web.access.search, {
+        query,
+        limit,
+        recency,
+        chain: true,
+      });
+      errors.push(...r.errors);
+      if (r.ok) return r;
+      failed.push(r);
+    } catch (err) {
+      errors.push(`chain: ${errorMessage(err).slice(0, 160)}`);
+    }
+    return null;
+  };
+  // Firecrawl usually answers in about a second. When it hasn't by HEDGE_MS (rate-limited, slow,
+  // or failing over), the chain starts alongside and the first on-topic set wins, so a struggling
+  // backend costs a couple of seconds instead of its whole timeout.
+  const firecrawl = viaFirecrawl();
+  const early = await Promise.race([firecrawl, sleep(HEDGE_MS).then(() => "late" as const)]);
+  const won =
+    early === "late" ? await firstOf([firecrawl, viaChain()]) : (early ?? (await viaChain()));
+  if (won) return finish(won);
 
   const pool: string[] = [];
-  for (const url of searxngPool()) {
+  for (const url of opts.live ? [] : searxngPool()) {
     if (url === cfg.url?.replace(/\/+$/, "")) continue;
     if (!(await cache.get(`breaker:searxng:${url}`))) pool.push(url);
   }
@@ -220,4 +260,28 @@ export async function searchWeb(
   // were already dropped).
   const best = failed.filter((f) => f.results.length).sort((a, b) => b.score - a.score)[0];
   return best ? finish(best) : { results: [], provider: "none", errors };
+}
+
+/** Photos for a query through Firecrawl's image search, cached like web results; [] when unavailable. */
+export async function searchImages(
+  ctx: ActionCtx,
+  cfg: SearchConfig,
+  query: string,
+  limit = 8
+): Promise<ImageResult[]> {
+  const cache = webCache(ctx);
+  const cacheKey = `images:v1:${limit}:${query.toLowerCase().trim()}`;
+  const hit = await cache.get(cacheKey);
+  if (hit) return JSON.parse(hit.content) as ImageResult[];
+  for (const k of await firecrawlKeys(cache, cfg.provider === "firecrawl" ? cfg.key : undefined)) {
+    try {
+      const found = await firecrawlImages(k.key, query, limit);
+      if (found.length)
+        await cache.put(cacheKey, JSON.stringify(found), "application/json", 6 * HOUR);
+      return found;
+    } catch (err) {
+      await benchKey(cache, k, err);
+    }
+  }
+  return [];
 }

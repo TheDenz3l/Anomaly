@@ -48,6 +48,20 @@ export function resolveLevel(
   return { sent, budget };
 }
 
+const ABOVE_LOW = new Set(["auto", "medium", "high", "xhigh", "max"]);
+
+/**
+ * Level for a step that only picks a tool, like writing a search query: "low" when the model takes
+ * effort levels and the user asked for more; undefined keeps the user's level. Budget and toggle
+ * models keep one setting for the whole reply, since some providers reject thinking switched on
+ * or off partway through a tool loop.
+ */
+export function routingLevel(profile: CapabilityProfile, requested: string): string | undefined {
+  const r = profile.reasoning;
+  if (r.style !== "effort" || !r.levels.includes("low")) return undefined;
+  return ABOVE_LOW.has(requested) ? "low" : undefined;
+}
+
 export function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
   const keys = path.split(".");
   let cur: Record<string, unknown> = obj;

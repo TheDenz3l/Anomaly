@@ -25,7 +25,13 @@ import type { Sink } from "./writer";
  * until the model answers without tools. Adapts to endpoint quirks on the fly (PRD §3.5 step 3).
  */
 
-export type ToolOutcome = { content: string; final?: boolean; stop?: boolean };
+export type ToolOutcome = {
+  content: string;
+  final?: boolean;
+  stop?: boolean;
+  /** Web tools only: whether the call brought anything back (a round that found nothing doesn't count). */
+  web?: "results" | "empty";
+};
 export type LoopTool = { def: ToolDef; run: (args: any, callId: string) => Promise<ToolOutcome> };
 
 export type LoopOptions = {
@@ -44,6 +50,28 @@ export type LoopOptions = {
   nativeSearch?: boolean;
   sources: SourceCollector;
   signal?: AbortController;
+  /**
+   * Rounds of web tool calls that found something before web_search/read_url are withdrawn and the
+   * model has to answer. Unset: no limit beyond the budget. Each round is a full model round trip.
+   */
+  webRounds?: number;
+  /** Rounds already spent before the loop started (results passed in up front). */
+  webRoundsDone?: number;
+  /** Level for a first step that's expected to pick a search, not write the answer. */
+  routeLevel?: string;
+  /** Cards still offered once the web rounds are spent (never ChoiceChips). Unset: all of them. */
+  answerCards?: readonly ModelComponent[];
+};
+
+export type StepTiming = {
+  level: string;
+  /** From sending the request to the first streamed event. */
+  firstMs?: number;
+  /** From sending the request to the first answer text. */
+  textMs?: number;
+  /** Tools this step called, and how long they took together. */
+  tools: number;
+  toolsMs?: number;
 };
 
 export type LoopResult = {
@@ -59,9 +87,14 @@ export type LoopResult = {
   reasoningSeen: boolean;
   componentsShown: string[];
   usedTools: string[];
+  timings: StepTiming[];
+  /** When the first answer text arrived. */
+  firstTextAt?: number;
 };
 
 const TOOL_RESULT_MAX = 12_000;
+
+const WEB_TOOLS = new Set(["web_search", "read_url"]);
 
 /** Data tools that render a card themselves: its skeleton shows from the moment the model calls them. */
 const TOOL_CARDS: Record<string, string> = {
@@ -235,7 +268,11 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     reasoningSeen: false,
     componentsShown: [],
     usedTools: [],
+    timings: [],
   };
+  let webDone = o.webRoundsDone ?? 0;
+  /** A step after the web rounds that only drew cards: the next one has to write the answer. */
+  let drewAfterWeb = false;
   const repairs = new Map<string, number>();
   const invalidPartByName = new Map<string, string>();
   let finalNext = false;
@@ -246,7 +283,31 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
   for (let step = 0; step < maxSteps; step++) {
     result.steps = step + 1;
     const lastStep = finalNext || step === maxSteps - 1;
-    const defs = toolsOk && !lastStep ? [...componentDefs, ...o.tools.map((t) => t.def)] : [];
+    // Once the web rounds are spent, app tools leave the list so the model answers from what it
+    // found instead of paying another round trip. Data tools go too: denied a search, models reach
+    // for whatever is left (a location request or a weather card on a news question). Cards stay.
+    const webOpen = o.webRounds === undefined || webDone < o.webRounds;
+    const offered = webOpen ? o.tools : [];
+    // Every card step is another round trip before the answer text. After searching the model gets
+    // one, without chips (the turn adds follow-up chips after the reply anyway); then it writes.
+    const cards = webOpen
+      ? componentDefs
+      : drewAfterWeb
+        ? []
+        : componentDefs.filter((d) => {
+            const c = componentFromTool(d.function.name);
+            return (
+              c !== "ChoiceChips" && (!o.answerCards || (c !== null && o.answerCards.includes(c)))
+            );
+          });
+    const defs = toolsOk && !lastStep ? [...cards, ...offered.map((t) => t.def)] : [];
+    const offeredNames = new Set(defs.map((d) => d.function.name));
+    // A first step that's only going to write a search query doesn't need the full thinking budget.
+    const routing =
+      step === 0 &&
+      o.routeLevel !== undefined &&
+      webDone === 0 &&
+      offered.some((t) => WEB_TOOLS.has(t.def.function.name));
     const extra: Record<string, unknown> = {};
     if (nativeSearch && step === 0) {
       if (engine.profile.params?.nativeSearch === "openrouter")
@@ -256,7 +317,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     const built = buildRequest({
       model: engine.modelId,
       profile: engine.profile,
-      level: o.level,
+      level: routing ? o.routeLevel! : o.level,
       difficulty: o.difficulty,
       messages,
       tools: defs,
@@ -276,6 +337,9 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     const fence = o.prompted ? new FenceParser() : null;
     let fencePart: string | null = null;
     let stepText = "";
+    const timing: StepTiming = { level: built.levelSent, tools: 0 };
+    result.timings.push(timing);
+    const sentAt = Date.now();
 
     const handleFence = (ev: FenceEvent) => {
       if (ev.type === "text") {
@@ -333,8 +397,13 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
         signal.signal
       ) as AsyncGenerator<StreamEvent>) {
         onFirst();
+        timing.firstMs ??= Date.now() - sentAt;
         switch (ev.type) {
           case "text":
+            if (timing.textMs === undefined && ev.delta.trim()) {
+              timing.textMs = Date.now() - sentAt;
+              result.firstTextAt ??= Date.now();
+            }
             if (fence) for (const fe of fence.push(ev.delta)) handleFence(fe);
             else {
               sink.text(ev.delta);
@@ -458,8 +527,10 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     if (!toolCalls.length || defs.length === 0) break;
 
     let stopAfter = false;
+    let foundOnWeb = false;
     // Cards a data tool in this same step is about to draw count as drawn already.
     const drawingNow = new Set(toolCalls.flatMap((c) => TOOL_RENDERS[c.function.name] ?? []));
+    const toolsAt = Date.now();
     const outputs = await Promise.all(
       toolCalls.map(async (call, i): Promise<string> => {
         const name = call.function.name;
@@ -471,10 +542,12 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
           args = null;
         }
         const comp = componentFromTool(name);
-        if (comp && (drawnByTools.has(comp) || drawingNow.has(comp))) {
+        if (comp && (drawnByTools.has(comp) || drawingNow.has(comp) || !offeredNames.has(name))) {
           const stray = partByIndex.get(entries[i].index);
           if (stray) sink.remove(stray);
-          return `${comp} is already on screen from a tool; don't render it again. Answer in a sentence or two.`;
+          return offeredNames.has(name)
+            ? `${comp} is already on screen from a tool; don't render it again. Answer in a sentence or two.`
+            : `${comp} isn't available now. Answer in text.`;
         }
         if (comp) {
           const partId =
@@ -516,12 +589,15 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
         const tool = byName.get(name);
         try {
           if (!tool) return `Unknown tool ${name}.`;
+          if (!offeredNames.has(name))
+            return `${name} isn't available for the rest of this reply. Answer from what you have.`;
           if (args === null)
             return "Your arguments weren't valid JSON. Call the tool again with a JSON object.";
           const out = await tool.run(args, call.id);
           for (const card of TOOL_RENDERS[name] ?? []) drawnByTools.add(card);
           if (out.final) finalNext = true;
           if (out.stop) stopAfter = true;
+          if (out.web === "results") foundOnWeb = true;
           return truncate(out.content, TOOL_RESULT_MAX);
         } catch (err) {
           return `Tool failed: ${(err as Error).message}`;
@@ -531,6 +607,10 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
         }
       })
     );
+    timing.tools = toolCalls.length;
+    timing.toolsMs = Date.now() - toolsAt;
+    if (!webOpen) drewAfterWeb = true;
+    if (foundOnWeb) webDone++;
     toolCalls.forEach((call, i) =>
       messages.push({ role: "tool", tool_call_id: call.id, content: outputs[i] })
     );

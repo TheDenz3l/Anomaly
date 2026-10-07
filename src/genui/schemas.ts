@@ -93,13 +93,19 @@ export const TableSchema = z.object({
 export const CompareSchema = z.object({
   title: z.string().optional(),
   items: z
-    .array(z.object({ id, name: z.string(), subtitle: z.string().optional() }))
+    .array(
+      z.object({
+        id,
+        name: z.string().describe("A few words: it heads a narrow phone column."),
+        subtitle: z.string().optional(),
+      })
+    )
     .min(2)
     .max(3),
   rows: z.array(
     z.object({
       label: z.string(),
-      values: z.array(z.string()),
+      values: z.array(z.string()).describe("One per item, in order; a short phrase each."),
       winner: z.number().int().optional(),
     })
   ),
@@ -109,7 +115,13 @@ export const CompareSchema = z.object({
 export const TimelineSchema = z.object({
   title: z.string().optional(),
   events: z
-    .array(z.object({ date: z.string(), title: z.string(), detail: z.string().optional() }))
+    .array(
+      z.object({
+        date: z.string().describe("ISO date (2026-09-29), month (2026-09) or year."),
+        title: z.string(),
+        detail: z.string().optional(),
+      })
+    )
     .min(1),
 });
 
@@ -185,12 +197,14 @@ export const ProductGridSchema = z.object({
         id,
         name: z.string(),
         brand: z.string(),
-        price: z.number(),
+        price: z.number().positive(),
         currency: z.string(),
-        rating: z.number().min(0).max(5),
-        reviews: z.number().int(),
+        rating: z.number().min(0).max(5).optional(),
+        reviews: z.number().int().optional(),
         store: z.string(),
         badge: z.string().optional(),
+        url: z.string().url().optional().describe("The product's page; tapping the card opens it."),
+        image: z.string().url().optional().describe("A product photo URL from the page."),
       })
     )
     .min(1),

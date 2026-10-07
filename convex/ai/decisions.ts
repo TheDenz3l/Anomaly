@@ -130,7 +130,60 @@ const COMPONENT_HINTS: [ModelComponent, RegExp, number][] = [
 const SMALL_TALK =
   /^(hi|hey|hello|yo|thanks|thank you|ok|okay|cool|nice|good (morning|night|evening)|how are you)[!. ]*$/i;
 const TIME_SENSITIVE =
-  /\b(today|tonight|tomorrow|this (week|weekend|month|year)|latest|news|current(ly)?|right now|now playing|price|stock|score|election|release date|near me|open now|20[2-3]\d)\b/i;
+  /\b(today|tonight|tomorrow|this (week|weekend|month|year)|latest|newest|news|recent(ly)?|just (came out|dropped|released|announced)|current(ly)?|right now|now playing|price|stock|score|election|release date|near me|open now|20[2-3]\d)\b/i;
+
+const PHOTOS =
+  /\b(photos?|pictures?|pics|images?|screenshots?|wallpapers?|gallery|what (does|do|did) .{1,60} look like)\b/i;
+const MAKE_IMAGE =
+  /\b(generate|create|draw|make|design|edit)\b.{0,30}\b(images?|pictures?|photos?)\b/i;
+
+/** The user wants to see photos (not have one made): a search then brings back photos too. */
+export function wantsPhotos(text: string): boolean {
+  return PHOTOS.test(text) && !MAKE_IMAGE.test(text);
+}
+
+const FILLER = [
+  /\b(can|could|would|will) you( please)?\b/gi,
+  /\b(please|pls|plz|hey|hi|hello|yo|thanks|thank you)\b/gi,
+  /\b(show|tell|give|grab|get|find|send|bring) me\b/gi,
+  /\bi (heard|think|thought|saw|read|want|need|wonder(ed)?|was wondering|guess)( that| it was| about)?\b/gi,
+  /\b(a bunch of|a few|a couple of|some of|all of|all|any|some)\b/gi,
+  /\b(what'?s|whats|what is|what are|is there|are there|do you know|let me know)\b/gi,
+  /\bi'?m (curious|wondering|interested)( about| if| in)?\b/gi,
+];
+const QUERY_DROP = new Set(
+  "the a an of for to in on at about and or with that this these those were was is are been be it its i me my you your we our they them there here just really also so very".split(
+    " "
+  )
+);
+
+/**
+ * A search query from a chat message, for searching before the model has written one: the first
+ * sentence or two with the asking and the filler taken out ("Show me a bunch of the new photos
+ * that were released recently for gta 6" → "new photos released recently gta 6"). Results must
+ * share most of a query's words to count as on topic, which a whole chatty sentence never does.
+ */
+export function searchQueryFrom(text: string): string {
+  const sentences = text
+    // The iOS keyboard types curly apostrophes ("What’s"); the filler patterns use straight ones.
+    .replace(/[‘’]/g, "'")
+    .split(/(?<=[?!])\s+|(?<=\w\.)\s+|\.{2,}|\n+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  let words: string[] = [];
+  let taken = "";
+  for (const sentence of sentences) {
+    taken = `${taken} ${sentence}`;
+    let q = taken;
+    for (const re of FILLER) q = q.replace(re, " ");
+    words = q
+      .split(/\s+/)
+      .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+      .filter((w) => w && !QUERY_DROP.has(w.toLowerCase()));
+    if (words.length >= 3) break;
+  }
+  return (words.slice(0, 8).join(" ") || text.trim()).slice(0, 300);
+}
 const DEEP =
   /\b(research|in-?depth|sources|cite|citations|comprehensive|literature|evidence|reviews of)\b/i;
 const FACTUAL = /^(who|what|when|where|which|how (much|many|old|tall|far))\b/i;

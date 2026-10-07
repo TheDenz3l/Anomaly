@@ -113,7 +113,8 @@ export async function firecrawlSearch(
     key,
     "search",
     { query, limit, sources: ["web"], ...(recency ? { tbs: TBS[recency] } : {}) },
-    20_000
+    // Usually ~1 s; past 8 s the next backend is a better bet than waiting.
+    8_000
   );
   const web = Array.isArray(r.data) ? r.data : (r.data?.web ?? []);
   const seen = new Set<string>();
@@ -129,6 +130,53 @@ export async function firecrawlSearch(
       snippet: plain(item.description || item.snippet || "").slice(0, 500),
       provider: "firecrawl",
     });
+  }
+  return out;
+}
+
+export type ImageResult = { imageUrl: string; title: string; url: string };
+
+/** Hosts whose image links only work inside their own site (crawler stubs, signed CDN links). */
+const NO_HOTLINK =
+  /(^|\.)(lookaside\.instagram\.com|lookaside\.fbsbx\.com|fbcdn\.net|cdninstagram\.com)$/i;
+
+/**
+ * Image search: photos with the page each came from, in one call (~2 s), so a reply can show
+ * photos without reading pages first. Small images (icons, thumbnails) are left out.
+ */
+export async function firecrawlImages(
+  key: string,
+  query: string,
+  limit: number
+): Promise<ImageResult[]> {
+  type Item = {
+    imageUrl?: string;
+    title?: string;
+    url?: string;
+    imageWidth?: number;
+    imageHeight?: number;
+  };
+  const r = await call<{ data?: { images?: Item[] } }>(
+    key,
+    "search",
+    { query, limit, sources: ["images"] },
+    6_000
+  );
+  const seen = new Set<string>();
+  const out: ImageResult[] = [];
+  for (const item of r.data?.images ?? []) {
+    const src = item.imageUrl ?? "";
+    if (!/^https:\/\//.test(src) || seen.has(src)) continue;
+    let host = "";
+    try {
+      host = new URL(src).hostname;
+    } catch {
+      continue;
+    }
+    if (NO_HOTLINK.test(host)) continue;
+    if (item.imageWidth && item.imageWidth < 400) continue;
+    seen.add(src);
+    out.push({ imageUrl: src, title: plain(item.title || "").slice(0, 100), url: item.url ?? src });
   }
   return out;
 }
@@ -152,7 +200,8 @@ export async function firecrawlScrape(key: string, url: string): Promise<Scraped
     key,
     "scrape",
     { url, formats: ["markdown"], onlyMainContent: true, maxAge: SCRAPE_MAX_AGE },
-    45_000
+    // Usually 1–4 s; a page still rendering after 15 s goes to the plain-fetch fallback.
+    15_000
   );
   const meta = r.data?.metadata ?? {};
   if (meta.statusCode === 404 || meta.statusCode === 410) {

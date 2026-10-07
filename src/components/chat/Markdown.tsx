@@ -103,17 +103,19 @@ function inline(text: string, keyBase: string, mask = false): ReactNode[] {
           </Fragment>
         );
       }
+      // Emphasis can wrap a link or a citation (models often bold a whole "[title](url)"), so its
+      // contents go through the same pass.
       if (seg.startsWith("**") && seg.endsWith("**") && seg.length > 4) {
         return (
           <RNText key={key} className="font-body-bold text-ink" style={mask ? HIDE : undefined}>
-            {seg.slice(2, -2)}
+            {inline(seg.slice(2, -2), key, mask)}
           </RNText>
         );
       }
       if (seg.startsWith("*") && seg.endsWith("*") && seg.length > 2) {
         return (
           <RNText key={key} className="font-body-italic text-ink" style={mask ? HIDE : undefined}>
-            {seg.slice(1, -1)}
+            {inline(seg.slice(1, -1), key, mask)}
           </RNText>
         );
       }

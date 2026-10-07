@@ -94,17 +94,19 @@ export function Table({ props }: GenProps<"Table">) {
   );
 }
 
+/** Side by side for two items; three don't fit a phone's width, so each row lists them instead. */
 export function Compare({ props }: GenProps<"Compare">) {
+  const stacked = props.items.length > 2;
   return (
     <GenCard title={props.title ?? "Comparison"} icon="git-compare-outline">
       <View className="flex-row gap-2">
         {props.items.map((it) => (
           <View key={it.id} className="flex-1 rounded-2xl bg-raised px-3 py-2.5">
-            <Text weight="bold" className="text-[15px]" numberOfLines={1}>
+            <Text weight="bold" className="text-[15px] leading-5" numberOfLines={2}>
               {it.name}
             </Text>
             {it.subtitle ? (
-              <Text muted className="text-xs">
+              <Text muted className="mt-0.5 text-xs leading-4" numberOfLines={2}>
                 {it.subtitle}
               </Text>
             ) : null}
@@ -120,15 +122,15 @@ export function Compare({ props }: GenProps<"Compare">) {
             <Text muted className="mb-1 text-xs">
               {row.label}
             </Text>
-            <View className="flex-row gap-2">
+            <View className={stacked ? "gap-1.5" : "flex-row gap-2"}>
               {row.values.map((v, i) => {
                 const win = row.winner === i;
-                return (
-                  <View key={i} className="flex-1 flex-row items-center gap-1.5 px-1">
+                const value = (
+                  <View className="flex-1 flex-row items-start gap-1.5 px-1">
                     {win ? (
                       <View
                         accessibilityLabel="Better"
-                        className="h-1.5 w-1.5 rounded-full bg-primary"
+                        className="mt-2 h-1.5 w-1.5 rounded-full bg-primary"
                       />
                     ) : null}
                     <Text
@@ -138,6 +140,18 @@ export function Compare({ props }: GenProps<"Compare">) {
                     >
                       {v}
                     </Text>
+                  </View>
+                );
+                return stacked ? (
+                  <View key={i} className="flex-row gap-2">
+                    <Text muted className="w-[32%] text-xs leading-5" numberOfLines={2}>
+                      {props.items[i]?.name}
+                    </Text>
+                    {value}
+                  </View>
+                ) : (
+                  <View key={i} className="flex-1">
+                    {value}
                   </View>
                 );
               })}
@@ -156,6 +170,18 @@ export function Compare({ props }: GenProps<"Compare">) {
   );
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-09-29" reads "Sep 29" (with the year when it isn't this one); other forms stay as written. */
+function shortDate(date: string): string {
+  const m = date.trim().match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
+  const month = m ? MONTHS[Number(m[2]) - 1] : undefined;
+  if (!m || !month) return date;
+  if (!m[3]) return `${month} ${m[1]}`;
+  const year = Number(m[1]) === new Date().getFullYear() ? "" : `, ${m[1]}`;
+  return `${month} ${Number(m[3])}${year}`;
+}
+
 export function Timeline({ props }: GenProps<"Timeline">) {
   const [open, setOpen] = useState<number | null>(null);
   return (
@@ -172,9 +198,9 @@ export function Timeline({ props }: GenProps<"Timeline">) {
             disabled={!e.detail}
             className="flex-row gap-3"
           >
-            <View className="w-12 pt-0.5">
-              <Text weight="bold" className="text-[13px] text-primary-strong">
-                {e.date}
+            <View className="w-16 pt-0.5">
+              <Text weight="bold" className="text-[13px] leading-[18px] text-primary-strong">
+                {shortDate(e.date)}
               </Text>
             </View>
             <View className="items-center">

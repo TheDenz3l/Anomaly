@@ -481,6 +481,9 @@ async function runProbes(
       levels: lv,
       defaultLevel: lv.includes("medium") ? "medium" : lv[0],
       budgets: undefined,
+      // A made-up level was accepted and no thinking showed at any level: the endpoint (often a
+      // relay) is likely dropping the field, so the picker says the level may make no difference.
+      noop: unconfirmed,
     });
     findings.push(`Reasoning effort via ${effortField}: ${lv.join(", ")}.`);
   } else if (budgetField) {
