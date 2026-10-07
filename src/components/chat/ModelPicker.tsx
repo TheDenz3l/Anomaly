@@ -7,6 +7,7 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  FlatList,
 } from "react-native";
 import Reanimated, {
   interpolate,
@@ -54,14 +55,103 @@ const LEVEL_HINT: Record<string, string> = {
   none: "No thinking at all",
 };
 
+function contextShort(n: number) {
+  return n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}K`;
+}
+
 function contextLabel(n: number) {
-  return n >= 1_000_000
-    ? `${+(n / 1_000_000).toFixed(1)}M context`
-    : `${Math.round(n / 1000)}K context`;
+  return `${contextShort(n)} context`;
 }
 
 function Divider() {
   return <View pointerEvents="none" style={styles.divider} />;
+}
+
+/** A provider in the row pinned over the full list: its scope, and a filter when there are several. */
+function ProviderChip({
+  label,
+  count,
+  on,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  on: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <Tap
+      haptic={Boolean(onPress)}
+      disabled={!onPress}
+      accessibilityRole={onPress ? "button" : "text"}
+      accessibilityState={onPress ? { selected: on } : undefined}
+      accessibilityLabel={`${label}, ${count} models`}
+      onPress={onPress}
+      style={[styles.chip, on ? styles.chipOn : null]}
+    >
+      <Text weight="medium" className="text-[14px]" style={{ color: on ? "#000" : colors.text }}>
+        {label}
+      </Text>
+      <Text className="text-[14px]" style={{ color: on ? "rgba(0,0,0,0.5)" : colors.textMuted }}>
+        {count}
+      </Text>
+    </Tap>
+  );
+}
+
+/**
+ * A row of the full list. One line, so more of the list fits above the keyboard while searching;
+ * the part of the name that matches the search is set in bold.
+ */
+function ModelRow({
+  name,
+  meta,
+  query,
+  selected,
+  first,
+  last,
+  onPress,
+}: {
+  name: string;
+  meta: string;
+  query: string;
+  selected: boolean;
+  first: boolean;
+  last: boolean;
+  onPress: () => void;
+}) {
+  const at = query ? name.toLowerCase().indexOf(query) : -1;
+  return (
+    <Tap
+      haptic
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`${name}, ${meta}`}
+      onPress={onPress}
+      style={[styles.slim, first && styles.slimFirst, last && styles.slimLast]}
+    >
+      <Text className="flex-1 text-[17px] leading-[22px]" numberOfLines={1}>
+        {at < 0 ? (
+          name
+        ) : (
+          <>
+            {name.slice(0, at)}
+            <Text weight="bold" className="text-[17px] leading-[22px]">
+              {name.slice(at, at + query.length)}
+            </Text>
+            {name.slice(at + query.length)}
+          </>
+        )}
+      </Text>
+      <Text muted className="text-[15px]" numberOfLines={1}>
+        {meta}
+      </Text>
+      <View style={styles.check}>
+        {selected ? <Icon name="checkmark" size={20} color={colors.primaryStrong} /> : null}
+      </View>
+      {last ? null : <Divider />}
+    </Tap>
+  );
 }
 
 function Group({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
@@ -180,6 +270,9 @@ export function ModelPicker({
   /** Closing to open Settings: the keyboard stays down. */
   const [leaving, setLeaving] = useState(false);
   const mainScroll = useRef<ScrollView>(null);
+  /** The provider the full list is narrowed to; null for all of them. */
+  const [provider, setProvider] = useState<string | null>(null);
+  const allList = useRef<FlatList<Model>>(null);
   /** 0 shows the first page, 1 the page pushed on top of it. */
   const slide = useSharedValue(0);
 
@@ -271,8 +364,10 @@ export function ModelPicker({
     setPage("main");
     setQuery("");
     setLeaving(false);
+    setProvider(null);
     slide.set(0);
     mainScroll.current?.scrollTo({ y: 0, animated: false });
+    allList.current?.scrollToOffset({ offset: 0, animated: false });
   };
 
   const reasoning = current?.profile.reasoning;
@@ -283,19 +378,21 @@ export function ModelPicker({
   const levels = reasoning
     ? ["auto", "off", ...reasoning.levels.filter((l) => !["off", "auto", "none"].includes(l))]
     : [];
-  // The sheet is as tall as its tallest page and rests lowered so that only what a page needs
-  // shows, so nothing scrolls. With Thinking on offer the first page stops just past the Thinking
-  // row, the top of the next group showing at the screen's edge, and pulls up for the rest; the
-  // Thinking page shows whole. Without it, the first page shows whole.
-  const bodyH = Math.min(box.maxBody, Math.max(mainH, thinking ? thinkH : 0));
+  // The sheet is built at full height and rests lowered so that only what a page needs shows,
+  // so nothing scrolls. With Thinking on offer the first page stops just past the Thinking row,
+  // the top of the next group showing at the screen's edge, and pulls up for the rest; the
+  // Thinking page shows whole. The full list stands at full height, room left above the keyboard.
+  const bodyH = box.maxBody;
   /** Room under a page's last line for the home indicator, when the sheet rests lowered. */
   const clear = Math.max(0, insets.bottom - 20);
   const detent =
-    !thinking || page === "all"
+    page === "all"
       ? undefined
       : page === "thinking"
         ? TOOLBAR_H + thinkH + clear
-        : TOOLBAR_H + fold + PEEK;
+        : thinking
+          ? TOOLBAR_H + fold + PEEK
+          : TOOLBAR_H + mainH + clear;
 
   const manage = () => {
     setLeaving(true);
@@ -382,67 +479,127 @@ export function ModelPicker({
       </>
     );
 
+  // The full list. The search field and the provider stay pinned above it and never scroll away;
+  // with several providers they are filters. Results are one line each, so plenty stay in sight
+  // above the keyboard.
   const q = query.trim().toLowerCase();
-  const LIMIT = 40;
+  const multi = providers.length > 1;
+  const scope = multi ? provider : (providers[0]?.providerId ?? null);
+  const counts = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const m of models) out.set(m.providerId, (out.get(m.providerId) ?? 0) + 1);
+    return out;
+  }, [models]);
+  const results = useMemo(
+    () =>
+      models.filter(
+        (m) =>
+          (!scope || m.providerId === scope) &&
+          (!q || `${m.name} ${m.id}`.toLowerCase().includes(q))
+      ),
+    [models, scope, q]
+  );
+  const inScope = scope ? (counts.get(scope) ?? 0) : models.length;
+  const toTop = () => allList.current?.scrollToOffset({ offset: 0, animated: false });
+  const search = (text: string) => {
+    setQuery(text);
+    toTop();
+  };
+  const narrow = (id: string | null) => {
+    setProvider(id);
+    toTop();
+  };
   const allPage = (
     <View style={{ flex: 1 }}>
-      <View style={[styles.search, { marginHorizontal: 16 }]}>
-        <Icon name="search" size={16} color={colors.textFaint} />
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder={`Search ${models.length} models`}
-          placeholderTextColor={colors.textFaint}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-          accessibilityLabel="Search models"
-          style={styles.input}
-        />
+      <View style={styles.pinned}>
+        <View style={styles.search}>
+          <Icon name="search" size={16} color={colors.textFaint} />
+          <TextInput
+            value={query}
+            onChangeText={search}
+            placeholder={`Search ${inScope} models`}
+            placeholderTextColor={colors.textFaint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            accessibilityLabel="Search models"
+            style={styles.input}
+          />
+          {query ? (
+            <Tap accessibilityLabel="Clear search" hitSlop={10} onPress={() => search("")}>
+              <Icon name="close-circle" size={18} color={colors.textFaint} />
+            </Tap>
+          ) : null}
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.chips}
+        >
+          {multi ? (
+            <ProviderChip
+              label="All"
+              count={models.length}
+              on={scope === null}
+              onPress={() => narrow(null)}
+            />
+          ) : null}
+          {providers.map((p) => (
+            <ProviderChip
+              key={p.providerId}
+              label={p.label}
+              count={counts.get(p.providerId) ?? 0}
+              on={scope === p.providerId}
+              onPress={multi ? () => narrow(p.providerId) : undefined}
+            />
+          ))}
+        </ScrollView>
       </View>
-      <ScrollView
+      <FlatList
+        ref={allList}
+        data={results}
+        keyExtractor={(m) => modelRef(m)}
+        renderItem={({ item, index }) => (
+          <ModelRow
+            name={item.name}
+            meta={
+              multi && !scope
+                ? `${providerLabel(item.providerId)}, ${contextShort(item.contextWindow)}`
+                : contextShort(item.contextWindow)
+            }
+            query={q}
+            selected={modelRef(item) === value}
+            first={index === 0}
+            last={index === results.length - 1}
+            onPress={() => pick(modelRef(item))}
+          />
+        )}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text muted className="text-center text-[15px] leading-[21px]">
+              {q ? `No models match \u201C${query.trim()}\u201D.` : "No models here yet."}
+            </Text>
+            {q ? (
+              <Tap accessibilityRole="button" hitSlop={8} onPress={() => search("")}>
+                <Text
+                  weight="medium"
+                  className="text-[15px]"
+                  style={{ color: colors.primaryStrong }}
+                >
+                  Clear search
+                </Text>
+              </Tap>
+            ) : null}
+          </View>
+        }
         style={styles.window}
         contentContainerStyle={styles.pageBody}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         automaticallyAdjustKeyboardInsets
-      >
-        {providers.map((p) => {
-          const matching = models.filter(
-            (m) =>
-              m.providerId === p.providerId && (!q || `${m.name} ${m.id}`.toLowerCase().includes(q))
-          );
-          const list = matching.slice(0, LIMIT);
-          if (list.length === 0) return null;
-          return (
-            <View key={p.providerId}>
-              <Text weight="medium" muted className="mb-2 px-4 text-[13px]">
-                {p.label}
-              </Text>
-              <Group
-                footer={
-                  matching.length > LIMIT ? (
-                    <Text muted className="text-[13px]">
-                      {`${matching.length - LIMIT} more. Search to find them.`}
-                    </Text>
-                  ) : undefined
-                }
-              >
-                {list.map((m, i) => (
-                  <Row
-                    key={modelRef(m)}
-                    title={m.name}
-                    subtitle={contextLabel(m.contextWindow)}
-                    selected={modelRef(m) === value}
-                    last={i === list.length - 1}
-                    onPress={() => pick(modelRef(m))}
-                  />
-                ))}
-              </Group>
-            </View>
-          );
-        })}
-      </ScrollView>
+        initialNumToRender={16}
+      />
     </View>
   );
 
@@ -456,7 +613,7 @@ export function ModelPicker({
       restoreFocus={!leaving}
       onHidden={reset}
       detent={detent}
-      expandable={page === "main"}
+      expandable={page === "main" && thinking}
       expandTo={TOOLBAR_H + mainH + clear}
       title={page === "thinking" ? "Thinking" : page === "all" ? "All models" : title}
       leading={
@@ -548,15 +705,40 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: "rgba(255,255,255,0.08)",
   },
+  /** Search and providers, held above the full list. */
+  pinned: { paddingHorizontal: 16, paddingBottom: 10, gap: 10 },
   search: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 14,
-    marginBottom: 16,
     borderRadius: 16,
     backgroundColor: GROUP_BG,
   },
+  chips: { gap: 8 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    height: 32,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: GROUP_BG,
+  },
+  chipOn: { backgroundColor: "#F2F2F4" },
+  slim: {
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: GROUP_BG,
+  },
+  slimFirst: { borderTopLeftRadius: LIST_RADIUS, borderTopRightRadius: LIST_RADIUS },
+  slimLast: { borderBottomLeftRadius: LIST_RADIUS, borderBottomRightRadius: LIST_RADIUS },
+  check: { width: 20, alignItems: "flex-end" },
+  empty: { paddingTop: 36, paddingHorizontal: 24, alignItems: "center", gap: 14 },
   input: {
     flex: 1,
     fontFamily: fonts.body,

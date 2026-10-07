@@ -1,45 +1,101 @@
-import { Switch } from "heroui-native";
-import { useState } from "react";
-import { TextInput, View } from "react-native";
-import Animated from "react-native-reanimated";
+import { useEffect } from "react";
+import { StyleSheet, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { Glass } from "@/components/ui/Glass";
-import { Icon, type IconName } from "@/components/ui/Icon";
-import { Sheet } from "@/components/ui/Sheet";
+import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Display, Text } from "@/components/ui/Text";
-import { ActionButton } from "@/genui/kit";
 import { MenuGlyph } from "@/components/navigation/MenuGlyph";
 import { useDrawer } from "@/components/navigation/SideDrawer";
+import { incognitoToggled } from "@/lib/haptics";
 import { fadeIn } from "@/lib/motion";
 import { findModel, useApp } from "@/lib/store";
-import { colors, fonts } from "@/lib/theme";
+import { colors } from "@/lib/theme";
 
-function GlassButton({
-  icon,
-  label,
-  onPress,
-  disabled,
+/** Incognito presses in and lights up; a little give, so it lands like a physical switch. */
+const PRESS = { damping: 16, stiffness: 420, mass: 0.6 };
+/** Incognito turning into New chat as the conversation starts, and back. */
+const MORPH = { damping: 18, stiffness: 240, mass: 0.8 };
+
+/**
+ * The top-right control. Before anything is sent it is the incognito switch: on, it sits pressed
+ * in and lit. Once the chat starts it morphs into New chat.
+ */
+function CornerButton({
+  started,
+  incognito,
+  onIncognito,
+  onNewChat,
 }: {
-  icon: IconName;
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
+  started: boolean;
+  incognito: boolean;
+  onIncognito: (on: boolean) => void;
+  onNewChat: () => void;
 }) {
+  const reduced = useReducedMotion();
+  const lit = incognito && !started;
+  const morph = useSharedValue(started ? 1 : 0);
+  const on = useSharedValue(lit ? 1 : 0);
+  useEffect(() => {
+    const to = started ? 1 : 0;
+    morph.set(reduced ? to : withSpring(to, MORPH));
+  }, [started, reduced, morph]);
+  useEffect(() => {
+    const to = lit ? 1 : 0;
+    on.set(reduced ? to : withSpring(to, PRESS));
+  }, [lit, reduced, on]);
+
+  const held = useAnimatedStyle(() => ({ transform: [{ scale: 1 - on.get() * 0.08 }] }));
+  const fill = useAnimatedStyle(() => ({ opacity: on.get() }));
+  const eye = useAnimatedStyle(() => ({
+    opacity: 1 - morph.get(),
+    transform: [{ scale: 1 - morph.get() * 0.5 }, { rotate: `${-90 * morph.get()}deg` }],
+  }));
+  const eyeLit = useAnimatedStyle(() => ({ opacity: on.get() }));
+  const pen = useAnimatedStyle(() => ({
+    opacity: morph.get(),
+    transform: [{ scale: 0.5 + morph.get() * 0.5 }, { rotate: `${90 * (1 - morph.get())}deg` }],
+  }));
+
+  const press = () => {
+    if (started) return onNewChat();
+    incognitoToggled(!incognito);
+    onIncognito(!incognito);
+  };
+
   return (
     <Tap
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
-      disabled={disabled}
-      style={{ opacity: disabled ? 0.4 : 1 }}
+      accessibilityRole={started ? "button" : "switch"}
+      accessibilityLabel={started ? "New chat" : "Incognito"}
+      accessibilityState={started ? undefined : { checked: incognito }}
+      accessibilityHint={
+        started ? undefined : "Nothing from this chat is saved to or read from memory"
+      }
+      onPress={press}
     >
-      <Glass radius={20} interactive>
-        <View className="h-10 w-10 items-center justify-center">
-          <Icon name={icon} size={19} />
-        </View>
-      </Glass>
+      <Animated.View style={held}>
+        <Glass radius={20} interactive>
+          <View className="h-10 w-10 items-center justify-center">
+            <Animated.View pointerEvents="none" style={[styles.lit, fill]} />
+            <Animated.View pointerEvents="none" style={[styles.glyph, eye]}>
+              <Icon name="eye-off-outline" size={19} />
+              <Animated.View style={[styles.glyph, eyeLit]}>
+                <Icon name="eye-off" size={19} color="#000" />
+              </Animated.View>
+            </Animated.View>
+            <Animated.View pointerEvents="none" style={[styles.glyph, pen]}>
+              <Icon name="create-outline" size={19} />
+            </Animated.View>
+          </View>
+        </Glass>
+      </Animated.View>
     </Tap>
   );
 }
@@ -51,12 +107,7 @@ export function ChatHeader() {
   const models = useApp((s) => s.models);
   const newChat = useApp((s) => s.newChat);
   const setIncognito = useApp((s) => s.setIncognito);
-  const renameThread = useApp((s) => s.renameThread);
-  const deleteThread = useApp((s) => s.deleteThread);
-  const showToast = useApp((s) => s.showToast);
   const drawer = useDrawer();
-  const [menu, setMenu] = useState(false);
-  const [title, setTitle] = useState("");
   const incognito = thread?.incognito ?? draftIncognito;
   const fadeH = insets.top + 72;
 
@@ -85,17 +136,21 @@ export function ChatHeader() {
             </View>
           </Glass>
         </Tap>
-        <Tap
-          accessibilityRole="button"
-          accessibilityLabel={`${thread?.title ?? "New chat"}, chat options`}
-          onPress={() => {
-            setTitle(thread?.title ?? "");
-            setMenu(true);
-          }}
+        {/* Just the chat's name; renaming and deleting live on its row in the menu. */}
+        <View
+          accessible
+          accessibilityRole="header"
+          accessibilityLabel={
+            thread
+              ? `${thread.title}, ${incognito ? "incognito" : findModel(models, thread.modelRef).name}`
+              : incognito
+                ? "Incognito chat"
+                : "New chat"
+          }
           className="flex-1 items-center"
         >
           <Animated.View
-            key={thread?.key ?? thread?.id ?? "new"}
+            key={thread?.key ?? thread?.id ?? (incognito ? "incognito" : "new")}
             entering={fadeIn}
             className="w-full items-center"
           >
@@ -118,77 +173,23 @@ export function ChatHeader() {
                     ? findModel(models, thread.modelRef).name
                     : "New chat"}
               </Text>
-              <Icon name="chevron-down" size={11} color={colors.textMuted} />
             </View>
           </Animated.View>
-        </Tap>
-        <GlassButton icon="create-outline" label="New chat" onPress={newChat} />
-      </View>
-
-      <Sheet
-        open={menu}
-        onClose={() => setMenu(false)}
-        title={thread ? "Chat options" : "New chat"}
-      >
-        <View className="gap-4">
-          <View className="flex-row items-center gap-3 rounded-3xl bg-card p-4">
-            <Icon name="eye-off-outline" size={20} color={colors.textMuted} />
-            <View className="flex-1">
-              <Text weight="bold" className="text-base">
-                Incognito
-              </Text>
-              <Text muted className="text-[13px] leading-[18px]">
-                Nothing from this chat is saved to or read from memory.
-              </Text>
-            </View>
-            <Switch isSelected={incognito} onSelectedChange={setIncognito} />
-          </View>
-          {thread ? (
-            <>
-              <View className="gap-2 rounded-3xl bg-card p-4">
-                <Text weight="bold" className="text-base">
-                  Title
-                </Text>
-                <TextInput
-                  value={title}
-                  onChangeText={setTitle}
-                  accessibilityLabel="Chat title"
-                  style={{
-                    fontFamily: fonts.body,
-                    fontSize: 16,
-                    color: colors.text,
-                    backgroundColor: colors.raised,
-                    borderRadius: 14,
-                    paddingHorizontal: 14,
-                    paddingVertical: 10,
-                  }}
-                />
-                <View className="flex-row justify-end">
-                  <ActionButton
-                    size="sm"
-                    label="Rename"
-                    disabled={!title.trim() || title === thread.title}
-                    onPress={() => {
-                      renameThread(thread.id, title.trim());
-                      showToast("Renamed");
-                    }}
-                  />
-                </View>
-              </View>
-              <ActionButton
-                variant="danger-soft"
-                icon="trash-outline"
-                label="Delete chat"
-                onPress={() => {
-                  deleteThread(thread.id);
-                  setMenu(false);
-                  showToast("Chat deleted");
-                }}
-              />
-            </>
-          ) : null}
         </View>
-      </Sheet>
+        <CornerButton
+          started={Boolean(thread)}
+          incognito={incognito}
+          onIncognito={setIncognito}
+          onNewChat={newChat}
+        />
+      </View>
     </View>
   );
 }
+
+const over = { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as const;
+
+const styles = StyleSheet.create({
+  lit: { ...over, borderRadius: 20, backgroundColor: "#F2F2F4" },
+  glyph: { ...over, alignItems: "center", justifyContent: "center" },
+});

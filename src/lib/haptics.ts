@@ -66,3 +66,17 @@ export function setChatVisible(visible: boolean) {
   chatVisible = visible;
   if (!visible) landPending = false;
 }
+
+/**
+ * Incognito switched. On is a firm click and a soft settle, a switch pressed home; off is one
+ * light tap, so the two read apart without looking.
+ */
+export function incognitoToggled(on: boolean) {
+  if (!ios) return;
+  if (!on) {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    return;
+  }
+  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid);
+  setTimeout(() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft), 90);
+}
