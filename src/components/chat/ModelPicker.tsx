@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode, useRef } from "react";
 import {
   Keyboard,
   ScrollView,
@@ -16,7 +16,7 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { FormSheet, GROUP_BG, floatingSheetBox } from "@/components/ui/FormSheet";
+import { FormSheet, GROUP_BG, floatingSheetBox, TOOLBAR_H } from "@/components/ui/FormSheet";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
@@ -29,8 +29,8 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { scheduleOnRN } from "react-native-worklets";
 import { clampedOut } from "@/lib/motion";
 
-/** Space between the bottom of a page's scroll window and the sheet's edge. */
-const WINDOW_GAP = 12;
+/** How much of what follows the Thinking row shows at the screen's edge before the sheet is pulled up. */
+const PEEK = 22;
 
 export function levelLabel(level: string): string {
   if (level === "auto") return "Auto";
@@ -175,6 +175,11 @@ export function ModelPicker({
   const [query, setQuery] = useState("");
   const [mainH, setMainH] = useState(0);
   const [thinkH, setThinkH] = useState(0);
+  /** Where the Thinking row's group ends on the first page, gap included. */
+  const [fold, setFold] = useState(0);
+  /** Closing to open Settings: the keyboard stays down. */
+  const [leaving, setLeaving] = useState(false);
+  const mainScroll = useRef<ScrollView>(null);
   /** 0 shows the first page, 1 the page pushed on top of it. */
   const slide = useSharedValue(0);
 
@@ -265,7 +270,9 @@ export function ModelPicker({
     setHeld(null);
     setPage("main");
     setQuery("");
+    setLeaving(false);
     slide.set(0);
+    mainScroll.current?.scrollTo({ y: 0, animated: false });
   };
 
   const reasoning = current?.profile.reasoning;
@@ -276,11 +283,22 @@ export function ModelPicker({
   const levels = reasoning
     ? ["auto", "off", ...reasoning.levels.filter((l) => !["off", "auto", "none"].includes(l))]
     : [];
-  // Pages scroll inside a rounded window that ends WINDOW_GAP above the sheet's bottom edge.
-  const bodyH = Math.min(box.maxBody, Math.max(mainH, thinking ? thinkH : 0) + WINDOW_GAP);
-  const inner = W - 32;
+  // The sheet is as tall as its tallest page and rests lowered so that only what a page needs
+  // shows, so nothing scrolls. With Thinking on offer the first page stops just past the Thinking
+  // row, the top of the next group showing at the screen's edge, and pulls up for the rest; the
+  // Thinking page shows whole. Without it, the first page shows whole.
+  const bodyH = Math.min(box.maxBody, Math.max(mainH, thinking ? thinkH : 0));
+  /** Room under a page's last line for the home indicator, when the sheet rests lowered. */
+  const clear = Math.max(0, insets.bottom - 20);
+  const detent =
+    !thinking || page === "all"
+      ? undefined
+      : page === "thinking"
+        ? TOOLBAR_H + thinkH + clear
+        : TOOLBAR_H + fold + PEEK;
 
   const manage = () => {
+    setLeaving(true);
     onClose();
     router.push("/settings");
   };
@@ -340,15 +358,17 @@ export function ModelPicker({
           ))}
         </Group>
         {thinking && level !== undefined ? (
-          <Group>
-            <Row
-              title="Thinking"
-              value={levelLabel(level)}
-              chevron
-              last
-              onPress={() => go("thinking")}
-            />
-          </Group>
+          <View onLayout={(e) => setFold(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
+            <Group>
+              <Row
+                title="Thinking"
+                value={levelLabel(level)}
+                chevron
+                last
+                onPress={() => go("thinking")}
+              />
+            </Group>
+          </View>
         ) : null}
         <Group>
           <Row
@@ -433,7 +453,11 @@ export function ModelPicker({
       fit
       bare
       keepMounted
+      restoreFocus={!leaving}
       onHidden={reset}
+      detent={detent}
+      expandable={page === "main"}
+      expandTo={TOOLBAR_H + mainH + clear}
       title={page === "thinking" ? "Thinking" : page === "all" ? "All models" : title}
       leading={
         page === "main"
@@ -442,27 +466,16 @@ export function ModelPicker({
       }
     >
       <View style={{ width: W, height: bodyH, overflow: "hidden" }}>
-        {/* Sizes the sheet: the thinking page is measured even before it is shown. */}
-        {thinkingPage ? (
-          <View
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            onLayout={(e) => setThinkH(e.nativeEvent.layout.height)}
-            style={[styles.measure, styles.pageBody, { width: inner }]}
-          >
-            {thinkingPage}
-          </View>
-        ) : null}
         <Reanimated.View
           accessibilityElementsHidden={page !== "main"}
           importantForAccessibility={page === "main" ? "auto" : "no-hide-descendants"}
           style={[styles.page, { width: W, height: bodyH }, firstStyle]}
         >
           <ScrollView
+            ref={mainScroll}
             style={styles.window}
+            scrollEnabled={mainH > bodyH}
             showsVerticalScrollIndicator={false}
-            bounces={mainH + WINDOW_GAP > bodyH}
           >
             <View style={styles.pageBody} onLayout={(e) => setMainH(e.nativeEvent.layout.height)}>
               {firstPage}
@@ -480,10 +493,15 @@ export function ModelPicker({
             ) : (
               <ScrollView
                 style={styles.window}
+                scrollEnabled={thinkH > bodyH}
                 showsVerticalScrollIndicator={false}
-                bounces={thinkH + WINDOW_GAP > bodyH}
               >
-                <View style={styles.pageBody}>{thinkingPage}</View>
+                <View
+                  style={styles.pageBody}
+                  onLayout={(e) => setThinkH(e.nativeEvent.layout.height)}
+                >
+                  {thinkingPage}
+                </View>
               </ScrollView>
             )}
           </Reanimated.View>
@@ -496,15 +514,17 @@ export function ModelPicker({
 const styles = StyleSheet.create({
   page: { position: "absolute", top: 0, left: 0 },
   pageBody: { paddingTop: 6, paddingBottom: 8 },
-  /** A rounded scroll window: a long list scrolled under the toolbar keeps its corners. */
+  /**
+   * The scroll window: rounded at the top, so a list scrolled under the toolbar keeps its corners,
+   * and open at the bottom, where the list runs into the sheet's own rounded edge.
+   */
   window: {
     flex: 1,
     marginHorizontal: 16,
-    marginBottom: WINDOW_GAP,
-    borderRadius: LIST_RADIUS,
+    borderTopLeftRadius: LIST_RADIUS,
+    borderTopRightRadius: LIST_RADIUS,
     overflow: "hidden",
   },
-  measure: { position: "absolute", top: 0, left: 0, opacity: 0 },
   group: { backgroundColor: GROUP_BG, borderRadius: LIST_RADIUS, overflow: "hidden" },
   row: {
     minHeight: 56,

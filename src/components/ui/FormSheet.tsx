@@ -1,7 +1,6 @@
 import {
   ActivityIndicator,
   BackHandler,
-  Keyboard,
   Platform,
   Pressable,
   StyleSheet,
@@ -29,12 +28,11 @@ import { scheduleOnRN } from "react-native-worklets";
 import { colors, LIST_RADIUS } from "@/lib/theme";
 import { Glass } from "./Glass";
 import { Icon, type IconName } from "./Icon";
-import { Portal, useCover } from "./Portal";
+import { Portal, useCover, useFocusHandoff } from "./Portal";
 import { Tap } from "./Tap";
 import { Text } from "./Text";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { sheetMotion } from "@/lib/motion";
-
 export type SheetAction = {
   label: string;
   icon: IconName;
@@ -72,6 +70,20 @@ type Props = {
    * opened often; their children must not rely on remounting to reset.
    */
   keepMounted?: boolean;
+  /**
+   * Whether closing hands the keyboard back to the field that had it when the sheet opened.
+   * False when the sheet closes to open another screen.
+   */
+  restoreFocus?: boolean;
+  /**
+   * How much of the sheet shows at rest, from its top edge to the bottom of the screen; the rest
+   * waits below the edge. Dragging anywhere on the sheet moves it. Omit to show it whole, with
+   * only the toolbar draggable.
+   */
+  detent?: number;
+  /** With `detent`, pulling the sheet up shows `expandTo` of it (all of it when omitted). */
+  expandable?: boolean;
+  expandTo?: number;
   children: ReactNode;
 };
 
@@ -192,6 +204,10 @@ function SheetLayer({
   fit,
   bare,
   keepMounted,
+  restoreFocus = true,
+  detent,
+  expandable = false,
+  expandTo,
   children,
 }: Props) {
   const insets = useSafeAreaInsets();
@@ -208,7 +224,24 @@ function SheetLayer({
   useEffect(() => {
     latest.current = { onShown, onHidden };
   });
-  useCover(open);
+  const handoff = useFocusHandoff();
+  const [sheetH, setSheetH] = useState(0);
+  // Pulled up whole past its detent. A new detent (another page) starts lowered again.
+  const [expanded, setExpanded] = useState(false);
+  const [shownDetent, setShownDetent] = useState(detent);
+  if (detent !== shownDetent) {
+    setShownDetent(detent);
+    setExpanded(false);
+  }
+  const edge = fit ? FLOAT : 0;
+  /** How far below its full height a sheet `h` tall rests to show `visible` of itself. */
+  const lowerBy = (h: number, visible?: number) =>
+    visible === undefined ? 0 : Math.max(0, h + edge - visible);
+  const lowered = lowerBy(sheetH, detent);
+  const raised = detent === undefined ? 0 : lowerBy(sheetH, expandTo);
+  const rest = expanded ? raised : lowered;
+  // What lies under the sheet (the empty chat's orb) tucks itself below its top edge.
+  useCover(open, fit ? (sheetH > 0 ? height - edge - sheetH + rest : null) : insets.top + 10);
 
   const phase = useRef<Phase>("hidden");
   /** How far down the sheet hides: its own height once measured, so it slides in from the edge. */
@@ -216,9 +249,16 @@ function SheetLayer({
   const y = useSharedValue(height);
   const reach = useSharedValue(height);
   const dragStart = useSharedValue(0);
+  /** For the drag: where the sheet rests lowered and pulled up, and whether it pulls up. */
+  const low = useSharedValue(0);
+  const high = useSharedValue(0);
+  const canExpand = useSharedValue(false);
+  /** The resting place the sheet is heading to, so a re-render doesn't restart a move. */
+  const aim = useSharedValue(0);
 
   const settled = () => {
     phase.current = "hidden";
+    setExpanded(false);
     if (!keepMounted) {
       // Its next content may be taller, so it waits below the whole screen until measured.
       travel.current = null;
@@ -228,51 +268,65 @@ function SheetLayer({
     latest.current.onHidden?.();
   };
 
-  const slideIn = () => {
+  const land = () => {
+    setLanded(true);
+    latest.current.onShown?.();
+  };
+  /** Moves the open sheet to a resting place. */
+  const goTo = (target: number) => {
     phase.current = "open";
-    const land = () => {
-      setLanded(true);
-      latest.current.onShown?.();
-    };
+    aim.set(target);
     const done = (finished?: boolean) => {
       "worklet";
       if (finished) scheduleOnRN(land);
     };
-    y.set(reduced ? withTiming(0, { duration: 0 }, done) : withSpring(0, OPEN, done));
+    y.set(reduced ? withTiming(target, { duration: 0 }, done) : withSpring(target, OPEN, done));
   };
 
   const measure = (h: number) => {
-    const t = h + (fit ? FLOAT : 0) + MARGIN;
+    setSheetH(h);
+    const t = h + edge + MARGIN;
     travel.current = t;
     reach.set(t);
     if (phase.current === "hidden") y.set(t);
     if (phase.current === "waiting") {
       y.set(t);
-      slideIn();
+      goTo(expanded && detent !== undefined ? lowerBy(h, expandTo) : lowerBy(h, detent));
     }
   };
 
   useEffect(() => {
     if (!mounted) return;
     if (open) {
+      handoff.take();
       // A sheet not measured yet waits one layout pass, then starts at the screen's edge
       // instead of travelling unseen from the top.
       if (travel.current === null && !reduced) phase.current = "waiting";
-      else slideIn();
+      else goTo(rest);
       return;
     }
     if (phase.current === "hidden") return;
-    Keyboard.dismiss();
+    handoff.giveBack(restoreFocus);
     phase.current = "closing";
     y.set(
       withTiming(travel.current ?? height, reduced ? { duration: 0 } : CLOSE, (finished) => {
         if (finished) scheduleOnRN(settled);
       })
     );
-    // slideIn/settled only read refs and stable setters; re-running on their identity would
+    // goTo/settled only read refs and stable setters; re-running on their identity would
     // restart the animation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mounted, reduced]);
+
+  // A new detent (another page) or a new height moves the open sheet to its new resting place.
+  useEffect(() => {
+    low.set(lowered);
+    high.set(raised);
+    canExpand.set(expandable && raised < lowered);
+    if (phase.current === "open" && aim.get() !== rest) goTo(rest);
+    // goTo only reads refs and stable setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lowered, raised, rest, expandable]);
 
   // Frequent sheets are built while the app is idle, so even the first open mounts nothing.
   useEffect(() => {
@@ -306,26 +360,46 @@ function SheetLayer({
   }, [page]);
 
   const drag = Gesture.Pan()
-    .activeOffsetY(8)
+    .activeOffsetY([-8, 8])
     .failOffsetX([-12, 12])
     .onBegin(() => {
       dragStart.set(y.get());
     })
     .onUpdate((e) => {
-      y.set(Math.max(0, dragStart.get() + e.translationY));
+      // Above its highest resting place the sheet gives a little, like a rubber band.
+      const top = canExpand.get() ? high.get() : low.get();
+      const raw = dragStart.get() + e.translationY;
+      y.set(raw < top ? top - (top - raw) * 0.2 : raw);
     })
     .onEnd((e) => {
-      if (e.translationY > 120 || e.velocityY > 1000) {
+      const at = y.get();
+      const floor = low.get();
+      if (at > floor + 120 || (e.velocityY > 1000 && at >= floor - 8)) {
         // Asks to close and holds; the close animation replaces the delayed settle. A sheet that
         // refuses (unsaved changes) springs back once the delay runs out.
-        y.set(withDelay(150, withSpring(0, SETTLE)));
+        aim.set(floor);
+        y.set(withDelay(150, withSpring(floor, SETTLE)));
         scheduleOnRN(onClose);
-      } else y.set(withSpring(0, SETTLE));
+      } else if (
+        canExpand.get() &&
+        e.velocityY < 500 &&
+        (e.velocityY < -500 || at < (floor + high.get()) / 2)
+      ) {
+        aim.set(high.get());
+        y.set(withSpring(high.get(), SETTLE));
+        scheduleOnRN(setExpanded, true);
+      } else {
+        aim.set(floor);
+        y.set(withSpring(floor, SETTLE));
+        scheduleOnRN(setExpanded, false);
+      }
     });
+  // Without a detent only the toolbar drags, so a form's own scrolling keeps the body.
+  if (detent === undefined) drag.hitSlop({ top: 0, height: TOOLBAR_H });
 
   const slide = useAnimatedStyle(() => ({ transform: [{ translateY: y.get() }] }));
   const dim = useAnimatedStyle(() => ({
-    opacity: interpolate(y.get(), [0, reach.get()], [1, 0], "clamp"),
+    opacity: interpolate(y.get(), [low.get(), reach.get()], [1, 0], "clamp"),
   }));
 
   if (!mounted) return null;
@@ -344,19 +418,24 @@ function SheetLayer({
       <Reanimated.View style={[StyleSheet.absoluteFill, styles.backdrop, dim]}>
         <Pressable accessibilityLabel="Close" style={{ flex: 1 }} onPress={onClose} />
       </Reanimated.View>
-      <Reanimated.View
-        onLayout={(e) => measure(e.nativeEvent.layout.height)}
-        style={[
-          fit ? styles.floating : styles.sheet,
-          fit
-            ? { maxHeight, width: Math.min(width - FLOAT * 2, 560) }
-            : { top, width: Math.min(width, 560) },
-          slide,
-        ]}
-      >
-        <Wrap fit={fit} maxHeight={maxHeight}>
-          <GestureDetector gesture={drag}>
+      <GestureDetector gesture={drag}>
+        <Reanimated.View
+          onLayout={(e) => measure(e.nativeEvent.layout.height)}
+          style={[
+            fit ? styles.floating : styles.sheet,
+            fit
+              ? { maxHeight, width: Math.min(width - FLOAT * 2, 560) }
+              : { top, width: Math.min(width, 560) },
+            slide,
+          ]}
+        >
+          <Wrap fit={fit} maxHeight={maxHeight}>
             <View style={styles.toolbar}>
+              {fit ? (
+                <View pointerEvents="none" style={styles.grabberWrap}>
+                  <View style={styles.grabber} />
+                </View>
+              ) : null}
               <ToolbarButton
                 action={leading ?? { label: "Close", icon: "close", onPress: onClose }}
               />
@@ -378,31 +457,31 @@ function SheetLayer({
                 <View style={styles.button} />
               )}
             </View>
-          </GestureDetector>
-          {bare ? (
-            children
-          ) : fill ? (
-            <FillBody>{children}</FillBody>
-          ) : (
-            <View style={[styles.clip, fit ? styles.clipFit : styles.clipFull]}>
-              <KeyboardAwareScrollView
-                ref={body}
-                enabled={landed}
-                bottomOffset={28}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="interactive"
-                style={fit ? { flexGrow: 0, flexShrink: 1 } : undefined}
-                contentContainerStyle={{
-                  paddingTop: 6,
-                  paddingBottom: fit ? 8 : insets.bottom + 28,
-                }}
-              >
-                {children}
-              </KeyboardAwareScrollView>
-            </View>
-          )}
-        </Wrap>
-      </Reanimated.View>
+            {bare ? (
+              children
+            ) : fill ? (
+              <FillBody>{children}</FillBody>
+            ) : (
+              <View style={[styles.clip, fit ? styles.clipFit : styles.clipFull]}>
+                <KeyboardAwareScrollView
+                  ref={body}
+                  enabled={landed}
+                  bottomOffset={28}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="interactive"
+                  style={fit ? { flexGrow: 0, flexShrink: 1 } : undefined}
+                  contentContainerStyle={{
+                    paddingTop: 6,
+                    paddingBottom: fit ? 8 : insets.bottom + 28,
+                  }}
+                >
+                  {children}
+                </KeyboardAwareScrollView>
+              </View>
+            )}
+          </Wrap>
+        </Reanimated.View>
+      </GestureDetector>
     </View>
   );
 }
@@ -434,6 +513,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   button: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  /** A floating sheet's drag handle, over the toolbar that the swipe-down follows. */
+  grabberWrap: { position: "absolute", top: 6, left: 0, right: 0, alignItems: "center" },
+  grabber: { width: 36, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.28)" },
   titleWrap: {
     position: "absolute",
     left: 72,

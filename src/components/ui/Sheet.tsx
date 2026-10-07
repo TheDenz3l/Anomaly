@@ -3,7 +3,7 @@ import { sheetMotion } from "@/lib/motion";
 import { colors, LIST_RADIUS } from "@/lib/theme";
 import { Glass } from "./Glass";
 import { Icon } from "./Icon";
-import { Portal, useCover } from "./Portal";
+import { Portal, useCover, useFocusHandoff } from "./Portal";
 import { Tap } from "./Tap";
 import { Text } from "./Text";
 import Reanimated, {
@@ -76,7 +76,9 @@ function SheetLayer({ open, onClose, title, subtitle, children, footer, scroll =
   // for the sheet to land (an autofocused field would otherwise scroll itself out of view).
   const [landed, setLanded] = useState(false);
   if (!open && landed) setLanded(false);
-  useCover(open);
+  // What lies under the sheet (the empty chat's orb) tucks itself below this edge.
+  useCover(open, sheetH > 0 ? height - sheetH : null);
+  const handoff = useFocusHandoff();
 
   /** How far down the sheet hides once measured; until then it waits below the whole screen. */
   const travel = useRef<number | null>(null);
@@ -127,13 +129,14 @@ function SheetLayer({ open, onClose, title, subtitle, children, footer, scroll =
   useEffect(() => {
     if (!mounted) return;
     if (open) {
+      handoff.take();
       // Wait one layout pass so the slide starts at the screen's edge, not far below it.
       if (travel.current === null && !reduced) waiting.current = true;
       else slideIn();
       return;
     }
     waiting.current = false;
-    Keyboard.dismiss();
+    handoff.giveBack(true);
     y.set(
       withTiming(
         travel.current ?? height,

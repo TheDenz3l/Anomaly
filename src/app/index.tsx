@@ -8,17 +8,22 @@ import { SideDrawer } from "@/components/navigation/SideDrawer";
 import { Glass } from "@/components/ui/Glass";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
-import { bubbleIn, popIn, popOut, replyIn, threadIn } from "@/lib/motion";
+import { bubbleIn, popIn, popOut, replyIn, threadIn, sheetMotion } from "@/lib/motion";
 import { useApp } from "@/lib/store";
 import {
   KeyboardChatScrollView,
   KeyboardStickyView,
-  useReanimatedKeyboardAnimation,
+  useKeyboardHandler,
 } from "react-native-keyboard-controller";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Keyboard, View } from "react-native";
-import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import { Keyboard, View, useWindowDimensions } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  useReducedMotion,
+  withSpring,
+} from "react-native-reanimated";
 import { setChatVisible } from "@/lib/haptics";
 
 /** Distance from the bottom (px) beyond which we stop following new content and offer a jump button. */
@@ -40,14 +45,25 @@ export default function ChatScreen() {
   const bottom = Math.max(insets.bottom, 12);
   // With the keyboard up the composer rides 8pt above it; the home-indicator gap slides under.
   const keyboardOffset = bottom - 8;
-  const kb = useReanimatedKeyboardAnimation();
-  // Keep the empty-state orb centred in the space left between the header and the composer.
-  const recentre = useAnimatedStyle(
-    () => ({
-      transform: [{ translateY: (kb.height.value + keyboardOffset * kb.progress.value) / 2 }],
-    }),
-    [keyboardOffset]
+  const { height: screenH } = useWindowDimensions();
+  const padTop = insets.top + 68;
+  const padBottom = composerH + bottom + 28;
+  // Keep the empty-state orb centred in the space left between the header and the composer. It
+  // springs toward where the keyboard is going rather than tracking it frame by frame, so it
+  // slides even when the keyboard leaves in one go (put away as a sheet opens).
+  const lift = useSharedValue(0);
+  const reducedMotion = useReducedMotion();
+  useKeyboardHandler(
+    {
+      onStart: (e) => {
+        "worklet";
+        const to = -(e.height - keyboardOffset * e.progress) / 2;
+        lift.set(reducedMotion ? to : withSpring(to, sheetMotion.open));
+      },
+    },
+    [keyboardOffset, reducedMotion]
   );
+  const recentre = useAnimatedStyle(() => ({ transform: [{ translateY: lift.get() }] }));
 
   // Reply haptics only play while the chat is on screen.
   useFocusEffect(
@@ -210,8 +226,8 @@ export default function ChatScreen() {
             width: "100%",
             maxWidth: 720,
             alignSelf: "center",
-            paddingTop: insets.top + 68,
-            paddingBottom: composerH + bottom + 28,
+            paddingTop: padTop,
+            paddingBottom: padBottom,
             paddingHorizontal: 18,
           }}
         >
@@ -246,7 +262,7 @@ export default function ChatScreen() {
               })
             ) : (
               <Animated.View style={[{ flexGrow: 1 }, recentre]}>
-                <EmptyState />
+                <EmptyState restY={(padTop + screenH - padBottom) / 2} />
               </Animated.View>
             )}
           </Animated.View>
