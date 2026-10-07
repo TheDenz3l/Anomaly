@@ -39,12 +39,12 @@ export function clampedOut(t: number) {
 
 /**
  * Sheets open on a critically damped spring, quick off the mark with no bounce (a bottom-anchored
- * sheet that overshoots shows a gap under it), and close on an ease-out that covers most of the
- * distance in its first third, so the screen under them is usable again at once.
+ * sheet that overshoots shows a gap under it). They close on a slightly softer spring that starts
+ * from rest, or from the finger's speed when flicked away, so they leave as smoothly as they came.
  */
 export const sheetMotion = {
   open: { damping: 34, stiffness: 340, mass: 0.9, overshootClamping: true },
-  close: { duration: 260, easing: clampedOut },
+  close: { damping: 29, stiffness: 260, mass: 0.9, overshootClamping: true },
   /** A drag let go before it dismisses settles back. */
   settle: { damping: 30, stiffness: 320, overshootClamping: true },
 };

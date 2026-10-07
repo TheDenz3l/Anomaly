@@ -21,7 +21,7 @@ import Reanimated, {
   useSharedValue,
   withSpring,
   withTiming,
-  withDelay,
+  useAnimatedReaction,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
@@ -220,9 +220,9 @@ function SheetLayer({
   const [landed, setLanded] = useState(false);
   if (!open && landed) setLanded(false);
   const body = useRef<KeyboardAwareScrollViewRef>(null);
-  const latest = useRef({ onShown, onHidden });
+  const latest = useRef({ onShown, onHidden, open });
   useEffect(() => {
-    latest.current = { onShown, onHidden };
+    latest.current = { onShown, onHidden, open };
   });
   const handoff = useFocusHandoff();
   const [sheetH, setSheetH] = useState(0);
@@ -255,9 +255,12 @@ function SheetLayer({
   const canExpand = useSharedValue(false);
   /** The resting place the sheet is heading to, so a re-render doesn't restart a move. */
   const aim = useSharedValue(0);
+  /** On its way out, sent by a close or by a flick (which keeps the finger's speed). */
+  const leaving = useSharedValue(false);
 
   const settled = () => {
     phase.current = "hidden";
+    leaving.set(false);
     setExpanded(false);
     if (!keepMounted) {
       // Its next content may be taller, so it waits below the whole screen until measured.
@@ -275,6 +278,7 @@ function SheetLayer({
   /** Moves the open sheet to a resting place. */
   const goTo = (target: number) => {
     phase.current = "open";
+    leaving.set(false);
     aim.set(target);
     const done = (finished?: boolean) => {
       "worklet";
@@ -308,15 +312,29 @@ function SheetLayer({
     if (phase.current === "hidden") return;
     handoff.giveBack(restoreFocus);
     phase.current = "closing";
-    y.set(
-      withTiming(travel.current ?? height, reduced ? { duration: 0 } : CLOSE, (finished) => {
-        if (finished) scheduleOnRN(settled);
-      })
-    );
+    // A flick already sent it off at the finger's speed; starting over would stall it.
+    if (leaving.get()) return;
+    const to = travel.current ?? height;
+    leaving.set(true);
+    aim.set(to);
+    y.set(reduced ? to : withSpring(to, CLOSE));
     // goTo/settled only read refs and stable setters; re-running on their identity would
     // restart the animation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mounted, reduced]);
+
+  /** Out of sight: done, or, flicked away but kept open (unsaved changes), back it comes. */
+  const gone = () => {
+    if (!latest.current.open) settled();
+    else goTo(rest);
+  };
+  // Whoever sent the sheet off, it is gone once it clears the screen's edge.
+  useAnimatedReaction(
+    () => leaving.get() && y.get() >= reach.get() - 1,
+    (now, was) => {
+      if (now && !was) scheduleOnRN(gone);
+    }
+  );
 
   // A new detent (another page) or a new height moves the open sheet to its new resting place.
   useEffect(() => {
@@ -375,10 +393,11 @@ function SheetLayer({
       const at = y.get();
       const floor = low.get();
       if (at > floor + 120 || (e.velocityY > 1000 && at >= floor - 8)) {
-        // Asks to close and holds; the close animation replaces the delayed settle. A sheet that
-        // refuses (unsaved changes) springs back once the delay runs out.
-        aim.set(floor);
-        y.set(withDelay(150, withSpring(floor, SETTLE)));
+        // Carries on at the finger's speed and asks to close. A sheet that stays open (unsaved
+        // changes) comes back once it is out of sight.
+        leaving.set(true);
+        aim.set(reach.get());
+        y.set(withSpring(reach.get(), { ...CLOSE, velocity: e.velocityY }));
         scheduleOnRN(onClose);
       } else if (
         canExpand.get() &&

@@ -137,14 +137,13 @@ function SheetLayer({ open, onClose, title, subtitle, children, footer, scroll =
     }
     waiting.current = false;
     handoff.giveBack(true);
+    const to = travel.current ?? height;
+    const gone = (finished?: boolean) => {
+      "worklet";
+      if (finished) scheduleOnRN(hidden);
+    };
     y.set(
-      withTiming(
-        travel.current ?? height,
-        reduced ? { duration: 0 } : sheetMotion.close,
-        (finished) => {
-          if (finished) scheduleOnRN(hidden);
-        }
-      )
+      reduced ? withTiming(to, { duration: 0 }, gone) : withSpring(to, sheetMotion.close, gone)
     );
     // slideIn/hidden only touch refs, shared values and setters; re-running on their identity
     // would restart the animation.
