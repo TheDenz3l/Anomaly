@@ -4,6 +4,8 @@ import { internal } from "./_generated/api";
 const crons = cronJobs();
 
 crons.interval("reap stale replies", { minutes: 15 }, internal.engine.data.reapStale, {});
+// Incognito chats are thrown away when left; this catches any left behind by a closed app.
+crons.interval("discard incognito chats", { minutes: 30 }, internal.threads.sweepIncognito, {});
 crons.daily("clean web cache", { hourUTC: 4, minuteUTC: 0 }, internal.webCache.cleanup, {});
 crons.monthly(
   "reset probe spend",

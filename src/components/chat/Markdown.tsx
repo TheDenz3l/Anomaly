@@ -24,6 +24,31 @@ function balance(text: string): string {
   return text.slice(0, i) + text.slice(i + 2);
 }
 
+/**
+ * The end of a reply still arriving can be half a Markdown construct. Shown raw, it flashes
+ * brackets and addresses that then vanish into a link, a photo or a video card. This holds back
+ * what can't render yet and keeps what can, so nothing appears and then disappears.
+ */
+function settle(text: string): string {
+  return (
+    text
+      // A citation still arriving: " [1".
+      .replace(/\s?\[\d*$/, "")
+      // A photo waits whole; it shows as a picture once its address is complete.
+      .replace(/!\[[^\]\n]*(?:\]\([^)\s]*|\])?$/, "")
+      // A link still arriving reads as its label, already bold like the link it becomes.
+      .replace(/\[([^\]\n]*)(?:\]\([^)\s]*|\])?$/, (all, label: string) =>
+        !label ? "" : /^\d+$/.test(label) ? all : `**${label}**`
+      )
+      // A bare address waits until it is whole: it may become a link, a photo or a video.
+      .replace(/(^|\s)(?:https?:\/\/\S*|h(?:t(?:t(?:p(?:s?:?\/{0,2})?)?)?)?)$/, "$1")
+      // A "!" opening a photo; one ending a sentence sits against its word and stays.
+      .replace(/(^|\s)!$/, "$1")
+      // A list item left empty by the above doesn't show as a lone bullet.
+      .replace(/(^|\n)\s*(?:[-*+]|\d+[.)])\s*$/, "$1")
+  );
+}
+
 const LINK = /^\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)$/;
 const BARE_URL = /^https?:\/\/[^\s<>()\]]+$/;
 
@@ -143,49 +168,48 @@ function Dots() {
   );
 }
 
-/**
- * Body text whose links get a dotted underline. iOS's own "dotted" underline draws short dashes,
- * so dots are shown through a mask: invisible copies of the same text (same line breaks) whose
- * only ink is a plain underline under each link, stacked a hair apart to make a band just below
- * where that underline normally sits.
- */
 function RichText({
   text,
   keyBase,
   className,
   style,
+  live = false,
 }: {
   text: string;
   keyBase: string;
   className: string;
   style?: StyleProp<ViewStyle>;
+  /** Still being written: the dotted underline waits, so the mask isn't redrawn every frame. */
+  live?: boolean;
 }) {
-  const body = <Text className={className}>{inline(text, keyBase)}</Text>;
-  if (!HAS_LINK.test(text)) return style ? <View style={style}>{body}</View> : body;
+  // One shape whether or not the text has a link yet, so a link arriving mid-reply doesn't
+  // remount the text around it (that remount is the flash).
   return (
     <View style={style}>
-      {body}
-      <MaskedView
-        pointerEvents="none"
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={StyleSheet.absoluteFill}
-        maskElement={
-          <View style={StyleSheet.absoluteFill}>
-            {DOT_BAND.map((dy) => (
-              <Text
-                key={dy}
-                className={className}
-                style={[HIDE, styles.maskCopy, { transform: [{ translateY: dy }] }]}
-              >
-                {inline(text, keyBase, true)}
-              </Text>
-            ))}
-          </View>
-        }
-      >
-        <Dots />
-      </MaskedView>
+      <Text className={className}>{inline(text, keyBase)}</Text>
+      {!live && HAS_LINK.test(text) ? (
+        <MaskedView
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={StyleSheet.absoluteFill}
+          maskElement={
+            <View style={StyleSheet.absoluteFill}>
+              {DOT_BAND.map((dy) => (
+                <Text
+                  key={dy}
+                  className={className}
+                  style={[HIDE, styles.maskCopy, { transform: [{ translateY: dy }] }]}
+                >
+                  {inline(text, keyBase, true)}
+                </Text>
+              ))}
+            </View>
+          }
+        >
+          <Dots />
+        </MaskedView>
+      ) : null}
     </View>
   );
 }
@@ -304,7 +328,7 @@ function withMedia(list: Block[]): Block[] {
   return out;
 }
 
-function TableView({ raw, index }: { raw: string; index: number }) {
+function TableView({ raw, index, live }: { raw: string; index: number; live: boolean }) {
   const lines = raw.split("\n");
   const sepAt = lines.findIndex((l) => TABLE_SEPARATOR.test(l));
   const align =
@@ -342,6 +366,7 @@ function TableView({ raw, index }: { raw: string; index: number }) {
                     text={r[ci] ?? ""}
                     keyBase={`${index}-${ri}-${ci}`}
                     className={`text-[14px] leading-5 ${align[ci] === "right" ? "text-right" : ""}`}
+                    live={live}
                   />
                 )}
               </View>
@@ -359,10 +384,13 @@ const BlockView = memo(function BlockView({
   kind,
   raw,
   index,
+  live,
 }: {
   kind: BlockKind;
   raw: string;
   index: number;
+  /** The block still being written, at the end of a reply that is streaming. */
+  live: boolean;
 }) {
   if (kind === "heading") {
     const [, hashes, text] = raw.match(HEADING)!;
@@ -381,7 +409,7 @@ const BlockView = memo(function BlockView({
     });
     return (
       <View className="my-1">
-        <ImageGallery images={images} />
+        <ImageGallery images={images} live={live} />
       </View>
     );
   }
@@ -402,7 +430,7 @@ const BlockView = memo(function BlockView({
       </ScrollView>
     );
   }
-  if (kind === "table") return <TableView raw={raw} index={index} />;
+  if (kind === "table") return <TableView raw={raw} index={index} live={live} />;
   if (kind === "quote") {
     const lines = raw.split("\n").map((l) => l.replace(/^\s*>\s?/, ""));
     return (
@@ -415,6 +443,7 @@ const BlockView = memo(function BlockView({
               text={l}
               keyBase={`${index}-${li}`}
               className="text-base leading-[25px]"
+              live={live}
             />
           ))}
       </View>
@@ -441,6 +470,7 @@ const BlockView = memo(function BlockView({
                 keyBase={`${index}-${li}`}
                 className="text-base leading-[25px]"
                 style={{ flex: 1 }}
+                live={live}
               />
             </View>
           );
@@ -448,7 +478,9 @@ const BlockView = memo(function BlockView({
       </View>
     );
   }
-  return <RichText text={raw} keyBase={String(index)} className="text-base leading-[25px]" />;
+  return (
+    <RichText text={raw} keyBase={String(index)} className="text-base leading-[25px]" live={live} />
+  );
 });
 
 /**
@@ -458,18 +490,20 @@ const BlockView = memo(function BlockView({
  */
 export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const smooth = useSmoothText(text, streaming);
-  // A citation (" [1") or link ("[label](https://ex") still arriving would flash as raw brackets.
-  const visible =
-    smooth.length < text.length
-      ? smooth
-          .replace(/\s?\[\d*$/, "")
-          .replace(/!?\[[^\]\n]*\]\([^)\s]*$/, "")
-          .replace(/!\[[^\]\n]*$/, "")
-      : smooth;
+  // More may follow whenever the reply is still streaming, not just while the reveal is behind:
+  // the text the server has sent so far can itself stop halfway through a link.
+  const growing = streaming || smooth.length < text.length;
+  const list = blocks(growing ? settle(smooth) : smooth);
   return (
     <View className="gap-2.5">
-      {blocks(visible).map((b, bi) => (
-        <BlockView key={bi} kind={b.kind} raw={b.raw} index={bi} />
+      {list.map((b, bi) => (
+        <BlockView
+          key={bi}
+          kind={b.kind}
+          raw={b.raw}
+          index={bi}
+          live={growing && bi === list.length - 1}
+        />
       ))}
     </View>
   );

@@ -60,7 +60,8 @@ export function NavPanel() {
 
   // Pinned chats stay at the top (latest pin first); the six most recent of the rest follow.
   const recents = useMemo(() => {
-    const all = Object.values(threads);
+    // Incognito chats are never kept, so they never appear here.
+    const all = Object.values(threads).filter((t) => !t.incognito);
     const pinned = all.filter((t) => t.pinnedAt).sort((a, b) => b.pinnedAt! - a.pinnedAt!);
     const rest = all
       .filter((t) => !t.pinnedAt)

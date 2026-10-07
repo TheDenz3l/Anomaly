@@ -1,5 +1,5 @@
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useEffect, useRef } from "react";
 import { api, type Id } from "@/lib/convex";
 import { useApp } from "@/lib/store";
@@ -23,6 +23,20 @@ export function ConvexSync() {
         signingIn.current = false;
       });
   }, [isLoading, isAuthenticated, signIn]);
+
+  // Incognito chats never outlive the session: whatever an earlier one left on the server goes as
+  // soon as the app is signed in again (all but the chat still open).
+  const discardIncognito = useMutation(api.threads.discardIncognito);
+  const discarded = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || discarded.current) return;
+    discarded.current = true;
+    const s = useApp.getState();
+    const open = s.activeThreadId ? s.threads[s.activeThreadId] : undefined;
+    const keep =
+      open?.incognito && !open.id.startsWith("pending_") ? (open.id as Id<"threads">) : undefined;
+    discardIncognito({ keep }).catch(() => {});
+  }, [isAuthenticated, discardIncognito]);
 
   const on = isAuthenticated ? {} : "skip";
   const threads = useQuery(api.threads.list, on);

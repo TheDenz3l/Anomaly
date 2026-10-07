@@ -169,4 +169,6 @@ export type Settings = {
   probeSpendCapUsd: number;
   defaultModelRef: string;
   researchModelRef: string | null;
+  /** The thinking level picked last; every chat uses it until another is picked. */
+  thinkingLevel: string;
 };

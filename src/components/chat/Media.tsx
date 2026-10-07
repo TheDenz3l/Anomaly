@@ -66,32 +66,36 @@ function GalleryImage({
   );
 }
 
-/** Photos from a reply: one fills the width; several scroll sideways, past the text margin. */
-export function ImageGallery({ images }: { images: ImageRef[] }) {
+/**
+ * Photos from a reply: one fills the width; several scroll sideways, past the text margin. While
+ * more may still arrive (`live`) they line up in the row, so each new photo slides in beside the
+ * last instead of reshaping the ones already on screen.
+ */
+export function ImageGallery({ images, live = false }: { images: ImageRef[]; live?: boolean }) {
   const { width } = useWindowDimensions();
   const [failed, setFailed] = useState<Set<string>>(() => new Set());
   const shown = images.filter((i) => !failed.has(i.url));
   if (shown.length === 0) return null;
   const fail = (url: string) => setFailed((f) => new Set(f).add(url));
-  if (shown.length === 1) {
-    return (
-      <GalleryImage
-        image={shown[0]}
-        width={Math.min(width, 720) - GUTTER * 2}
-        height={360}
-        onFail={() => fail(shown[0].url)}
-      />
-    );
-  }
+  const single = shown.length === 1 && !live;
+  // One shape for both layouts, so a photo already showing keeps its view (and its loaded size)
+  // when the layout changes; a remount would blank it and reload it.
   return (
     <ScrollView
       horizontal
+      scrollEnabled={!single}
       showsHorizontalScrollIndicator={false}
       style={{ marginHorizontal: -GUTTER }}
       contentContainerStyle={{ gap: 10, paddingHorizontal: GUTTER }}
     >
       {shown.map((image) => (
-        <GalleryImage key={image.url} image={image} height={ROW_H} onFail={() => fail(image.url)} />
+        <GalleryImage
+          key={image.url}
+          image={image}
+          width={single ? Math.min(width, 720) - GUTTER * 2 : undefined}
+          height={single ? 360 : ROW_H}
+          onFail={() => fail(image.url)}
+        />
       ))}
     </ScrollView>
   );

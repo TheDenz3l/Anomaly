@@ -41,6 +41,7 @@ export const update = mutation({
     speechModelRef: v.optional(v.union(v.string(), v.null())),
     roleModels: v.optional(vRoleModels),
     researchCostCapUsd: v.optional(v.number()),
+    thinkingLevel: v.optional(v.string()),
     resetProbeSpend: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {

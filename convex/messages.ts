@@ -74,6 +74,8 @@ export const send = mutation({
       )
     ),
     research: v.optional(v.boolean()),
+    /** The thinking level picked last; it holds for every chat, old ones included. */
+    reasoningLevel: v.optional(v.string()),
     draft: v.optional(
       v.object({ modelRef: v.string(), reasoningLevel: v.string(), incognito: v.boolean() })
     ),
@@ -91,6 +93,10 @@ export const send = mutation({
     let thread: Doc<"threads">;
     if (args.threadId) {
       thread = await ownThread(ctx, args.threadId, userId);
+      if (args.reasoningLevel && args.reasoningLevel !== thread.reasoningLevel) {
+        await ctx.db.patch(thread._id, { reasoningLevel: args.reasoningLevel });
+        thread = { ...thread, reasoningLevel: args.reasoningLevel };
+      }
       if (args.research && thread.mode !== "research") {
         await ctx.db.patch(thread._id, { mode: "research" });
         thread = { ...thread, mode: "research" };
@@ -117,7 +123,7 @@ export const send = mutation({
         title: heuristicDecisions.title(text || "Photo"),
         modelRef,
         mode: args.research ? "research" : "chat",
-        reasoningLevel: args.draft?.reasoningLevel ?? "auto",
+        reasoningLevel: args.reasoningLevel ?? args.draft?.reasoningLevel ?? "auto",
         incognito: args.draft?.incognito ?? false,
         updatedAt: Date.now(),
       });

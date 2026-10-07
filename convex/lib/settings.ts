@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: SettingsFields = {
   speechModelRef: null,
   roleModels: { planner: null, worker: null, verifier: null, synthesizer: null },
   researchCostCapUsd: 0.5,
+  thinkingLevel: "auto",
 };
 
 export async function loadSettings(

@@ -59,6 +59,7 @@ export default function HistoryScreen() {
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = Object.values(threads)
+      .filter((t) => !t.incognito)
       .filter(
         (t) =>
           !q ||
@@ -85,7 +86,7 @@ export default function HistoryScreen() {
     <View className="flex-1 bg-background">
       <Page
         title="History"
-        subtitle={`${Object.keys(threads).length} chats`}
+        subtitle={`${Object.values(threads).filter((t) => !t.incognito).length} chats`}
         right={
           <Tap
             accessibilityLabel="New chat"

@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import { internalMutation, mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { optionalUser, ownThread, requireUser } from "./lib/auth";
 import { stopStreaming } from "./lib/messages";
 import { loadSettings } from "./lib/settings";
@@ -45,7 +45,8 @@ export const list = query({
       .withIndex("by_user_updated", (q) => q.eq("userId", userId))
       .order("desc")
       .take(Math.min(limit ?? 200, 500));
-    return rows.map(clientThread);
+    // Incognito chats are never listed: not in Recents, not in History.
+    return rows.filter((t) => !t.incognito).map(clientThread);
   },
 });
 
@@ -76,7 +77,7 @@ export const create = mutation({
       title: args.title?.trim() || "New chat",
       modelRef: args.modelRef ?? settings.defaultModelRef,
       mode: args.mode ?? "chat",
-      reasoningLevel: args.reasoningLevel ?? "auto",
+      reasoningLevel: args.reasoningLevel ?? settings.thinkingLevel ?? "auto",
       incognito: args.incognito ?? false,
       updatedAt: now,
     });
@@ -120,10 +121,46 @@ export const remove = mutation({
   args: { threadId: v.id("threads") },
   handler: async (ctx, { threadId }) => {
     const userId = await requireUser(ctx);
-    await ownThread(ctx, threadId, userId);
-    await stopStreaming(ctx, threadId);
-    await ctx.db.delete(threadId);
-    await ctx.scheduler.runAfter(0, internal.threads.purge, { threadId, userId });
+    await discard(ctx, await ownThread(ctx, threadId, userId));
+  },
+});
+
+async function discard(ctx: MutationCtx, thread: Doc<"threads">) {
+  await stopStreaming(ctx, thread._id);
+  await ctx.db.delete(thread._id);
+  await ctx.scheduler.runAfter(0, internal.threads.purge, {
+    threadId: thread._id,
+    userId: thread.userId,
+  });
+}
+
+/**
+ * Throws away the user's incognito chats, all but the one still open. The app runs it as it
+ * starts, so a chat left open when the app closed is gone the next time.
+ */
+export const discardIncognito = mutation({
+  args: { keep: v.optional(v.id("threads")) },
+  handler: async (ctx, { keep }) => {
+    const userId = await requireUser(ctx);
+    const rows = await ctx.db
+      .query("threads")
+      .withIndex("by_user_updated", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("incognito"), true))
+      .collect();
+    for (const t of rows) if (t._id !== keep) await discard(ctx, t);
+  },
+});
+
+/** Incognito chats idle for a few hours, left behind by an app that never came back for them. */
+export const sweepIncognito = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - 3 * 60 * 60_000;
+    const rows = await ctx.db
+      .query("threads")
+      .withIndex("by_incognito", (q) => q.eq("incognito", true).lt("updatedAt", cutoff))
+      .take(100);
+    for (const t of rows) await discard(ctx, t);
   },
 });
 
@@ -207,12 +244,14 @@ export const search = query({
       string,
       { threadId: Id<"threads">; title: string; snippet: string; updatedAt: number }
     >();
-    for (const t of byTitle)
+    for (const t of byTitle) {
+      if (t.incognito) continue;
       hits.set(t._id, { threadId: t._id, title: t.title, snippet: "", updatedAt: t.updatedAt });
+    }
     for (const m of byText) {
       if (hits.has(m.threadId)) continue;
       const t = await ctx.db.get(m.threadId);
-      if (!t) continue;
+      if (!t || t.incognito) continue;
       const body = m.searchText ?? "";
       const i = body.toLowerCase().indexOf(text.toLowerCase().split(/\s+/)[0]);
       const snippet = body.slice(Math.max(0, i - 40), Math.max(0, i - 40) + 160);

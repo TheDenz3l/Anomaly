@@ -54,6 +54,8 @@ export default defineSchema({
     speechModelRef: v.union(v.string(), v.null()),
     roleModels: vRoleModels,
     researchCostCapUsd: v.number(),
+    /** The thinking level picked last; every chat uses it until another is picked. */
+    thinkingLevel: v.optional(v.string()),
     pushToken: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 
@@ -137,6 +139,7 @@ export default defineSchema({
     pinnedAt: v.optional(v.number()),
   })
     .index("by_user_updated", ["userId", "updatedAt"])
+    .index("by_incognito", ["incognito", "updatedAt"])
     .searchIndex("search_title", { searchField: "title", filterFields: ["userId"] }),
 
   messages: defineTable({

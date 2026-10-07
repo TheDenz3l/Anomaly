@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   probeSpendCapUsd: 0.05,
   defaultModelRef: "",
   researchModelRef: null,
+  thinkingLevel: "auto",
 };
 
 type State = {
@@ -157,10 +158,13 @@ const SETTINGS_KEYS = [
   "probeSpendCapUsd",
   "defaultModelRef",
   "researchModelRef",
+  "thinkingLevel",
 ] as const;
 
-/** Threads whose full message list is loaded (vs. the artifact-only subset). */
 const fullThreads = new Set<string>();
+
+/** Incognito chats left before the server had them, thrown away as soon as it does. */
+const discardOnArrival = new Set<string>();
 
 /** How long the socket may stay down before a call is reported as unreachable. */
 const OFFLINE_GRACE_MS = 6_000;
@@ -277,6 +281,17 @@ export const useApp = create<AppStore>()((set, get) => {
     }
   };
 
+  /** An incognito chat is thrown away the moment it is left, here and on the server. */
+  const leaveIncognito = (id: string | null, next: string | null) => {
+    const s = get();
+    if (!id || id === next || !s.threads[id]?.incognito) return;
+    const { [id]: _t, ...threads } = s.threads;
+    const { [id]: _m, ...messages } = s.messages;
+    set({ threads, messages });
+    if (isPending(id)) discardOnArrival.add(id);
+    else convex.mutation(api.threads.remove, { threadId: id as Id<"threads"> }).catch(() => {});
+  };
+
   return {
     ready: false,
     providers: [],
@@ -296,15 +311,21 @@ export const useApp = create<AppStore>()((set, get) => {
 
     newChat() {
       const s = get();
+      leaveIncognito(s.activeThreadId, null);
       set({
         activeThreadId: null,
         streaming: null,
-        draft: { modelRef: s.settings.defaultModelRef, reasoningLevel: "auto", incognito: false },
+        draft: {
+          modelRef: s.settings.defaultModelRef,
+          reasoningLevel: s.settings.thinkingLevel,
+          incognito: false,
+        },
         researchArmed: false,
       });
     },
 
     openThread(id) {
+      leaveIncognito(get().activeThreadId, id);
       const list = get().messages[id] ?? [];
       set({ activeThreadId: id, streaming: streamingIn(id, list) });
     },
@@ -348,6 +369,8 @@ export const useApp = create<AppStore>()((set, get) => {
 
     setReasoningLevel(level) {
       patchThreadOrDraft({ reasoningLevel: level });
+      // The pick holds for every chat from now on, whichever model it runs on.
+      if (get().settings.thinkingLevel !== level) get().updateSettings({ thinkingLevel: level });
     },
 
     setResearchMode(on) {
@@ -396,7 +419,7 @@ export const useApp = create<AppStore>()((set, get) => {
         // Mirrors the server's initial meta so the placeholder row doesn't change label on arrival.
         meta: {
           modelRef: target?.modelRef ?? "",
-          levelRequested: target?.reasoningLevel ?? "auto",
+          levelRequested: s.settings.thinkingLevel,
           levelSent: "",
           reasoningTokens: 0,
         },
@@ -424,8 +447,14 @@ export const useApp = create<AppStore>()((set, get) => {
             text: trimmed,
             attachments: uploaded,
             research,
+            reasoningLevel: s.settings.thinkingLevel,
             draft: existing ? undefined : get().draft,
           });
+          // An incognito chat left before the server had it goes as soon as it arrives.
+          if (!existing && discardOnArrival.delete(threadKey)) {
+            convex.mutation(api.threads.remove, { threadId: res.threadId }).catch(() => {});
+            return;
+          }
           if (!existing) {
             const st = get();
             const { [threadKey]: pendingThread, ...threads } = st.threads;
@@ -687,6 +716,10 @@ export const useApp = create<AppStore>()((set, get) => {
       if (patch.settings && !s.draft.modelRef && patch.settings.defaultModelRef) {
         next.draft = { ...s.draft, modelRef: patch.settings.defaultModelRef };
       }
+      const level = patch.settings?.thinkingLevel;
+      if (level && level !== s.draft.reasoningLevel) {
+        next.draft = { ...(next.draft ?? s.draft), reasoningLevel: level };
+      }
       if (patch.settings || patch.providers) next.ready = true;
       set(next);
     },
@@ -700,6 +733,9 @@ export const useApp = create<AppStore>()((set, get) => {
       }
       // Keep an optimistic chat until the server knows about it.
       for (const [id, t] of Object.entries(s.threads)) if (isPending(id)) threads[id] = t;
+      // The server never lists incognito chats; the open one stays here until it is left.
+      const open = s.activeThreadId ? s.threads[s.activeThreadId] : undefined;
+      if (s.activeThreadId && open?.incognito) threads[s.activeThreadId] = open;
       set({ threads, ready: true });
     },
 
@@ -729,12 +765,14 @@ export const useApp = create<AppStore>()((set, get) => {
 
 /* ------------------------------------------------------------------ selectors */
 
-/** Settings for the thread the composer is pointed at — the active thread, or the draft for a new chat. */
 export function useComposerTarget() {
   const thread = useApp((s) => (s.activeThreadId ? s.threads[s.activeThreadId] : undefined));
   const draft = useApp((s) => s.draft);
   const models = useApp((s) => s.models);
-  const target = thread ?? draft;
+  // The thinking level picked last applies everywhere, old chats included.
+  const level = useApp((s) => s.settings.thinkingLevel);
+  const base = thread ?? draft;
+  const target = useMemo(() => ({ ...base, reasoningLevel: level }), [base, level]);
   return { thread, target, model: findModel(models, target.modelRef) };
 }
 
