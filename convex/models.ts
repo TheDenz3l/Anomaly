@@ -156,6 +156,26 @@ export const clearOverride = mutation({
   },
 });
 
+/** Puts a learned (not manual) profile back to the registry default, e.g. after a bad lesson. */
+export const resetLearned = internalMutation({
+  args: { userId: v.id("users"), providerId: v.string(), modelId: v.string() },
+  handler: async (ctx, { userId, providerId, modelId }) => {
+    const prior = await profileDoc(ctx, userId, providerId, modelId);
+    const provider = await ctx.db
+      .query("providers")
+      .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", providerId))
+      .first();
+    if (!prior || !provider || prior.source === "manual") return null;
+    await ctx.db.patch(prior._id, {
+      ...registryProfile(provider.baseUrl, modelId),
+      version: prior.version + 1,
+      successStreak: 0,
+      noopStrikes: 0,
+    });
+    return (await ctx.db.get(prior._id))?.features ?? null;
+  },
+});
+
 export const profileInternal = internalQuery({
   args: { userId: v.id("users"), providerId: v.string(), modelId: v.string() },
   handler: async (ctx, { userId, providerId, modelId }): Promise<CapabilityProfile | null> => {

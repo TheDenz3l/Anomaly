@@ -1,3 +1,13 @@
+import {
+  MessagesParser,
+  messagesUrl,
+  prefersMessages,
+  routeToMessages,
+  toMessagesBody,
+  wantsMessages,
+  flipThinking,
+} from "./anthropic";
+
 /**
  * Minimal OpenAI-compatible client (PRD §3.4): streaming /chat/completions with an adapter
  * layer for the dialects real endpoints speak — reasoning_content / reasoning / <think> tags,
@@ -294,14 +304,26 @@ export async function* streamChat(
   const onOuter = () => local.abort();
   signal?.addEventListener("abort", onOuter);
   bump();
+  // Some gateways serve certain models only over the Anthropic Messages API.
+  const messages = prefersMessages(ep.baseUrl, body.model);
   let res: Response;
   try {
-    res = await fetch(joinUrl(ep.baseUrl, "/chat/completions"), {
-      method: "POST",
-      headers: { ...authHeaders(ep), Accept: "text/event-stream" },
-      body: JSON.stringify({ ...body, stream: true }),
-      signal: local.signal,
-    });
+    res = await fetch(
+      messages ? messagesUrl(ep.baseUrl) : joinUrl(ep.baseUrl, "/chat/completions"),
+      {
+        method: "POST",
+        headers: messages
+          ? {
+              "anthropic-version": "2023-06-01",
+              ...(ep.apiKey ? { "x-api-key": ep.apiKey } : {}),
+              ...authHeaders(ep),
+              Accept: "text/event-stream",
+            }
+          : { ...authHeaders(ep), Accept: "text/event-stream" },
+        body: JSON.stringify(messages ? toMessagesBody(body) : { ...body, stream: true }),
+        signal: local.signal,
+      }
+    );
   } catch (e) {
     clearTimeout(idle);
     signal?.removeEventListener("abort", onOuter);
@@ -313,6 +335,17 @@ export async function* streamChat(
     clearTimeout(idle);
     signal?.removeEventListener("abort", onOuter);
     const text = await res.text().catch(() => "");
+    if (!messages && (res.status === 400 || res.status === 404) && wantsMessages(text)) {
+      routeToMessages(ep.baseUrl, body.model);
+      yield* streamChat(ep, body, signal, idleMs);
+      return;
+    }
+    // Claude models differ in which thinking style they accept; a rejected one gets the other.
+    const thinks = "thinking" in body || "reasoning" in body || "reasoning_effort" in body;
+    if (messages && res.status === 400 && thinks && flipThinking(body.model)) {
+      yield* streamChat(ep, body, signal, idleMs);
+      return;
+    }
     throw new LlmError(
       `${res.status} from provider: ${providerMessage(text)}`,
       res.status,
@@ -322,13 +355,15 @@ export async function* streamChat(
     );
   }
   const think = new ThinkSplitter();
+  const parser = messages ? new MessagesParser() : null;
   const ctype = res.headers.get("content-type") ?? "";
   if (!res.body || ctype.includes("application/json")) {
     const json = await res.json().finally(() => {
       clearTimeout(idle);
       signal?.removeEventListener("abort", onOuter);
     });
-    yield* parseChunk(json, think);
+    if (parser) yield* parser.replay(json);
+    else yield* parseChunk(json, think);
     yield* think.flush();
     return;
   }
@@ -365,7 +400,8 @@ export async function* streamChat(
           const status = Number(chunk.error.code) || 500;
           throw new LlmError(msg, status, data, classifyError(status, data));
         }
-        yield* parseChunk(chunk, think);
+        if (parser) yield* parser.push(chunk);
+        else yield* parseChunk(chunk, think);
       }
     }
   } catch (e) {
@@ -377,6 +413,7 @@ export async function* streamChat(
     signal?.removeEventListener("abort", onOuter);
     reader.releaseLock?.();
   }
+  if (parser) yield* parser.end();
   yield* think.flush();
 }
 
