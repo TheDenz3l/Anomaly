@@ -59,6 +59,8 @@ export type SearchPart = {
   sources: Source[];
   phase: "searching" | "reading" | "done";
   durationMs?: number;
+  /** Photo URLs the reply's searches and reads returned; these load without a tap. */
+  images?: string[];
 };
 
 export type Part =

@@ -109,6 +109,8 @@ export function trustedImageUrls(parts: Part[]): Set<string> {
         if (s.favicon) out.add(s.favicon);
       }
     }
+    // Photos the server's own image search or page reads returned for this reply.
+    if (p.type === "search") for (const url of p.images ?? []) out.add(url);
   }
   return out;
 }

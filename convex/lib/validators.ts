@@ -38,6 +38,8 @@ export const vSearchPart = v.object({
   sources: v.array(vSource),
   phase: v.union(v.literal("searching"), v.literal("reading"), v.literal("done")),
   durationMs: v.optional(v.number()),
+  /** Photo URLs the reply's searches and reads returned; the app loads these without a tap. */
+  images: v.optional(v.array(v.string())),
 });
 
 export const vComponentPart = v.object({

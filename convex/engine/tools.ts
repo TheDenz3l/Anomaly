@@ -48,9 +48,16 @@ export type ToolEnv = {
   background?: Promise<unknown>[];
   /** The user asked to see photos: a search also brings back photos. */
   photos?: boolean;
-  /** A search already went for photos this reply (one is enough; they share a rate limit). */
-  photosClaimed?: boolean;
+  /** Searches this reply that went for photos (capped: they share the image search's rate limit). */
+  photoSearches?: number;
+  /** Photo URLs earlier replies in the thread already showed; "show me more" skips them. */
+  seenImages?: Set<string>;
 };
+
+/** Photo searches per reply: one, plus another for a second angle or "more". */
+export const MAX_PHOTO_SEARCHES = 2;
+/** Photos the image search brings back per query. */
+const PHOTOS_PER_SEARCH = 14;
 
 function fn(
   name: string,
@@ -80,15 +87,33 @@ const SEARCH_DEADLINE_MS = 10_000;
 const READ_DEADLINE_MS = 12_000;
 /** Introduces photos the app found, outside the untrusted block that holds their URLs. */
 const PHOTOS_NOTE =
-  "Photos the app found (real image URLs you can use). Show the ones that fit the question inline as Markdown images, each on its own line (they render as a swipeable gallery), or put their URLs in a card's image fields when you show a card:";
+  "Photos the app found (real image URLs you can use; they display in the app). Show them generously: when the user asked to see something, put 6 to 10 that fit in the reply as Markdown images, each on its own line (they render as a swipeable gallery), or use them in a card's image fields. Skip only ones that are clearly off-topic, and never answer with just a link when photos are here:";
 
 /** Pages read for photos alongside a search; the slowest is left behind rather than waited on. */
-const PHOTO_PAGES = 3;
+const PHOTO_PAGES = 4;
 const PHOTO_READ_MS = 6_000;
 /** Image search usually answers in ~2 s; it runs alongside the web search, not after it. */
 const PHOTO_SEARCH_MS = 6_000;
 
 /* ------------------------------------------------------------------ search part */
+
+const imageUrlOf = (markdown: string) => markdown.slice(markdown.lastIndexOf("(") + 1, -1);
+
+/**
+ * Records the photo URLs a search or page read actually returned on the reply's search part. The
+ * app loads those straight away; any other image URL in the reply (one the model wrote itself)
+ * waits for a tap (src/lib/links.ts trustedImageUrls).
+ */
+function vouchForImages(env: ToolEnv, partId: string, urls: string[]) {
+  env.sink.update(partId, (p) => {
+    const s = p as Extract<Part, { type: "search" }>;
+    const have = new Set(s.images ?? []);
+    return {
+      ...s,
+      images: [...(s.images ?? []), ...urls.filter((u) => !have.has(u))].slice(0, 60),
+    };
+  });
+}
 
 /** One search section per reply: later searches and reads add to it wherever it sits. */
 function searchPartOf(env: ToolEnv): string | undefined {
@@ -185,7 +210,7 @@ export function startSearch(
     : web;
   if (!opts.photos) return timed;
   const images = withTimeout(
-    searchImages(engine.ctx, engine.search, imageQuery(query)).catch(() => []),
+    searchImages(engine.ctx, engine.search, imageQuery(query), PHOTOS_PER_SEARCH).catch(() => []),
     PHOTO_SEARCH_MS,
     [] as ImageResult[]
   );
@@ -203,16 +228,19 @@ export async function showSearch(
   const partId = env.render || env.origin === "app" ? trackSearch(env, query) : null;
   const { results, provider, errors, images } = await run;
   // No photos came back: a later search in this reply may go for them again.
-  if (images && !images.length) env.photosClaimed = false;
+  if (images && !images.length) env.photoSearches = Math.max(0, (env.photoSearches ?? 1) - 1);
   const found = results.map((r) => makeSource(r.url, r.title, r.snippet, env.origin));
   // Photos come from the image search; reading the top pages is the slower fallback.
   const readForPhotos = Boolean(env.photos && results.length && !images?.length);
   if (partId) finishSearch(env, partId, found, startedAt, readForPhotos ? "reading" : "done");
-  const photos = images?.length
+  const all = images?.length
     ? images.map((i) => `![${i.title.replace(/[[\]]/g, "")}](${i.imageUrl})`)
     : readForPhotos
       ? await photosFrom(env, results)
       : [];
+  // "Show me more": photos an earlier reply already showed are left out.
+  const photos = all.filter((p) => !env.seenImages?.has(imageUrlOf(p)));
+  if (partId && photos.length) vouchForImages(env, partId, photos.map(imageUrlOf));
   if (partId && readForPhotos)
     env.sink.update(partId, (p) => ({
       ...(p as Extract<Part, { type: "search" }>),
@@ -232,7 +260,9 @@ export async function showSearch(
   // instructions, and it took the photos for unverified page text and left them out.
   const gallery = photos.length
     ? `\n\n${PHOTOS_NOTE}\n${wrapUntrusted("image search", photos.join("\n"))}`
-    : "";
+    : all.length
+      ? "\n\nEvery photo this search found was already shown earlier in the chat. For more, search again with different wording (another angle, a newer trailer, a specific scene)."
+      : "";
   return {
     content: `Results for "${query}" (${provider}):\n${wrapUntrusted("search results", lines.join("\n\n"))}${gallery}`,
     web: "results",
@@ -278,7 +308,7 @@ export function webSearchTool(env: ToolEnv): LoopTool {
         photos: {
           type: "boolean",
           description:
-            "Also bring back photo URLs, when pictures would help the answer: places, products, dishes, people, landmarks. Show them inline or in a card's image fields. One photo search per reply.",
+            "Also bring back photo URLs. Set it whenever the user wants to see something (photos, screenshots, artwork, what it looks like) or pictures would help: places, products, games, dishes, people, landmarks. Up to two photo searches per reply.",
         },
       },
       ["query"]
@@ -291,8 +321,10 @@ export function webSearchTool(env: ToolEnv): LoopTool {
           content: `Search budget for this reply is used up (${env.budget.maxSearches}). Answer with what you have.`,
         };
       }
-      const photos = Boolean((env.photos || args.photos === true) && !env.photosClaimed);
-      if (photos) env.photosClaimed = true;
+      const photos =
+        Boolean(env.photos || args.photos === true) &&
+        (env.photoSearches ?? 0) < MAX_PHOTO_SEARCHES;
+      if (photos) env.photoSearches = (env.photoSearches ?? 0) + 1;
       const run = startSearch(env.engine, query, {
         limit: Number(args.limit) || 6,
         recency: args.recency,
@@ -317,7 +349,7 @@ const NOT_PHOTO =
   /\.(svg|gif|ico)(\?|$)|logo|icon|sprite|avatar|badge|pixel|tracking|spacer|emoji|1x1|blank\./i;
 
 /** The page's first few real photos as Markdown images, for the model to show in its reply. */
-function pageImages(markdown: string, max = 4): string[] {
+function pageImages(markdown: string, max = 6): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const m of markdown.matchAll(MD_IMAGE)) {
@@ -390,7 +422,8 @@ export function readUrlTool(env: ToolEnv): LoopTool {
         const note = view.trimmed
           ? `\n(Long page: navigation removed; showing the opening and the passages about "${truncate(focus, 80)}". […] marks skipped parts. Call read_url again with a different focus for other details.)`
           : "";
-        const images = pageImages(page.text);
+        const images = pageImages(page.text).filter((p) => !env.seenImages?.has(imageUrlOf(p)));
+        if (searchId && images.length) vouchForImages(env, searchId, images.map(imageUrlOf));
         const extra = images.length
           ? `\n\n${PHOTOS_NOTE}\n${wrapUntrusted(page.url, images.join("\n"))}`
           : "";

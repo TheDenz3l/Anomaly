@@ -20,7 +20,7 @@ import { SourceCollector } from "../web/sources";
 import { spawnTool, type SpawnEnv } from "./agents";
 import { modelEngine, note, type Engine } from "./context";
 import { failTurn, finishTurn } from "./finish";
-import { conversationContext, lastInput, toChatMessages } from "./history";
+import { conversationContext, lastInput, shownImages, toChatMessages } from "./history";
 import { runModelLoop, type LoopTool } from "./loop";
 import { recallMemories } from "./memory";
 import { systemPrompt, COMPOSE_DIRECTIVE } from "./prompt";
@@ -283,6 +283,7 @@ export async function runTurn(
         : undefined,
       stoppedRef: () => sink.stopped,
       photos,
+      seenImages: shownImages(history),
       // Jev leaned toward delegating but wasn't sure: show the plan card before any worker runs.
       forceApproval:
         !delegation.choice.explicit &&
@@ -365,7 +366,7 @@ export async function runTurn(
       !spawnOffered
     ) {
       const waitFrom = Date.now();
-      env.photosClaimed = photos;
+      env.photoSearches = photos ? 1 : 0;
       const found = await showSearch(env, pre.query, pre.run, pre.at);
       preLog = `${Date.now() - pre.at}ms(waited ${Date.now() - waitFrom}ms,${found.web})`;
       if (found.web === "results") {

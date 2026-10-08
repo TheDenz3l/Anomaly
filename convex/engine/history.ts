@@ -215,6 +215,19 @@ export function conversationContext(history: Doc<"messages">[], maxChars = 12_00
   return all.length > maxChars ? `…${all.slice(-maxChars)}` : all;
 }
 
+const MD_IMAGE_URL = /!\[[^\]\n]*\]\((https?:\/\/[^)\s]+)/g;
+
+/** Photo URLs earlier replies already showed, so "show me more" brings new ones. */
+export function shownImages(history: Doc<"messages">[]): Set<string> {
+  const out = new Set<string>();
+  for (const m of history) {
+    if (m.role !== "assistant") continue;
+    for (const p of m.parts)
+      if (p.type === "text") for (const match of p.text.matchAll(MD_IMAGE_URL)) out.add(match[1]);
+  }
+  return out;
+}
+
 /** The input that triggered this turn: the last user message before the reply. */
 export function lastInput(history: Doc<"messages">[]): {
   text: string;
