@@ -12,6 +12,7 @@ import {
 } from "./firecrawl";
 import { judgeResults } from "./relevance";
 import { hostname, normalizeUrl } from "./sources";
+import { benchExa, exaKey, exaSearch } from "./exa";
 
 /**
  * web_search (PRD §3.8). Order: the user's own provider, then Firecrawl (./firecrawl.ts — the
@@ -222,6 +223,23 @@ export async function searchWeb(
     }
     return null;
   };
+  // Exa in fast mode leads; Firecrawl takes over when Exa is unset, benched, failing or off-topic.
+  const viaExa = async (): Promise<Judged | null> => {
+    const key = await exaKey(cache);
+    if (!key) return null;
+    try {
+      const found = await exaSearch(key, query, Math.min(limit + 4, 10), recency);
+      const j: Judged = { ...judgeResults(query, found), provider: "exa" };
+      if (j.ok) return j;
+      errors.push("exa: off-topic results");
+      if (j.results.length) failed.push(j);
+    } catch (err) {
+      errors.push(errorMessage(err).slice(0, 160));
+      await benchExa(cache, err);
+    }
+    return null;
+  };
+  const primary = async (): Promise<Judged | null> => (await viaExa()) ?? (await viaFirecrawl());
   const viaChain = async (): Promise<Judged | null> => {
     try {
       const r: SearchOutcome = await ctx.runAction(internal.web.access.search, {
@@ -238,13 +256,12 @@ export async function searchWeb(
     }
     return null;
   };
-  // Firecrawl usually answers in about a second. When it hasn't by HEDGE_MS (rate-limited, slow,
-  // or failing over), the chain starts alongside and the first on-topic set wins, so a struggling
-  // backend costs a couple of seconds instead of its whole timeout.
-  const firecrawl = viaFirecrawl();
-  const early = await Promise.race([firecrawl, sleep(HEDGE_MS).then(() => "late" as const)]);
-  const won =
-    early === "late" ? await firstOf([firecrawl, viaChain()]) : (early ?? (await viaChain()));
+  // Exa then Firecrawl usually answer within a second. When they haven't by HEDGE_MS (rate-limited,
+  // slow, or failing over), the chain starts alongside and the first on-topic set wins, so a
+  // struggling backend costs a couple of seconds instead of its whole timeout.
+  const lead = primary();
+  const early = await Promise.race([lead, sleep(HEDGE_MS).then(() => "late" as const)]);
+  const won = early === "late" ? await firstOf([lead, viaChain()]) : (early ?? (await viaChain()));
   if (won) return finish(won);
 
   const pool: string[] = [];
