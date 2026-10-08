@@ -14,6 +14,13 @@ import { BANDS, makeOrb, orbFrame, type OrbFrame, type OrbState } from "./orb-co
 
 /** Redraws at most this often; 15 rather than 16.7 so a 60 Hz screen never drops one. */
 const MIN_FRAME_MS = 15;
+/**
+ * Inline orbs (activity rows) redraw at 20 fps. Each redraw rewrites the SVG paths through a
+ * shadow-tree commit, which competes with React's own commits; at 18 px the slower rate looks
+ * the same and leaves the chat responsive while the assistant thinks or searches.
+ */
+const SMALL_FRAME_MS = 50;
+const SMALL_SIZE = 32;
 
 export type { OrbState } from "./orb-core";
 
@@ -60,13 +67,14 @@ export function Orb({
   const initial = useMemo(() => orbFrame(0, cfg), [cfg]);
   const t = useSharedValue(0);
   const pending = useSharedValue(0);
+  const frameMs = size <= SMALL_SIZE ? SMALL_FRAME_MS : MIN_FRAME_MS;
 
   const clock = useFrameCallback((info) => {
     // A frame's gap is capped so a backgrounded app carries on instead of jumping.
     const elapsed = pending.get() + Math.min(info.timeSincePreviousFrame ?? 16, 100);
     // At 120 Hz every other frame is skipped: slow dots look the same at 60, and the UI thread
     // keeps half the frames for scrolling and sheets.
-    if (elapsed < MIN_FRAME_MS) {
+    if (elapsed < frameMs) {
       pending.set(elapsed);
       return;
     }

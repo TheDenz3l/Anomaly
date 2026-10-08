@@ -196,6 +196,28 @@ export const vRoleModels = v.object({
 
 export const vHeader = v.object({ key: v.string(), value: v.string() });
 
+/** A provider key's balance as last reported; status "unsupported" means the provider has no balance API. */
+export const vProviderBalance = v.object({
+  status: v.union(v.literal("ok"), v.literal("unsupported"), v.literal("error")),
+  remaining: v.optional(v.number()),
+  total: v.optional(v.number()),
+  used: v.optional(v.number()),
+  currency: v.optional(v.string()),
+  error: v.optional(v.string()),
+  checkedAt: v.number(),
+});
+
+/** What replies sent from the app spent through one provider in a calendar month (UTC). */
+export const vProviderUsage = v.object({
+  month: v.string(),
+  costUsd: v.number(),
+  /** Replies on models with no published price, so costUsd leaves them out. */
+  unpriced: v.number(),
+  promptTokens: v.number(),
+  completionTokens: v.number(),
+  replies: v.number(),
+});
+
 export const vLocation = v.object({ lat: v.number(), lng: v.number(), label: v.string() });
 
 export type Source = Infer<typeof vSource>;

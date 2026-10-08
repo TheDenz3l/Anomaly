@@ -1,5 +1,6 @@
 import { Switch } from "heroui-native";
-import { useState, type ReactNode } from "react";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useState, type ReactNode } from "react";
 import { TextInput, View } from "react-native";
 import { ModelPicker } from "@/components/chat/ModelPicker";
 import { ProviderSheet } from "@/components/settings/ProviderSheet";
@@ -8,6 +9,7 @@ import { Group, Page } from "@/components/ui/Page";
 import { Segmented } from "@/components/ui/Segmented";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
+import { balanceLine } from "@/lib/balance";
 import { findModel, useApp } from "@/lib/store";
 import { colors, fonts } from "@/lib/theme";
 import { InstructionsSheet } from "@/components/settings/InstructionsSheet";
@@ -78,10 +80,20 @@ export default function SettingsScreen() {
   const models = useApp((s) => s.models);
   const settings = useApp((s) => s.settings);
   const update = useApp((s) => s.updateSettings);
+  const checkBalance = useApp((s) => s.checkBalance);
   const [providerSheet, setProviderSheet] = useState<{ id: string | null } | null>(null);
   const [picker, setPicker] = useState<"default" | "research" | null>(null);
   const [editingInstructions, setEditingInstructions] = useState(false);
   const instructions = settings.customInstructions.trim();
+
+  // Balances stay current while Settings is on screen; the server skips any read that's still fresh.
+  useFocusEffect(
+    useCallback(() => {
+      void checkBalance();
+      const poll = setInterval(() => void checkBalance(), 30_000);
+      return () => clearInterval(poll);
+    }, [checkBalance])
+  );
 
   return (
     <View className="flex-1 bg-background">
@@ -92,11 +104,12 @@ export default function SettingsScreen() {
         >
           {providers.map((p) => {
             const n = models.filter((m) => m.providerId === p.providerId).length;
+            const balance = balanceLine(p);
             return (
               <Row
                 key={p.providerId}
                 label={p.label}
-                detail={`${p.baseUrl.replace(/^https?:\/\//, "")}, ${n} ${n === 1 ? "model" : "models"}`}
+                detail={`${p.baseUrl.replace(/^https?:\/\//, "")}, ${n} ${n === 1 ? "model" : "models"}${balance ? `, ${balance}` : ""}`}
                 right={
                   <View
                     className={`h-2 w-2 rounded-full ${p.status === "connected" ? "bg-success" : "bg-danger"}`}

@@ -99,6 +99,8 @@ type Actions = {
   /** `saved` is true when the server stored the provider, even if it could not connect yet. */
   saveProvider(input: ProviderInput, apiKey?: string): Promise<ProviderResult>;
   refreshProvider(providerId: string): Promise<ProviderResult>;
+  /** Asks for fresh balances (one provider or all that are due); results arrive through the providers query. */
+  checkBalance(providerId?: string, force?: boolean): Promise<void>;
   removeProvider(providerId: string): void;
   overrideProfile(ref: string, patch: Partial<CapabilityProfile>): void;
   runProbes(ref: string): Promise<string[]>;
@@ -255,6 +257,28 @@ async function currentLocation(): Promise<{ lat: number; lng: number; label?: st
     }
   }
   return { lat, lng, label };
+}
+
+/** Serialized messages, so an unchanged one is recognised without serializing it twice. */
+const serialized = new WeakMap<Message, string>();
+const serialize = (m: Message) => {
+  let s = serialized.get(m);
+  if (s === undefined) serialized.set(m, (s = JSON.stringify(m)));
+  return s;
+};
+
+/**
+ * The server sends the whole thread on every change, as new objects. Messages that didn't change
+ * keep their previous object, so their memoized rows skip rendering while a reply streams.
+ */
+function reuseUnchanged(prev: Message[], next: Message[]): Message[] {
+  if (!prev.length) return next;
+  const byId = new Map(prev.map((m) => [m.id, m]));
+  return next.map((m) => {
+    const old = byId.get(m.id);
+    if (!old || m.status === "streaming" || old.status !== m.status) return m;
+    return serialize(old) === serialize(m) ? old : m;
+  });
 }
 
 function streamingIn(threadId: string, list: Message[]): State["streaming"] {
@@ -668,6 +692,11 @@ export const useApp = create<AppStore>()((set, get) => {
       }
     },
 
+    async checkBalance(providerId, force) {
+      // Balances are a nicety: a failed read shows on the provider, never as a toast.
+      await convex.action(api.providers.checkBalance, { providerId, force }).catch(() => {});
+    },
+
     removeProvider(providerId) {
       set((s) => ({
         providers: s.providers.filter((p) => p.providerId !== providerId),
@@ -742,10 +771,16 @@ export const useApp = create<AppStore>()((set, get) => {
     hydrateMessages(threadId, list) {
       fullThreads.add(threadId);
       const s = get();
-      const keyed = withStableKeys(s.messages[threadId] ?? [], list);
+      const prev = s.messages[threadId] ?? [];
+      const keyed = reuseUnchanged(prev, withStableKeys(prev, list));
+      const streaming = s.activeThreadId === threadId ? streamingIn(threadId, keyed) : s.streaming;
+      // Same reply still streaming: keep the object, or everything watching it renders again.
+      const sameStreaming =
+        streaming?.messageId === s.streaming?.messageId &&
+        streaming?.threadId === s.streaming?.threadId;
       set({
         messages: { ...s.messages, [threadId]: keyed },
-        ...(s.activeThreadId === threadId ? { streaming: streamingIn(threadId, keyed) } : {}),
+        ...(sameStreaming ? {} : { streaming }),
       });
     },
 

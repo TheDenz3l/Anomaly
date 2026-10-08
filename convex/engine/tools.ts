@@ -77,6 +77,10 @@ const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
  */
 const SEARCH_DEADLINE_MS = 10_000;
 const READ_DEADLINE_MS = 12_000;
+/** Introduces photos the app found, outside the untrusted block that holds their URLs. */
+const PHOTOS_NOTE =
+  "Photos the app found (real image URLs you can use). Show the ones that fit the question inline as Markdown images, each on its own line (they render as a swipeable gallery), or put their URLs in a card's image fields when you show a card:";
+
 /** Pages read for photos alongside a search; the slowest is left behind rather than waited on. */
 const PHOTO_PAGES = 3;
 const PHOTO_READ_MS = 6_000;
@@ -223,11 +227,13 @@ export async function showSearch(
     const n = env.sources.add(makeSource(r.url, r.title, r.snippet, env.origin));
     return `[${n}] ${r.title} — ${r.url}\n${truncate(r.snippet, 400)}`;
   });
+  // The app's instruction stays outside the untrusted block: inside it, the model is told to ignore
+  // instructions, and it took the photos for unverified page text and left them out.
   const gallery = photos.length
-    ? `\n\nPhotos. Show the ones that fit the question inline as Markdown images, each on its own line (they render as a swipeable gallery):\n${photos.join("\n")}`
+    ? `\n\n${PHOTOS_NOTE}\n${wrapUntrusted("image search", photos.join("\n"))}`
     : "";
   return {
-    content: `Results for "${query}" (${provider}):\n${wrapUntrusted("search results", lines.join("\n\n") + gallery)}`,
+    content: `Results for "${query}" (${provider}):\n${wrapUntrusted("search results", lines.join("\n\n"))}${gallery}`,
     web: "results",
   };
 }
@@ -268,6 +274,11 @@ export function webSearchTool(env: ToolEnv): LoopTool {
           description: "Only recent results",
         },
         limit: { type: "integer", minimum: 1, maximum: 10 },
+        photos: {
+          type: "boolean",
+          description:
+            "Also bring back photo URLs, when pictures would help the answer: places, products, dishes, people, landmarks. Show them inline or in a card's image fields. One photo search per reply.",
+        },
       },
       ["query"]
     ),
@@ -279,7 +290,7 @@ export function webSearchTool(env: ToolEnv): LoopTool {
           content: `Search budget for this reply is used up (${env.budget.maxSearches}). Answer with what you have.`,
         };
       }
-      const photos = Boolean(env.photos && !env.photosClaimed);
+      const photos = Boolean((env.photos || args.photos === true) && !env.photosClaimed);
       if (photos) env.photosClaimed = true;
       const run = startSearch(env.engine, query, {
         limit: Number(args.limit) || 6,
@@ -380,10 +391,10 @@ export function readUrlTool(env: ToolEnv): LoopTool {
           : "";
         const images = pageImages(page.text);
         const extra = images.length
-          ? `\n\nPhotos on this page (show any that help with Markdown image syntax):\n${images.join("\n")}`
+          ? `\n\n${PHOTOS_NOTE}\n${wrapUntrusted(page.url, images.join("\n"))}`
           : "";
         return {
-          content: `[${n}] ${page.title} — ${page.url}${note}\n${wrapUntrusted(page.url, view.text + extra)}`,
+          content: `[${n}] ${page.title} — ${page.url}${note}\n${wrapUntrusted(page.url, view.text)}${extra}`,
           web: "results",
         };
       } catch (e) {

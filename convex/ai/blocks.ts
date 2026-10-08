@@ -87,6 +87,22 @@ const num = (v: unknown): unknown => {
   return v;
 };
 const pick = (o: Raw, ...keys: string[]) => keys.map((k) => o[k]).find((v) => v !== undefined);
+/** An image as models write it: a URL, or an object holding one. Anything that isn't a web URL is dropped. */
+const imageOf = (o: Raw): string | undefined => {
+  const v = pick(
+    o,
+    "image",
+    "photo",
+    "img",
+    "thumbnail",
+    "picture",
+    "cover",
+    "imageUrl",
+    "image_url"
+  );
+  const s = typeof v === "string" ? v : str(pick(obj(v), "url", "src", "href"));
+  return s && /^https?:\/\/\S+$/i.test(s.trim()) ? s.trim() : undefined;
+};
 const list = (o: Raw, ...keys: string[]) => {
   const v = pick(o, ...keys);
   return Array.isArray(v) ? v : undefined;
@@ -103,6 +119,7 @@ function normalizeBlock(input: unknown): unknown {
   switch (type) {
     case "heading":
       b.text ??= str(pick(b, "title", "content", "label"));
+      b.image = imageOf(b);
       break;
     case "text": {
       if (typeof b.text === "string") break;
@@ -123,6 +140,7 @@ function normalizeBlock(input: unknown): unknown {
     }
     case "stats":
     case "facts":
+      if (type === "facts") b.image = imageOf(b);
       b.items = list(b, "items", "stats", "facts", "rows")?.map((i) => {
         const o = { ...obj(i) };
         o.label = str(pick(o, "label", "key", "name", "title")) ?? o.label;
@@ -138,6 +156,7 @@ function normalizeBlock(input: unknown): unknown {
         o.title = str(pick(o, "title", "name", "label")) ?? o.title;
         o.detail ??= str(pick(o, "description", "subtitle", "text"));
         if (o.meta !== undefined) o.meta = str(o.meta);
+        o.image = imageOf(o);
         return o;
       });
       break;
@@ -149,6 +168,7 @@ function normalizeBlock(input: unknown): unknown {
         o.title = str(pick(o, "title", "label", "text", "name")) ?? o.title;
         o.detail ??= str(pick(o, "description", "body"));
         o.when ??= str(pick(o, "time", "date"));
+        o.image = imageOf(o);
         return o;
       });
       break;
@@ -274,7 +294,7 @@ export const ModelBlocksSchema = z.object({
             "divider",
           ])
           .describe(
-            "Fields per type. heading: text, subtitle. text: text. images: images. stats: items {value, label, note}, up to 4. facts: title, items {label, value}. items: title, items {title, detail, meta, image, url}. steps: title, steps, checkable. callout: tone, text. input: id, label, kind, value, min, max, step, prefix, unit, options. computed: title, rows, currency, note. divider: none."
+            "Fields per type. heading: text, subtitle, image. text: text. images: images. stats: items {value, label, note}, up to 4. facts: title, image, items {label, value}. items: title, items {title, detail, meta, image, url}. steps: title, steps {title, detail, when, image}, checkable. callout: tone, text. input: id, label, kind, value, min, max, step, prefix, unit, options. computed: title, rows, currency, note. divider: none."
           ),
         text: z
           .string()
@@ -284,6 +304,11 @@ export const ModelBlocksSchema = z.object({
           ),
         subtitle: z.string().optional(),
         title: z.string().optional(),
+        image: url
+          .optional()
+          .describe(
+            "heading: a cover photo. facts: a photo of what they describe. Image URLs from tool results or the user only."
+          ),
         images: z
           .array(z.object({ url, alt: z.string() }))
           .optional()
@@ -308,6 +333,7 @@ export const ModelBlocksSchema = z.object({
               title: z.string(),
               detail: z.string().optional(),
               when: z.string().optional().describe("Shown beside the step: '1:30 PM', 'Day 2'."),
+              image: url.optional(),
             })
           )
           .optional(),

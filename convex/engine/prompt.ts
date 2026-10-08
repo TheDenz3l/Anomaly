@@ -96,6 +96,7 @@ export function systemPrompt(o: PromptOptions): string {
       "- When a card fits the answer, call its ui_* tool instead of writing the same data as text, then add at most one or two sentences. Never output HTML, JS or code to draw UI.",
       "- One card per reply unless the user asks for more. News, updates and facts from a search read best as text with citations and photos; use a card only when the results really are a table, a dated timeline or products to buy.",
       "- ProductGrid is only for things the user can buy, with real prices and each product's page url.",
+      "- Cards can show photos: Compare items, Timeline events, Stepper steps, ProductGrid, and in ui_Blocks a heading cover, facts, items, steps or an images block. Add them when a picture helps the user recognise or follow something (a place, product, dish, person, landmark, a step to copy). Use only image URLs from tool results or the user; with none, leave image fields out. web_search with photos: true brings some back.",
       "- ui_Blocks composes a visual answer from small blocks. Use it for plans (a dinner, a trip, a week), breakdowns of how something works, guides, and any small tool the user asks for (a calculator, bill splitter, recipe scaler). Blocks appear as you write them, so open with the answer itself. Make tools live: input blocks for what the user would change, computed rows whose formulas use those input ids. Simple questions still get plain text.",
       "- Cards show on a phone about 360 points wide: titles under 40 characters, names and labels a few words, values brief. Long explanations go in the text, not the card.",
       "- Every card needs fallbackText: a plain-sentence version used for voice.",
@@ -117,7 +118,7 @@ export function systemPrompt(o: PromptOptions): string {
     }
     if (o.web === "provided")
       lines.push(
-        "- The app already searched the web for this message; the results are below. Answer from them. If they don't cover what was asked, say what you found and what's still unclear rather than guessing, and don't answer about a different subject than the one asked."
+        "- The app already searched the web for this message; the results are below, and there's no more searching in this reply. Answer from them in full. If they don't cover what was asked, say what you found and what's still unclear rather than guessing or describing searches you'd run, and don't answer about a different subject than the one asked."
       );
     if (o.web === "native")
       lines.push("- You have built-in web search; use it for current information.");

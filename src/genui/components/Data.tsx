@@ -3,7 +3,7 @@ import { ScrollView, View } from "react-native";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
-import { GenCard, type GenProps } from "@/genui/kit";
+import { GenCard, GenImage, type GenProps } from "@/genui/kit";
 import { colors } from "@/lib/theme";
 
 const num = (v: string | number) =>
@@ -101,15 +101,20 @@ export function Compare({ props }: GenProps<"Compare">) {
     <GenCard title={props.title ?? "Comparison"} icon="git-compare-outline">
       <View className="flex-row gap-2">
         {props.items.map((it) => (
-          <View key={it.id} className="flex-1 rounded-2xl bg-raised px-3 py-2.5">
-            <Text weight="bold" className="text-[15px] leading-5" numberOfLines={2}>
-              {it.name}
-            </Text>
-            {it.subtitle ? (
-              <Text muted className="mt-0.5 text-xs leading-4" numberOfLines={2}>
-                {it.subtitle}
-              </Text>
+          <View key={it.id} className="flex-1 overflow-hidden rounded-2xl bg-raised">
+            {it.image ? (
+              <GenImage uri={it.image} alt={it.name} aspectRatio={4 / 3} radius={0} />
             ) : null}
+            <View className="px-3 py-2.5">
+              <Text weight="bold" className="text-[15px] leading-5" numberOfLines={2}>
+                {it.name}
+              </Text>
+              {it.subtitle ? (
+                <Text muted className="mt-0.5 text-xs leading-4" numberOfLines={2}>
+                  {it.subtitle}
+                </Text>
+              ) : null}
+            </View>
           </View>
         ))}
       </View>
@@ -195,7 +200,7 @@ export function Timeline({ props }: GenProps<"Timeline">) {
             accessibilityRole="button"
             accessibilityState={{ expanded }}
             onPress={() => setOpen(expanded ? null : i)}
-            disabled={!e.detail}
+            disabled={!e.detail && !e.image}
             className="flex-row gap-3"
           >
             <View className="w-16 pt-0.5">
@@ -210,9 +215,22 @@ export function Timeline({ props }: GenProps<"Timeline">) {
               {!last ? <View className="w-px flex-1 bg-raised" /> : null}
             </View>
             <View className={`flex-1 ${last ? "" : "pb-4"}`}>
-              <Text weight={expanded ? "bold" : "medium"} className="text-[15px] leading-5">
-                {e.title}
-              </Text>
+              <View className="flex-row items-start gap-3">
+                <Text
+                  weight={expanded ? "bold" : "medium"}
+                  className="flex-1 text-[15px] leading-5"
+                >
+                  {e.title}
+                </Text>
+                {e.image && !expanded ? (
+                  <GenImage uri={e.image} width={44} height={44} radius={10} />
+                ) : null}
+              </View>
+              {expanded && e.image ? (
+                <View className="mt-2">
+                  <GenImage uri={e.image} alt={e.title} aspectRatio={16 / 9} radius={14} />
+                </View>
+              ) : null}
               {expanded && e.detail ? (
                 <Text muted className="mt-1 text-sm leading-5">
                   {e.detail}

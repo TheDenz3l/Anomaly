@@ -1,6 +1,6 @@
-import { ConvexError, v } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   action,
   internalAction,
@@ -8,7 +8,9 @@ import {
   internalQuery,
   mutation,
   query,
+  type ActionCtx,
 } from "./_generated/server";
+import { fetchBalance } from "./ai/balance";
 import { listModels, LlmError, type Endpoint } from "./ai/openai";
 import {
   applyRemoteRules,
@@ -29,7 +31,7 @@ import {
 } from "./lib/crypto";
 import { endpointFor } from "./lib/endpoint";
 import { errorMessage } from "./lib/util";
-import { vHeader } from "./lib/validators";
+import { vHeader, vProviderBalance } from "./lib/validators";
 import { webCache } from "./web/cache";
 import { providerUrl } from "./web/guard";
 
@@ -48,6 +50,8 @@ function publicProvider(p: Doc<"providers">) {
     lastError: p.lastError,
     modelCount: p.models.filter((m) => m.kind === "chat").length,
     modelsFetchedAt: p.modelsFetchedAt,
+    balance: p.balance,
+    usage: p.usage,
   };
 }
 
@@ -244,6 +248,7 @@ export const refreshInternal = internalAction({
           ),
         }));
       await ctx.runMutation(internal.providers.setModels, { userId, providerId, models });
+      await ctx.scheduler.runAfter(0, internal.providers.balanceInternal, { userId, providerId });
       return { status: "connected", models: models.filter((m) => m.kind === "chat").length };
     } catch (e) {
       const msg =
@@ -262,6 +267,153 @@ export const refreshInternal = internalAction({
       });
       return { status: "error", models: 0, error: msg };
     }
+  },
+});
+
+/** A balance read sooner than this is still current; replies and an open provider sheet ask often. */
+const BALANCE_FRESH_MS = 15_000;
+/** Providers without a balance API are asked again only this often, in case that changes. */
+const UNSUPPORTED_RETRY_MS = 3600_000;
+/** Gateways book a reply's cost a moment after it finishes; reading sooner shows the old balance. */
+const BOOKING_DELAY_MS = 3_000;
+
+type ProviderBalance = Infer<typeof vProviderBalance>;
+
+function balanceDue(p: Doc<"providers">, now = Date.now()): boolean {
+  const b = p.balance;
+  if (!b) return true;
+  return now - b.checkedAt > (b.status === "unsupported" ? UNSUPPORTED_RETRY_MS : BALANCE_FRESH_MS);
+}
+
+async function updateBalance(
+  ctx: ActionCtx,
+  userId: Id<"users">,
+  providerId: string
+): Promise<void> {
+  const ep = await endpointFor(ctx, userId, providerId);
+  if (!ep) return;
+  let balance: ProviderBalance;
+  try {
+    const found = await fetchBalance(ep);
+    balance = found
+      ? { status: "ok", ...found, checkedAt: Date.now() }
+      : { status: "unsupported", checkedAt: Date.now() };
+  } catch (e) {
+    const error =
+      e instanceof LlmError && e.kind === "auth"
+        ? "The provider rejected the key when asked for its balance."
+        : e instanceof LlmError && e.kind === "network"
+          ? "Couldn't reach the provider to read the balance."
+          : errorMessage(e);
+    balance = { status: "error", error, checkedAt: Date.now() };
+  }
+  await ctx.runMutation(internal.providers.setBalance, { userId, providerId, balance });
+}
+
+/**
+ * Reads the balance of one provider, or of every provider that's due. The provider sheet calls this
+ * while it's open; `force` is a tap on refresh, which still waits a few seconds between reads.
+ */
+export const checkBalance = action({
+  args: { providerId: v.optional(v.string()), force: v.optional(v.boolean()) },
+  handler: async (ctx, { providerId, force }): Promise<void> => {
+    const userId = await requireUser(ctx);
+    const rows: Doc<"providers">[] = await ctx.runQuery(internal.providers.listInternal, {
+      userId,
+    });
+    const now = Date.now();
+    const due = rows.filter(
+      (p) =>
+        (!providerId || p.providerId === providerId) &&
+        (force ? now - (p.balance?.checkedAt ?? 0) > 3_000 : balanceDue(p, now))
+    );
+    await Promise.all(due.map((p) => updateBalance(ctx, userId, p.providerId)));
+  },
+});
+
+/** Scheduled after a save and after replies. `after`: skip when a read since then already landed. */
+export const balanceInternal = internalAction({
+  args: { userId: v.id("users"), providerId: v.string(), after: v.optional(v.number()) },
+  handler: async (ctx, { userId, providerId, after }) => {
+    if (after !== undefined) {
+      const row = await ctx.runQuery(internal.providers.getInternal, { userId, providerId });
+      if (!row || (row.balance && row.balance.checkedAt >= after)) return;
+    }
+    await updateBalance(ctx, userId, providerId);
+  },
+});
+
+export const listInternal = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) =>
+    await ctx.db
+      .query("providers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect(),
+});
+
+export const setBalance = internalMutation({
+  args: { userId: v.id("users"), providerId: v.string(), balance: vProviderBalance },
+  handler: async (ctx, { userId, providerId, balance }) => {
+    const row = await ctx.db
+      .query("providers")
+      .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", providerId))
+      .first();
+    if (!row) return;
+    // A failed read keeps the last figures, marked with what went wrong.
+    const prior = row.balance;
+    const next: ProviderBalance =
+      balance.status === "error" && prior && prior.status !== "unsupported"
+        ? { ...prior, status: "error", error: balance.error, checkedAt: balance.checkedAt }
+        : balance;
+    await ctx.db.patch(row._id, { balance: next });
+  },
+});
+
+/**
+ * Adds a finished reply to the provider's spend for the month, then reads the balance again once
+ * the provider has booked the reply. costUsd is undefined when the model has no published price.
+ */
+export const recordUsage = internalMutation({
+  args: {
+    userId: v.id("users"),
+    providerId: v.string(),
+    promptTokens: v.number(),
+    completionTokens: v.number(),
+    costUsd: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
+    const row = await ctx.db
+      .query("providers")
+      .withIndex("by_user_provider", (q) => q.eq("userId", a.userId).eq("providerId", a.providerId))
+      .first();
+    if (!row) return;
+    const now = Date.now();
+    const month = new Date(now).toISOString().slice(0, 7);
+    const prev =
+      row.usage?.month === month
+        ? row.usage
+        : { month, costUsd: 0, unpriced: 0, promptTokens: 0, completionTokens: 0, replies: 0 };
+    await ctx.db.patch(row._id, {
+      usage: {
+        month,
+        costUsd: prev.costUsd + (a.costUsd ?? 0),
+        unpriced: prev.unpriced + (a.costUsd === undefined ? 1 : 0),
+        promptTokens: prev.promptTokens + a.promptTokens,
+        completionTokens: prev.completionTokens + a.completionTokens,
+        replies: prev.replies + 1,
+      },
+    });
+    if (row.balance?.status === "unsupported" && balanceDue(row, now) === false) return;
+    const wait = Math.max(
+      BOOKING_DELAY_MS,
+      row.balance ? row.balance.checkedAt + BALANCE_FRESH_MS - now : 0
+    );
+    await ctx.scheduler.runAfter(wait, internal.providers.balanceInternal, {
+      userId: a.userId,
+      providerId: a.providerId,
+      after: now,
+    });
   },
 });
 
@@ -293,7 +445,14 @@ export const upsertInternal = internalMutation({
       )
       .first();
     if (existing) {
-      await ctx.db.patch(existing._id, { ...args, status: "checking", lastError: undefined });
+      // Another endpoint or key has another balance; the old figure would mislead until it's read.
+      const moved = existing.baseUrl !== args.baseUrl || existing.keyCipher !== args.keyCipher;
+      await ctx.db.patch(existing._id, {
+        ...args,
+        status: "checking",
+        lastError: undefined,
+        ...(moved ? { balance: undefined } : {}),
+      });
     } else {
       await ctx.db.insert("providers", { ...args, status: "checking", models: [] });
     }

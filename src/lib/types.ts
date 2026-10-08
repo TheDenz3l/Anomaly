@@ -131,6 +131,28 @@ export type Model = {
 
 export type ProviderStatus = "connected" | "error" | "checking";
 
+/** A provider key's balance as last reported; "unsupported" means the provider has no balance API. */
+export type ProviderBalance = {
+  status: "ok" | "unsupported" | "error";
+  remaining?: number;
+  total?: number;
+  used?: number;
+  currency?: string;
+  error?: string;
+  checkedAt: number;
+};
+
+/** What replies sent from the app spent through a provider this month (UTC). */
+export type ProviderUsage = {
+  month: string;
+  costUsd: number;
+  /** Replies on models with no published price, left out of costUsd. */
+  unpriced: number;
+  promptTokens: number;
+  completionTokens: number;
+  replies: number;
+};
+
 export type Provider = {
   providerId: string;
   label: string;
@@ -139,6 +161,8 @@ export type Provider = {
   headers: { key: string; value: string }[];
   status: ProviderStatus;
   lastError?: string;
+  balance?: ProviderBalance;
+  usage?: ProviderUsage;
 };
 
 export type MemoryCategory = "preference" | "fact" | "person" | "place" | "work";

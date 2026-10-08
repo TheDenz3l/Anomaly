@@ -10,6 +10,7 @@
 
 import type * as agents from "../agents.js";
 import type * as ai_anthropic from "../ai/anthropic.js";
+import type * as ai_balance from "../ai/balance.js";
 import type * as ai_blocks from "../ai/blocks.js";
 import type * as ai_catalog from "../ai/catalog.js";
 import type * as ai_decisions from "../ai/decisions.js";
@@ -80,6 +81,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   "ai/anthropic": typeof ai_anthropic;
+  "ai/balance": typeof ai_balance;
   "ai/blocks": typeof ai_blocks;
   "ai/catalog": typeof ai_catalog;
   "ai/decisions": typeof ai_decisions;

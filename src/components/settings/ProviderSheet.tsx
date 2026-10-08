@@ -8,7 +8,7 @@ import { useApp } from "@/lib/store";
 import { colors, fonts, LIST_RADIUS } from "@/lib/theme";
 import type { CapabilityProfile, Model, Provider } from "@/lib/types";
 import * as Clipboard from "expo-clipboard";
-import { useRef, useState, ReactNode, RefObject } from "react";
+import { useEffect, useRef, useState, ReactNode, RefObject } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +23,14 @@ import Animated, { SlideInLeft, SlideInRight } from "react-native-reanimated";
 import { Favicon } from "@/components/ui/Favicon";
 import { FormSheet, GROUP_BG } from "@/components/ui/FormSheet";
 import { openLink } from "@/lib/links";
+import {
+  balanceFraction,
+  formatAmount,
+  formatSpend,
+  formatTokens,
+  monthUsage,
+  timeAgo,
+} from "@/lib/balance";
 
 type Preset = {
   id: string;
@@ -287,6 +295,153 @@ function Identity({
             {detail}
           </Text>
         </View>
+      </View>
+    </View>
+  );
+}
+
+/** How often an open sheet reads the balance again; the server answers from its copy when it's fresh. */
+const BALANCE_POLL_MS = 20_000;
+
+/**
+ * The key's balance, read again while the sheet is open and after every reply, and what replies
+ * from this app spent through the provider this month.
+ */
+function ProviderBalance({ provider, active }: { provider: Provider; active: boolean }) {
+  const checkBalance = useApp((s) => s.checkBalance);
+  const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const id = provider.providerId;
+
+  useEffect(() => {
+    if (!active) return;
+    void checkBalance(id);
+    const poll = setInterval(() => void checkBalance(id), BALANCE_POLL_MS);
+    // "Updated 2 min ago" keeps counting between reads.
+    const tick = setInterval(() => setNow(Date.now()), 15_000);
+    return () => {
+      clearInterval(poll);
+      clearInterval(tick);
+    };
+  }, [active, id, checkBalance]);
+
+  const refresh = async () => {
+    setBusy(true);
+    await checkBalance(id, true);
+    setBusy(false);
+  };
+
+  const b = provider.balance;
+  const usage = monthUsage(provider, now);
+  const fraction = balanceFraction(provider);
+  const figure = b && b.status !== "unsupported" ? (b.remaining ?? b.used ?? null) : null;
+  const meterColor =
+    fraction === null || fraction >= 0.2
+      ? colors.success
+      : fraction >= 0.05
+        ? colors.warning
+        : colors.danger;
+  const tokens = usage ? usage.promptTokens + usage.completionTokens : 0;
+
+  return (
+    <View className="mb-6">
+      <View className="mb-2 flex-row items-center justify-between px-4">
+        <Text weight="medium" muted className="text-[13px]">
+          Balance
+        </Text>
+        <Tap
+          accessibilityRole="button"
+          accessibilityLabel="Refresh balance"
+          disabled={busy}
+          hitSlop={8}
+          onPress={() => void refresh()}
+          className="flex-row items-center gap-1.5"
+        >
+          {busy ? (
+            <ActivityIndicator size="small" color={colors.primaryStrong} />
+          ) : (
+            <Icon name="refresh" size={14} color={colors.primaryStrong} />
+          )}
+          <Text weight="medium" className="text-[13px] text-primary-strong">
+            Refresh
+          </Text>
+        </Tap>
+      </View>
+      <View style={styles.group}>
+        {b && figure !== null ? (
+          <View className="px-4 pt-4 pb-4" accessibilityLiveRegion="polite">
+            <Text
+              weight="bold"
+              className="text-[34px] leading-[40px]"
+              style={styles.tabular}
+              numberOfLines={1}
+            >
+              {formatAmount(figure, b.currency)}
+            </Text>
+            <Text muted className="text-[13px] leading-[18px]">
+              {b.remaining === undefined
+                ? "Used on this key, which has no limit"
+                : b.total !== undefined && b.remaining < b.total
+                  ? `Left of ${formatAmount(b.total, b.currency)}`
+                  : "Left on this account"}
+            </Text>
+            {fraction !== null ? (
+              <View
+                style={styles.meter}
+                accessibilityRole="progressbar"
+                accessibilityValue={{ min: 0, max: 100, now: Math.round(fraction * 100) }}
+              >
+                <View
+                  style={[
+                    styles.meterFill,
+                    { width: `${fraction * 100}%`, backgroundColor: meterColor },
+                  ]}
+                />
+              </View>
+            ) : null}
+          </View>
+        ) : (
+          <View className="flex-row items-center gap-2.5 px-4 py-4">
+            {b ? null : <ActivityIndicator size="small" color={colors.textMuted} />}
+            <Text muted className="flex-1 text-[14px] leading-5">
+              {!b
+                ? "Reading the balance…"
+                : b.status === "unsupported"
+                  ? `${hostOf(provider.baseUrl)} doesn’t report a balance to API keys. Check it on the provider’s site.`
+                  : (b.error ?? "Couldn’t read the balance.")}
+            </Text>
+          </View>
+        )}
+        <View style={styles.usageRow}>
+          <View className="flex-1">
+            <Text weight="medium" className="text-[15px] leading-5">
+              This month
+            </Text>
+            <Text muted className="text-[13px] leading-[18px]">
+              {usage
+                ? `${usage.replies} ${usage.replies === 1 ? "reply" : "replies"}, ${formatTokens(tokens)} tokens`
+                : "No replies yet"}
+            </Text>
+          </View>
+          <Text weight="medium" className="text-[15px]" style={styles.tabular}>
+            {usage && usage.costUsd === 0 && usage.unpriced > 0
+              ? "No price listed"
+              : formatSpend(usage?.costUsd ?? 0)}
+          </Text>
+        </View>
+      </View>
+      <View className="mt-2 gap-1.5 px-4">
+        {b?.status === "error" && figure !== null ? (
+          <Notice tone="danger">{b.error ?? "Couldn’t read the balance."}</Notice>
+        ) : null}
+        <Footnote>
+          {b && figure !== null
+            ? `Updated ${timeAgo(b.checkedAt, now)}. Reads again after each reply.`
+            : "This month counts replies sent from this app."}
+          {usage && usage.unpriced > 0 && usage.costUsd > 0
+            ? " Models without a published price aren’t in the total."
+            : ""}
+        </Footnote>
       </View>
     </View>
   );
@@ -1046,6 +1201,7 @@ export function ProviderSheet({
           }
           dot={connected ? colors.success : colors.danger}
         />
+        {existing ? <ProviderBalance provider={existing} active={open} /> : null}
         <FormGroup footer={notice}>
           {nameRow}
           {urlRow}
@@ -1145,6 +1301,25 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.10)",
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  tabular: { fontVariant: ["tabular-nums"] },
+  meter: {
+    height: 6,
+    marginTop: 14,
+    borderRadius: 3,
+    overflow: "hidden",
+    backgroundColor: colors.raisedHigh,
+  },
+  meterFill: { height: "100%", borderRadius: 3 },
+  usageRow: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.10)",
+  },
   plus: {
     width: 30,
     height: 30,

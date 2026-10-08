@@ -261,6 +261,10 @@ function trimForOverflow(messages: ChatMessage[]): ChatMessage[] | null {
 
 /* ------------------------------------------------------------------ loop */
 
+/** Appended to the results of the last search round a reply gets. */
+const LAST_ROUND_NOTE =
+  "That was the last search for this reply. Write the complete answer now from everything found so far. Where the results lack a detail, give what they do say and name the gap in a few words; never answer with a plan to search or check more.";
+
 export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
   const { engine, sink, sources } = o;
   const signal = o.signal ?? new AbortController();
@@ -647,8 +651,17 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     timing.toolsMs = Date.now() - toolsAt;
     if (!webOpen) drewAfterWeb = true;
     if (foundOnWeb) webDone++;
+    // The last round: say so, or models answer with what they'd search next and stop there.
+    const lastRound = foundOnWeb && o.webRounds !== undefined && webDone >= o.webRounds;
     toolCalls.forEach((call, i) =>
-      messages.push({ role: "tool", tool_call_id: call.id, content: outputs[i] })
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content:
+          lastRound && WEB_TOOLS.has(call.function.name)
+            ? `${outputs[i]}\n\n${LAST_ROUND_NOTE}`
+            : outputs[i],
+      })
     );
     // A Blocks card is the answer itself: end here rather than pay a round trip for a closing line.
     if (answered && toolCalls.every((c) => componentFromTool(c.function.name))) break;

@@ -4,7 +4,7 @@ import { TextInput, View } from "react-native";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
-import { ActionButton, GenCard, Pill, type GenProps } from "@/genui/kit";
+import { ActionButton, GenCard, GenImage, Pill, type GenProps } from "@/genui/kit";
 import { colors, fonts } from "@/lib/theme";
 
 type FieldValue = string | number | boolean;
@@ -175,6 +175,17 @@ export function Stepper({ props, emit, events, busy }: GenProps<"Stepper">) {
           </Tap>
         ))}
       </View>
+      {current.image ? (
+        <View className="mb-3">
+          <GenImage
+            key={current.image}
+            uri={current.image}
+            alt={current.title}
+            aspectRatio={16 / 10}
+            radius={18}
+          />
+        </View>
+      ) : null}
       <Text weight="bold" className="text-lg leading-6">
         {current.title}
       </Text>

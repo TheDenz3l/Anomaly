@@ -36,17 +36,19 @@ const descriptions: Record<ModelComponent, string> = {
   Chart:
     "A line chart. For savings/compound growth use model {type:'compound'} so the user can drag the contribution; otherwise give series points.",
   Table: "Tabular data with typed columns. Use for 4+ rows of structured values.",
-  Compare: "Side-by-side comparison of 2-3 items with per-row winners and a verdict.",
-  Timeline: "Dated events in order (history, schedules, roadmaps).",
+  Compare:
+    "Side-by-side comparison of 2-3 items with per-row winners and a verdict, and a photo per item when you have one.",
+  Timeline: "Dated events in order (history, schedules, roadmaps); events can carry a photo.",
   Form: "Collect structured input from the user (booking details, preferences). Nothing is sent anywhere until they submit.",
-  Stepper: "Step-by-step instructions the user follows in order (setup guides, recipes).",
+  Stepper:
+    "Step-by-step instructions the user follows in order (setup guides, recipes), with a photo for a step when it shows what to do.",
   Checklist: "Grouped checkable items (packing lists, to-dos).",
   ChoiceChips:
     "Tappable options for the user's next reply: clarifying questions or follow-up suggestions. Set multi for multi-select.",
   Weather:
     "Current conditions plus hourly and daily forecast. Prefer get_weather, which builds this for you.",
   Blocks:
-    "A visual answer composed from blocks in reading order: plans, guides, breakdowns, explainers, and small tools the user asks for (scalers, splitters, calculators) where input blocks drive computed rows live on the phone. Blocks appear to the user as you write them, so put the most important one first. This card is the answer: at most one short sentence of text before it, none after.",
+    "A visual answer composed from blocks in reading order: plans, guides, breakdowns, explainers, and small tools the user asks for (scalers, splitters, calculators) where input blocks drive computed rows live on the phone. Headings, facts, items and steps can carry photos, and an images block shows a gallery. Blocks appear to the user as you write them, so put the most important one first. This card is the answer: at most one short sentence of text before it, none after.",
   ProductGrid:
     "Products the user can buy: real prices you found, each product's page url, and a photo url when you have one. Not for articles, sources or links.",
 };
@@ -127,6 +129,29 @@ export function isCatalogName(name: string): boolean {
   return name in catalogSchemas;
 }
 
+const IMAGE_KEYS = new Set(["image", "poster"]);
+const WEB_URL = /^https?:\/\/\S+$/i;
+
+/**
+ * Drops image fields that aren't web URLs (or unwraps {url}), so a malformed photo costs the card
+ * its picture rather than failing the whole card and a retry.
+ */
+function dropBadImages(node: unknown): void {
+  if (Array.isArray(node)) return node.forEach(dropBadImages);
+  if (!node || typeof node !== "object") return;
+  const o = node as Record<string, unknown>;
+  for (const [k, v] of Object.entries(o)) {
+    if (!IMAGE_KEYS.has(k)) {
+      dropBadImages(v);
+      continue;
+    }
+    const raw = typeof v === "string" ? v : (v as { url?: unknown } | null)?.url;
+    const url = typeof raw === "string" ? raw.trim() : "";
+    if (WEB_URL.test(url)) o[k] = url;
+    else delete o[k];
+  }
+}
+
 /** Splits fallbackText off the tool args and validates the rest against the catalog schema. */
 export function validateToolArgs(
   name: string,
@@ -138,6 +163,7 @@ export function validateToolArgs(
   const fallbackText = typeof obj.fallbackText === "string" ? obj.fallbackText : "";
   delete obj.fallbackText;
   for (const k of ENGINE_ONLY[name as ModelComponent] ?? []) delete obj[k];
+  dropBadImages(obj);
   if (name === "Blocks") {
     const { blocks, firstError } = readBlocks(obj.blocks);
     if (!blocks.length) return { ok: false, error: firstError ?? "blocks: none", fallbackText };

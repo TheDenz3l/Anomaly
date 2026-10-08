@@ -79,6 +79,15 @@ export async function finishTurn(
       sources: list,
     }),
     flushRecords(engine, o.messageId),
+    r
+      ? engine.ctx.runMutation(internal.providers.recordUsage, {
+          userId: engine.userId,
+          providerId: engine.providerId,
+          promptTokens: r.promptTokens,
+          completionTokens: r.completionTokens,
+          costUsd: meta.costUsd,
+        })
+      : null,
   ]);
 }
 

@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
-import { useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { Tap } from "@/components/ui/Tap";
 import { withLinkUrls } from "@/lib/links";
@@ -76,7 +76,7 @@ function UserBubble({ text }: { text: string }) {
   );
 }
 
-export function UserMessage({ message }: { message: Message }) {
+function UserMessageRow({ message }: { message: Message }) {
   const event = message.parts.find((p) => p.type === "ui_event");
   if (event && event.type === "ui_event") {
     // Auto-saves are the system acting, not the user — the memory card already shows it.
@@ -175,7 +175,7 @@ function displayParts(parts: Part[]): Part[] {
 
 /** Assistant replies have no bubble: text on black, components on surface cards (PRD §2.4). */
 /** Assistant replies have no bubble: text on black, components on surface cards (PRD §2.4). */
-export function AssistantMessage({ message, last }: { message: Message; last: boolean }) {
+function AssistantMessageRow({ message, last }: { message: Message; last: boolean }) {
   const streaming = message.status === "streaming";
   // The end of a reply settles the haptics: a soft tap once a finished reply has played out.
   const wasStreaming = useRef(streaming);
@@ -248,3 +248,7 @@ export function AssistantMessage({ message, last }: { message: Message; last: bo
     </CitationProvider>
   );
 }
+
+/** Rows re-render only when their own message changes, not on every streamed update to the thread. */
+export const UserMessage = memo(UserMessageRow);
+export const AssistantMessage = memo(AssistantMessageRow);

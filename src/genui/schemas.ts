@@ -7,6 +7,12 @@ import { planRows } from "./compute";
  */
 
 const id = z.string().min(1);
+/** A photo for one thing on a card. Models only have real image URLs from tool results or the user. */
+const photo = z
+  .string()
+  .url()
+  .optional()
+  .describe("Photo URL from tool results or the user, when a picture helps. Never invent one.");
 
 export const MovieShowtimesSchema = z.object({
   title: z.string().optional(),
@@ -99,6 +105,7 @@ export const CompareSchema = z.object({
         id,
         name: z.string().describe("A few words: it heads a narrow phone column."),
         subtitle: z.string().optional(),
+        image: photo,
       })
     )
     .min(2)
@@ -121,6 +128,7 @@ export const TimelineSchema = z.object({
         date: z.string().describe("ISO date (2026-09-29), month (2026-09) or year."),
         title: z.string(),
         detail: z.string().optional(),
+        image: photo,
       })
     )
     .min(1),
@@ -146,7 +154,7 @@ export const FormSchema = z.object({
 
 export const StepperSchema = z.object({
   title: z.string(),
-  steps: z.array(z.object({ title: z.string(), detail: z.string() })).min(2),
+  steps: z.array(z.object({ title: z.string(), detail: z.string(), image: photo })).min(2),
 });
 
 export const ChecklistSchema = z.object({
@@ -304,6 +312,7 @@ export const HeadingBlock = z.object({
   type: z.literal("heading"),
   text: z.string().describe("Under 40 characters."),
   subtitle: z.string().optional(),
+  image: webUrl.optional().describe("A cover photo shown above the heading."),
 });
 
 export const TextBlock = z.object({
@@ -341,6 +350,7 @@ export const StatsBlock = z.object({
 export const FactsBlock = z.object({
   type: z.literal("facts"),
   title: z.string().optional(),
+  image: webUrl.optional().describe("A photo of what the facts describe, shown at the top."),
   items: z
     .array(z.object({ label: z.string(), value: z.string() }))
     .min(1)
@@ -374,6 +384,7 @@ export const StepsBlock = z.object({
         title: z.string(),
         detail: z.string().optional(),
         when: z.string().optional().describe("Shown beside the step: '1:30 PM', 'Day 2'."),
+        image: webUrl.optional(),
       })
     )
     .min(1)

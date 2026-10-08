@@ -1,6 +1,7 @@
+import { Image } from "expo-image";
 import { Button, Skeleton } from "heroui-native";
-import type { ReactNode } from "react";
-import { View } from "react-native";
+import { useState, type ReactNode } from "react";
+import { View, type DimensionValue } from "react-native";
 import { ActivityRow } from "@/components/chat/Activity";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { Display, Text } from "@/components/ui/Text";
@@ -66,6 +67,39 @@ export function GenCard({
       <View className={flush ? "" : "px-4 pb-4"}>{children}</View>
       {footer ? <View className="border-t border-hairline px-4 py-3">{footer}</View> : null}
     </View>
+  );
+}
+
+/** A photo inside a card. One that fails to load leaves no broken frame behind; the card reads without it. */
+export function GenImage({
+  uri,
+  alt,
+  width = "100%",
+  height,
+  aspectRatio,
+  radius = 16,
+}: {
+  uri: string;
+  alt?: string;
+  width?: DimensionValue;
+  height?: number;
+  aspectRatio?: number;
+  radius?: number;
+}) {
+  const [failed, setFailed] = useState<string | null>(null);
+  if (failed === uri) return null;
+  return (
+    <Image
+      source={{ uri }}
+      onError={() => setFailed(uri)}
+      contentFit="cover"
+      transition={180}
+      cachePolicy="memory-disk"
+      accessible={Boolean(alt)}
+      accessibilityLabel={alt}
+      accessibilityIgnoresInvertColors
+      style={{ width, height, aspectRatio, borderRadius: radius, backgroundColor: colors.raised }}
+    />
   );
 }
 

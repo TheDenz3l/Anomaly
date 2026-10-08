@@ -162,7 +162,7 @@ export async function searchWeb(
   const cache = webCache(ctx);
   const limit = Math.min(Math.max(opts.limit ?? 6, 1), 10);
   const recency = opts.recency;
-  const cacheKey = `search:v3:${cfg.provider}:${recency ?? ""}:${limit}:${query.toLowerCase().trim()}`;
+  const cacheKey = `search:v4:${cfg.provider}:${recency ?? ""}:${limit}:${query.toLowerCase().trim()}`;
   const hit = await cache.get(cacheKey);
   if (hit) {
     const parsed = JSON.parse(hit.content);
@@ -223,7 +223,7 @@ export async function searchWeb(
     }
     return null;
   };
-  // Exa in fast mode leads; Firecrawl takes over when Exa is unset, benched, failing or off-topic.
+  // Exa backs Firecrawl up when Firecrawl is unset, benched, failing or off-topic.
   const viaExa = async (): Promise<Judged | null> => {
     const key = await exaKey(cache);
     if (!key) return null;
@@ -239,7 +239,9 @@ export async function searchWeb(
     }
     return null;
   };
-  const primary = async (): Promise<Judged | null> => (await viaExa()) ?? (await viaFirecrawl());
+  // Firecrawl leads: its results come from the same index as its image search and page scrapes,
+  // so the pages a reply cites are the ones photos and reads come from.
+  const primary = async (): Promise<Judged | null> => (await viaFirecrawl()) ?? (await viaExa());
   const viaChain = async (): Promise<Judged | null> => {
     try {
       const r: SearchOutcome = await ctx.runAction(internal.web.access.search, {
@@ -256,7 +258,7 @@ export async function searchWeb(
     }
     return null;
   };
-  // Exa then Firecrawl usually answer within a second. When they haven't by HEDGE_MS (rate-limited,
+  // Firecrawl then Exa usually answer within a second. When they haven't by HEDGE_MS (rate-limited,
   // slow, or failing over), the chain starts alongside and the first on-topic set wins, so a
   // struggling backend costs a couple of seconds instead of its whole timeout.
   const lead = primary();

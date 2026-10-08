@@ -32,11 +32,15 @@ const FOLLOW_SLACK = 140;
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const threadId = useApp((s) => s.activeThreadId);
+  const replying = useApp((s) => s.streaming !== null);
   const messages = useApp((s) => (s.activeThreadId ? s.messages[s.activeThreadId] : undefined));
   const [composerH, setComposerH] = useState(110);
   const [away, setAway] = useState(false);
   const scroller = useRef<Animated.ScrollView>(null);
   const stick = useRef(true);
+  const offsetY = useRef(0);
+  /** The user's finger is on the conversation: new content must not pull the view out from under it. */
+  const dragging = useRef(false);
   /** Until then, layout growth (a thread loading, images settling) keeps the view pinned to the end. */
   const settleUntil = useRef(0);
   /** A smooth scroll is in flight; jumping now would cut it short. */
@@ -81,6 +85,8 @@ export default function ChatScreen() {
   const [existing, setExisting] = useState(() => new Set(messages?.map((m) => m.key ?? m.id)));
   if (tracked !== threadId) {
     setTracked(threadId);
+    // The jump button belongs to the chat that was scrolled, not the one opening.
+    setAway(false);
     // A new chat's first send goes null → pending → real id; all three are the same conversation.
     const continuing = (tracked === null && count <= 2) || Boolean(tracked?.startsWith("pending_"));
     if (!continuing) {
@@ -102,12 +108,26 @@ export default function ChatScreen() {
   let latestUser: string | null = null;
   let latestUserAt = 0;
   for (let i = count - 1; i >= 0 && messages; i--) {
-    if (messages[i].role === "user") {
+    // Only what the user wrote parks the view. A card tap (saving a memory, picking a chip) is
+    // logged as a user row too, but it may get no reply at all, and parking it would scroll the
+    // card away and leave a screen of blank space under the row.
+    if (messages[i].role === "user" && messages[i].parts.some((x) => x.type !== "ui_event")) {
       latestUser = messages[i].key ?? messages[i].id;
       latestUserAt = messages[i].createdAt;
       break;
     }
   }
+
+  /** How far the end of the conversation sits below the viewport, counting a parked send's blank space. */
+  const distanceToEnd = () => contentH.current + blank.get() - offsetY.current - viewH.current;
+
+  /** Follows new content near the end; offers the jump button only well above it, and never on an empty chat. */
+  const trackScroll = () => {
+    const distance = distanceToEnd();
+    stick.current = !anchor.current && distance < FOLLOW_SLACK;
+    const isAway = count > 0 && distance > FOLLOW_SLACK * 2;
+    if (isAway !== away) setAway(isAway);
+  };
 
   const syncBlank = () => {
     const y = anchor.current ? userY.current.get(anchor.current) : undefined;
@@ -173,6 +193,16 @@ export default function ChatScreen() {
     });
   }, [threadId]);
 
+  // A parked message nothing answers (its send failed) gives the blank space back.
+  const lastKey = messages?.length ? (messages[count - 1].key ?? messages[count - 1].id) : null;
+  useEffect(() => {
+    if (replying || !anchor.current || anchor.current !== lastKey) return;
+    anchor.current = null;
+    parkPending.current = false;
+    blank.set(0);
+    stick.current = true;
+  }, [replying, lastKey, blank]);
+
   const jumpToLatest = () => {
     stick.current = true;
     scroller.current?.scrollToEnd({ animated: true });
@@ -199,24 +229,37 @@ export default function ChatScreen() {
             syncBlank();
           }}
           onScroll={(e) => {
+            offsetY.current = e.nativeEvent.contentOffset.y;
             if (Date.now() < smoothUntil.current) return;
-            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-            // The end includes the blank space a parked send leaves below the reply.
-            const distance =
-              contentSize.height + blank.get() - contentOffset.y - layoutMeasurement.height;
-            stick.current = !anchor.current && distance < FOLLOW_SLACK;
-            const isAway = count > 0 && distance > FOLLOW_SLACK * 2;
-            if (isAway !== away) setAway(isAway);
+            trackScroll();
+          }}
+          // Scroll events are ignored while a smooth scroll runs; where it lands decides.
+          onMomentumScrollEnd={trackScroll}
+          onScrollBeginDrag={() => {
+            dragging.current = true;
+            stick.current = false;
+          }}
+          onScrollEndDrag={() => {
+            dragging.current = false;
+            trackScroll();
           }}
           scrollEventThrottle={32}
           onContentSizeChange={(_, h) => {
             contentH.current = h;
             syncBlank();
+            // Content that shrank or emptied (a new chat, a regenerated reply) can leave the end in view.
+            if (away && (count === 0 || distanceToEnd() <= FOLLOW_SLACK * 2)) setAway(false);
             // Follow new content while a thread settles in. A parked send stays put while the
             // reply streams below it; growth the user caused (opening a thinking block,
             // expanding a card) never drags the view either.
             const now = Date.now();
-            if (anchor.current || !stick.current || count === 0 || now < smoothUntil.current)
+            if (
+              anchor.current ||
+              dragging.current ||
+              !stick.current ||
+              count === 0 ||
+              now < smoothUntil.current
+            )
               return;
             if (useApp.getState().streaming || now < settleUntil.current)
               scroller.current?.scrollToEnd({ animated: false });
@@ -275,7 +318,7 @@ export default function ChatScreen() {
           pointerEvents="box-none"
           style={{ position: "absolute", alignSelf: "center", bottom: composerH + bottom + 12 }}
         >
-          {away ? (
+          {away && count > 0 ? (
             <Animated.View entering={popIn} exiting={popOut}>
               <Tap
                 accessibilityRole="button"

@@ -12,6 +12,14 @@ const CATCH_UP_S = 3;
 /** After the reply ends, the rest plays out over about this long, easing into the last word. */
 const FINISH_S = 0.8;
 const FINISH_MIN_CPS = 70;
+/** Each reveal step re-renders the Markdown; whole words at most this often keep the JS thread free for touches. */
+const STEP_MS = 40;
+
+/** Where the last whole word ends in text[from, to): just past its trailing whitespace, or -1. */
+function wordEnd(text: string, from: number, to: number): number {
+  for (let i = to - 1; i >= from; i--) if (/\s/.test(text[i])) return i + 1;
+  return -1;
+}
 
 /**
  * Reveals streamed text a few characters per frame instead of a chunk per network update. The
@@ -22,6 +30,8 @@ export function useSmoothText(text: string, streaming: boolean): string {
   const reduced = useReducedMotion();
   const [shown, setShown] = useState(() => (streaming ? 0 : text.length));
   const pos = useRef(shown);
+  const shownAt = useRef(shown);
+  const lastStep = useRef(0);
   const target = useRef(text.length);
   const source = useRef(text);
   const live = useRef(streaming);
@@ -34,6 +44,7 @@ export function useSmoothText(text: string, streaming: boolean): string {
     live.current = streaming;
     if (reduced || pos.current > text.length) {
       pos.current = text.length;
+      shownAt.current = text.length;
       setShown(text.length);
       return;
     }
@@ -47,11 +58,16 @@ export function useSmoothText(text: string, streaming: boolean): string {
       const cps = live.current
         ? Math.min(Math.max(MIN_CPS, backlog / LAG_S), Math.max(MAX_CPS, backlog / CATCH_UP_S))
         : Math.max(FINISH_MIN_CPS, backlog / FINISH_S);
-      const before = Math.floor(pos.current);
       pos.current = Math.min(target.current, pos.current + cps * dt);
       const n = Math.floor(pos.current);
-      if (n > before && /\s/.test(source.current.slice(before, n))) typingTick();
-      setShown((s) => (s === n ? s : n));
+      const done = pos.current >= target.current;
+      const end = done ? n : wordEnd(source.current, shownAt.current, n);
+      if (end > shownAt.current && (done || t - lastStep.current >= STEP_MS)) {
+        shownAt.current = end;
+        lastStep.current = t;
+        typingTick();
+        setShown(end);
+      }
       if (pos.current < target.current) frame.current = requestAnimationFrame(step);
       else {
         frame.current = null;

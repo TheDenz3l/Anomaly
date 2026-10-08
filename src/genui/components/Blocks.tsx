@@ -1,5 +1,4 @@
 import * as Clipboard from "expo-clipboard";
-import { Image } from "expo-image";
 import { Skeleton, Switch } from "heroui-native";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TextInput, View } from "react-native";
@@ -10,7 +9,7 @@ import { Icon, type IconName } from "@/components/ui/Icon";
 import { Slider } from "@/components/ui/Slider";
 import { Tap } from "@/components/ui/Tap";
 import { Display, Text } from "@/components/ui/Text";
-import type { GenProps } from "@/genui/kit";
+import { GenImage, type GenProps } from "@/genui/kit";
 import type { Block } from "@/genui/schemas";
 import { openLink } from "@/lib/links";
 import { fadeIn } from "@/lib/motion";
@@ -110,6 +109,11 @@ function Static({
     case "heading":
       return (
         <View className={first ? "" : "mt-1"}>
+          {b.image ? (
+            <View className="mb-3">
+              <GenImage uri={b.image} alt={b.text} aspectRatio={16 / 9} radius={22} />
+            </View>
+          ) : null}
           {first ? (
             <Display className="text-[20px] leading-7">{b.text}</Display>
           ) : (
@@ -133,6 +137,11 @@ function Static({
     case "facts":
       return (
         <Panel>
+          {b.image ? (
+            <View className="-mx-4">
+              <GenImage uri={b.image} alt={b.title} aspectRatio={16 / 9} radius={0} />
+            </View>
+          ) : null}
           {b.title ? <PanelTitle text={b.title} /> : null}
           {b.items.map((f, k) => (
             <View
@@ -211,15 +220,7 @@ function Items({ block: b }: { block: Of<"items"> }) {
           <View
             className={`flex-row items-center gap-3 py-3 ${k > 0 || b.title ? "border-t border-hairline" : ""}`}
           >
-            {it.image ? (
-              <Image
-                source={{ uri: it.image }}
-                contentFit="cover"
-                transition={180}
-                accessibilityIgnoresInvertColors
-                style={{ width: 64, height: 64, borderRadius: 14, backgroundColor: colors.raised }}
-              />
-            ) : null}
+            {it.image ? <GenImage uri={it.image} width={64} height={64} radius={14} /> : null}
             <View className="flex-1 gap-0.5">
               <Text weight="bold" className="text-[15px] leading-5">
                 {it.title}
@@ -324,6 +325,11 @@ function Steps({ block: b }: { block: Of<"steps"> }) {
                 <Text muted className="text-[14px] leading-5">
                   {s.detail}
                 </Text>
+              ) : null}
+              {s.image ? (
+                <View className="mt-2">
+                  <GenImage uri={s.image} alt={s.title} aspectRatio={16 / 9} radius={14} />
+                </View>
               ) : null}
             </View>
           </View>

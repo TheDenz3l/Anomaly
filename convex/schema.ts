@@ -5,6 +5,8 @@ import {
   vAgentRole,
   vFeatures,
   vHeader,
+  vProviderBalance,
+  vProviderUsage,
   vLocation,
   vMemoryCategory,
   vMemoryScope,
@@ -89,6 +91,8 @@ export default defineSchema({
       })
     ),
     modelsFetchedAt: v.optional(v.number()),
+    balance: v.optional(vProviderBalance),
+    usage: v.optional(vProviderUsage),
   })
     .index("by_user", ["userId"])
     .index("by_user_provider", ["userId", "providerId"]),

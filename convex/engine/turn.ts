@@ -340,8 +340,10 @@ export async function runTurn(
     if (canTools && wantsData && location && (probs.MovieShowtimes ?? 0) > THRESHOLDS.act)
       showtimeData(env, location);
 
-    // Every round of searching is another full model round trip before the answer starts.
-    const webRounds = searchMode === "deep" ? 3 : 1;
+    // Every round of searching is another full model round trip before the answer starts. A question
+    // with several parts (a list plus figures, hits and artwork) rarely fits one round; with a
+    // second on offer the model fills the gaps instead of answering with a plan to search.
+    const webRounds = searchMode === "deep" ? 3 : difficulty.choice === "easy" ? 1 : 2;
     let webRoundsDone = 0;
     let preLog = pre ? "dropped" : "no";
     const extra: string[] = [];
