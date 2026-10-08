@@ -19,6 +19,8 @@ export type GenProps<N extends CatalogName> = {
   busy: boolean;
   /** True only while this component's own message is still streaming (drives live animations). */
   live: boolean;
+  /** True while the card's own arguments are still streaming: props hold what has arrived so far. */
+  building?: boolean;
 };
 
 /** Inline component shell: `surface` card, 24px radius (PRD §2.4). */
@@ -161,6 +163,7 @@ const building: Record<string, string> = {
   ChoiceChips: "options",
   Weather: "the forecast",
   ProductGrid: "product picks",
+  Blocks: "your answer",
   SubagentPlan: "a plan",
   SubagentTimeline: "the workers",
   ResearchPlan: "a research plan",

@@ -7,6 +7,7 @@ import { MovieShowtimes } from "./MovieShowtimes";
 import { ProductGrid } from "./ProductGrid";
 import { LocationRequest, MemoryConfirm } from "./System";
 import { Weather } from "./Weather";
+import { Blocks } from "./Blocks";
 
 /** Catalog name → native component. Keys must match `catalogSchemas`. */
 export const catalogComponents = {
@@ -28,4 +29,5 @@ export const catalogComponents = {
   ResearchProgress,
   LocationRequest,
   MemoryConfirm,
+  Blocks,
 };

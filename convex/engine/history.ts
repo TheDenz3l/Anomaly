@@ -34,9 +34,11 @@ function assistantText(m: Doc<"messages">, detailed: boolean): string {
   for (const p of m.parts) {
     if (p.type === "text") out.push(p.text);
     else if (p.type === "component") {
+      // A Blocks card is the answer itself, so later turns always see what it said.
+      const answer = p.name === "Blocks";
       const props =
-        detailed && p.status === "ready"
-          ? ` props: ${truncate(JSON.stringify(p.props), 1800)}`
+        (detailed || answer) && p.status === "ready"
+          ? ` props: ${truncate(JSON.stringify(p.props), answer ? 4000 : 1800)}`
           : "";
       out.push(
         `[Showed ${p.name} card id=${p.id}${p.status === "invalid" ? " (failed to render)" : ""}: ${p.fallbackText}]${props}`

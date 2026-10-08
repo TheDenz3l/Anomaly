@@ -29,7 +29,12 @@ export function ComponentRenderer({ part, threadId, messageStreaming }: Props) {
   // simply shown, it can never be left invisible.
   const [animateIn] = useState(() => part.status === "streaming" || messageStreaming);
 
-  if (part.status === "streaming") return <GenSkeleton name={part.name} />;
+  // While the call streams, the server sends the props written so far once they pass the schema;
+  // until then a skeleton holds the place.
+  const building = part.status === "streaming";
+  const props = part.props as Record<string, unknown> | null;
+  if (building && (!props || Object.keys(props).length === 0))
+    return <GenSkeleton name={part.name} />;
 
   if (part.status === "invalid") {
     return (
@@ -56,6 +61,8 @@ export function ComponentRenderer({ part, threadId, messageStreaming }: Props) {
   return (
     <Animated.View entering={animateIn ? cardIn : undefined}>
       <Component
+        key={building && !GROWS_IN_PLACE.has(part.name) ? "building" : "ready"}
+        building={building}
         props={part.props as GenProps<CatalogName>["props"]}
         events={events}
         busy={busy}
@@ -73,3 +80,8 @@ export function ComponentRenderer({ part, threadId, messageStreaming }: Props) {
     </Animated.View>
   );
 }
+/**
+ * Cards that take each new prop set in place while they stream. The rest remount once complete, so
+ * state they derive from props when mounted (form values, slider positions) starts from the full set.
+ */
+const GROWS_IN_PLACE = new Set(["Blocks"]);

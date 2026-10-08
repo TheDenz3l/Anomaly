@@ -237,8 +237,14 @@ export class PartWriter implements Sink {
     for (const p of this.parts) {
       if (p.type === "search" && p.phase !== "done") p.phase = "done";
       if (p.type === "component" && p.status === "streaming") {
-        p.status = "invalid";
-        p.error = "The reply ended before this card finished.";
+        // What streamed already passed the schema: keep it rather than swap it for an error.
+        if (p.props && Object.keys(p.props as object).length) {
+          p.status = "ready";
+          p.fallbackText ||= `${p.name} (cut short)`;
+        } else {
+          p.status = "invalid";
+          p.error = "The reply ended before this card finished.";
+        }
       }
     }
     await this.write(final);

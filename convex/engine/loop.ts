@@ -3,6 +3,7 @@ import {
   componentTools,
   validateToolArgs,
   type ModelComponent,
+  partialProps,
 } from "../ai/catalog";
 import {
   LlmError,
@@ -19,6 +20,7 @@ import type { Part } from "../lib/validators";
 import { makeSource, type SourceCollector } from "../web/sources";
 import { learn, note, type Engine } from "./context";
 import type { Sink } from "./writer";
+import { parsePartialJson } from "../lib/partialJson";
 
 /**
  * The agent loop: stream → render text/thinking/cards live → run tools → feed results back,
@@ -94,6 +96,9 @@ export type LoopResult = {
 
 const TOOL_RESULT_MAX = 12_000;
 
+/** How often a streaming card re-renders from its partial arguments. */
+const PAINT_MS = 120;
+
 const WEB_TOOLS = new Set(["web_search", "read_url"]);
 
 /** Data tools that render a card themselves: its skeleton shows from the moment the model calls them. */
@@ -111,7 +116,10 @@ const TOOL_RENDERS: Record<string, string[]> = {
 /* ------------------------------------------------------------------ prompted-JSON fallback */
 
 type FenceEvent =
-  { type: "text"; text: string } | { type: "start" } | { type: "end"; body: string };
+  | { type: "text"; text: string }
+  | { type: "start" }
+  | { type: "partial"; body: string }
+  | { type: "end"; body: string };
 const OPEN = "```component";
 const CLOSE = "```";
 
@@ -155,8 +163,10 @@ export class FenceParser {
         continue;
       }
       const keep = this.buf.endsWith("``") ? 2 : this.buf.endsWith("`") ? 1 : 0;
-      this.block += this.buf.slice(0, this.buf.length - keep);
+      const grown = this.buf.slice(0, this.buf.length - keep);
+      this.block += grown;
       this.buf = this.buf.slice(this.buf.length - keep);
+      if (grown) yield { type: "partial", body: this.block };
       return;
     }
   }
@@ -233,7 +243,10 @@ function repairBody(
   if (!key) return null;
   delete body[key];
   if (key === "tools") delete body.tool_choice;
-  learn(engine, { kind: "param_rejected", param: key });
+  // A guess is only remembered when it costs little. Losing tools for good takes away search and
+  // every card, so an error that never names them drops them for this request only.
+  if (mentioned || (key !== "tools" && key !== "tool_choice"))
+    learn(engine, { kind: "param_rejected", param: key });
   return key;
 }
 
@@ -334,6 +347,20 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
 
     const calls = new ToolCallAccumulator();
     const partByIndex = new Map<number, string>();
+    const painted = new Map<string, { at: number; len: number }>();
+    /** Renders what has streamed of a card's arguments so far, at most every PAINT_MS per card. */
+    const paint = (partId: string, name: string, raw: string, within?: string) => {
+      const prev = painted.get(partId);
+      const now = Date.now();
+      if (prev && (raw.length === prev.len || now - prev.at < PAINT_MS)) return;
+      painted.set(partId, { at: now, len: raw.length });
+      const props = partialProps(name, raw, within);
+      sink.update(partId, (p) =>
+        p.type === "component" && p.status === "streaming"
+          ? { ...p, name, props: props ? sanitizeValue(props) : p.props }
+          : p
+      );
+    };
     const fence = o.prompted ? new FenceParser() : null;
     let fencePart: string | null = null;
     let stepText = "";
@@ -345,6 +372,10 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
       if (ev.type === "text") {
         sink.text(ev.text);
         stepText += ev.text;
+      } else if (ev.type === "partial") {
+        const head = parsePartialJson(ev.body) as { name?: unknown } | undefined;
+        if (fencePart && typeof head?.name === "string")
+          paint(fencePart, head.name, ev.body, "props");
       } else if (ev.type === "start") {
         fencePart = sink.add({
           id: uid("cmp"),
@@ -425,6 +456,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
               if (reuse && sink.get(reuse)) {
                 sink.update(reuse, (p) => ({
                   ...(p as Extract<Part, { type: "component" }>),
+                  props: {},
                   status: "streaming",
                   error: undefined,
                 }));
@@ -443,6 +475,8 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
                 );
               }
             }
+            const live = partByIndex.get(index);
+            if (comp && live && call) paint(live, comp, call.args);
             void isNew;
             break;
           }
@@ -528,6 +562,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
 
     let stopAfter = false;
     let foundOnWeb = false;
+    let answered = false;
     // Cards a data tool in this same step is about to draw count as drawn already.
     const drawingNow = new Set(toolCalls.flatMap((c) => TOOL_RENDERS[c.function.name] ?? []));
     const toolsAt = Date.now();
@@ -571,6 +606,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
             }));
             invalidPartByName.delete(comp);
             result.componentsShown.push(comp);
+            if (comp === "Blocks") answered = true;
             return `Shown to the user as card ${partId}. Don't repeat its contents as text; add at most a sentence or two.`;
           }
           const used = repairs.get(comp) ?? 0;
@@ -614,6 +650,8 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     toolCalls.forEach((call, i) =>
       messages.push({ role: "tool", tool_call_id: call.id, content: outputs[i] })
     );
+    // A Blocks card is the answer itself: end here rather than pay a round trip for a closing line.
+    if (answered && toolCalls.every((c) => componentFromTool(c.function.name))) break;
     if (stopAfter || sink.stopped) {
       result.stopped = sink.stopped;
       break;

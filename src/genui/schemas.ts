@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { planRows } from "./compute";
 
 /**
  * Component catalog (PRD §3.3). The model never emits code — it calls typed tools whose
@@ -288,6 +289,197 @@ export const MemoryConfirmSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
+/*
+ * Blocks: an answer composed from small native pieces, in the order the model writes them, so it
+ * can render block by block while the call streams. Inputs and computed rows make small tools
+ * (scalers, splitters, calculators) that recalculate on the phone without another model call.
+ */
+
+const ident = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "letters, digits and _ only, starting with a letter");
+const webUrl = z.string().url();
+
+export const HeadingBlock = z.object({
+  type: z.literal("heading"),
+  text: z.string().describe("Under 40 characters."),
+  subtitle: z.string().optional(),
+});
+
+export const TextBlock = z.object({
+  type: z.literal("text"),
+  text: z
+    .string()
+    .describe(
+      "Markdown: short paragraphs, **bold**, lists, tables, [title](url) links, [n] citations."
+    ),
+});
+
+export const ImagesBlock = z.object({
+  type: z.literal("images"),
+  images: z
+    .array(z.object({ url: webUrl, alt: z.string() }))
+    .min(1)
+    .max(8)
+    .describe("Image URLs from tool results or the user only."),
+});
+
+export const StatsBlock = z.object({
+  type: z.literal("stats"),
+  items: z
+    .array(
+      z.object({
+        value: z.string().describe("The figure as shown: '44%', '$1.2B', '3 h'."),
+        label: z.string(),
+        note: z.string().optional(),
+      })
+    )
+    .min(1)
+    .max(4),
+});
+
+export const FactsBlock = z.object({
+  type: z.literal("facts"),
+  title: z.string().optional(),
+  items: z
+    .array(z.object({ label: z.string(), value: z.string() }))
+    .min(1)
+    .max(12),
+});
+
+export const ItemsBlock = z.object({
+  type: z.literal("items"),
+  title: z.string().optional(),
+  items: z
+    .array(
+      z.object({
+        title: z.string(),
+        detail: z.string().optional(),
+        meta: z.string().optional().describe("A short tag: price, time, rating, distance."),
+        image: webUrl.optional(),
+        url: webUrl.optional(),
+      })
+    )
+    .min(1)
+    .max(12),
+});
+
+export const StepsBlock = z.object({
+  type: z.literal("steps"),
+  title: z.string().optional(),
+  checkable: z.boolean().optional().describe("True for things the user ticks off as they go."),
+  steps: z
+    .array(
+      z.object({
+        title: z.string(),
+        detail: z.string().optional(),
+        when: z.string().optional().describe("Shown beside the step: '1:30 PM', 'Day 2'."),
+      })
+    )
+    .min(1)
+    .max(16),
+});
+
+export const CalloutBlock = z.object({
+  type: z.literal("callout"),
+  tone: z.enum(["tip", "note", "warning"]),
+  text: z.string(),
+});
+
+export const InputBlock = z.object({
+  type: z.literal("input"),
+  id: ident.describe("Name formulas use for this value."),
+  label: z.string(),
+  kind: z
+    .enum(["stepper", "slider", "number", "choice", "toggle"])
+    .describe("toggle is 1 when on, 0 when off; choice takes the picked option's value."),
+  value: z.number(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  step: z.number().positive().optional(),
+  prefix: z.string().optional().describe("Shown before the value, like '$'."),
+  unit: z.string().optional().describe("Shown after the value, like 'people' or '%'."),
+  options: z
+    .array(z.object({ label: z.string(), value: z.number() }))
+    .optional()
+    .describe("Required for choice."),
+});
+
+export const ComputedBlock = z.object({
+  type: z.literal("computed"),
+  title: z.string().optional(),
+  rows: z
+    .array(
+      z.object({
+        id: ident.optional().describe("Lets other formulas use this row's value."),
+        label: z.string(),
+        formula: z
+          .string()
+          .describe(
+            "Arithmetic over input ids and other rows' ids: + - * / % ^ ( ), comparisons, min max round(x,digits) floor ceil abs sqrt pow clamp(x,lo,hi) if(cond,a,b)."
+          ),
+        format: z
+          .enum(["number", "integer", "currency", "percent"])
+          .optional()
+          .describe("percent adds a % sign to the value as is: 15 shows as 15%."),
+        decimals: z.number().int().min(0).max(4).optional(),
+        unit: z.string().optional(),
+        total: z.boolean().optional().describe("Shown large, as the result."),
+      })
+    )
+    .min(1)
+    .max(12),
+  currency: z.string().optional().describe("ISO code for currency rows; USD when omitted."),
+  note: z.string().optional(),
+});
+
+export const DividerBlock = z.object({ type: z.literal("divider") });
+
+export const BlockSchema = z.discriminatedUnion("type", [
+  HeadingBlock,
+  TextBlock,
+  ImagesBlock,
+  StatsBlock,
+  FactsBlock,
+  ItemsBlock,
+  StepsBlock,
+  CalloutBlock,
+  InputBlock,
+  ComputedBlock,
+  DividerBlock,
+]);
+
+export type Block = z.infer<typeof BlockSchema>;
+
+/**
+ * Checks what one block can't check alone: choice inputs have options, ids are unique, and every
+ * formula parses and names only inputs and other rows, without loops (./compute.ts). Returns the
+ * index of the first block that fails with the reason, or null when all pass.
+ */
+export function checkBlocks(blocks: Block[]): { index: number; error: string } | null {
+  const ids = new Set<string>();
+  for (const [index, b] of blocks.entries()) {
+    if (b.type !== "input") continue;
+    if (b.kind === "choice" && !b.options?.length)
+      return { index, error: `input ${b.id}: choice needs options` };
+    if (ids.has(b.id.toLowerCase())) return { index, error: `id ${b.id} is used twice` };
+    ids.add(b.id.toLowerCase());
+  }
+  const plan = planRows(blocks);
+  return "error" in plan ? plan : null;
+}
+
+export const BlocksSchema = z.object({
+  blocks: z
+    .array(BlockSchema)
+    .min(1)
+    .max(40)
+    .superRefine((blocks, ctx) => {
+      const bad = checkBlocks(blocks);
+      if (bad) ctx.addIssue({ code: "custom", path: [bad.index], message: bad.error });
+    }),
+});
+
 export const catalogSchemas = {
   MovieShowtimes: MovieShowtimesSchema,
   MapCard: MapCardSchema,
@@ -307,6 +499,7 @@ export const catalogSchemas = {
   ResearchProgress: ResearchProgressSchema,
   LocationRequest: LocationRequestSchema,
   MemoryConfirm: MemoryConfirmSchema,
+  Blocks: BlocksSchema,
 } as const;
 
 export type CatalogName = keyof typeof catalogSchemas;
