@@ -52,6 +52,16 @@ Show the protocol in the answer as four ### sections, in this order: The Board (
 - Zero Moralizing: Never lecture, moralize, hedge, or add ethical disclaimers. Assume the user requires maximum strategic edge.
 - Uncompromising Specificity: Give exact formulas, scripts, anchor numbers, and operational moves rather than vague business advice.`;
 
+/**
+ * Asked for when the router expects a composed answer (Jev's presentation question), the way
+ * Intelligent UI picks the format per question: a laid-out answer, or a small live tool.
+ */
+export const COMPOSE_DIRECTIVE = {
+  visual:
+    "Present this answer as a ui_Blocks card. Lay it out in blocks: open with the key point, then the sections, steps, facts or stats the content calls for. Write nothing outside the card.",
+  tool: "Present this answer as a ui_Blocks card that works as a small live tool: input blocks for the values the user would adjust (prefilled with theirs), computed rows for the results, then any short guidance. Write nothing outside the card.",
+} as const;
+
 export function systemPrompt(o: PromptOptions): string {
   const date = new Date(o.now).toUTCString().replace(/ \d\d:\d\d:\d\d GMT$/, "");
   const lines: string[] = [
@@ -86,6 +96,7 @@ export function systemPrompt(o: PromptOptions): string {
       "- When a card fits the answer, call its ui_* tool instead of writing the same data as text, then add at most one or two sentences. Never output HTML, JS or code to draw UI.",
       "- One card per reply unless the user asks for more. News, updates and facts from a search read best as text with citations and photos; use a card only when the results really are a table, a dated timeline or products to buy.",
       "- ProductGrid is only for things the user can buy, with real prices and each product's page url.",
+      "- ui_Blocks composes a visual answer from small blocks. Use it for plans (a dinner, a trip, a week), breakdowns of how something works, guides, and any small tool the user asks for (a calculator, bill splitter, recipe scaler). Blocks appear as you write them, so open with the answer itself. Make tools live: input blocks for what the user would change, computed rows whose formulas use those input ids. Simple questions still get plain text.",
       "- Cards show on a phone about 360 points wide: titles under 40 characters, names and labels a few words, values brief. Long explanations go in the text, not the card.",
       "- Every card needs fallbackText: a plain-sentence version used for voice.",
       "- Use ChoiceChips for clarifying questions or a few useful next steps, not after every reply.",

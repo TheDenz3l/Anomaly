@@ -1,7 +1,7 @@
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
-import { MODEL_COMPONENTS, promptedCatalog } from "../ai/catalog";
+import { MODEL_COMPONENTS, promptedCatalog, type ModelComponent } from "../ai/catalog";
 import {
   band,
   heuristicDecisions,
@@ -22,7 +22,7 @@ import { failTurn, finishTurn } from "./finish";
 import { conversationContext, lastInput, toChatMessages } from "./history";
 import { runModelLoop, type LoopTool } from "./loop";
 import { recallMemories } from "./memory";
-import { systemPrompt } from "./prompt";
+import { systemPrompt, COMPOSE_DIRECTIVE } from "./prompt";
 import { researchTurn } from "./research";
 import {
   findPlacesTool,
@@ -39,12 +39,38 @@ import {
   webSearchTool,
 } from "./tools";
 import { PartWriter } from "./writer";
+import { type ChatMessage } from "../ai/openai";
 
 const RESEARCH_OFFER = "cmp_resoffer";
 
 /** No chips when the reply already waits on the user (a question card, plan, form or location). */
+/** Chance of a composed answer (visual + tool) at which Blocks is offered, and at which it's asked for. */
+const COMPOSE_OFFER = 0.3;
+const COMPOSE_ASK = 0.5;
+
+/** Cards that present one shape better than a composed answer could: options side by side, a series. */
+const EXACT_CARDS = new Set(["Compare", "Chart"]);
+
+/** Adds an app note to the latest user message, for this request only (never stored). */
+function withTurnNote(messages: ChatMessage[], note: string): ChatMessage[] {
+  const tag = `[App note: ${note}]`;
+  const at = messages.map((m) => m.role).lastIndexOf("user");
+  if (at < 0) return [...messages, { role: "user", content: tag }];
+  const m = messages[at] as Extract<ChatMessage, { role: "user" }>;
+  const content =
+    typeof m.content === "string"
+      ? `${m.content}\n\n${tag}`
+      : [...m.content, { type: "text" as const, text: tag }];
+  return [...messages.slice(0, at), { role: "user", content }, ...messages.slice(at + 1)];
+}
+
 function wantsFollowUps(parts: Part[]): boolean {
-  if (!parts.some((p) => p.type === "text" && p.text.trim())) return false;
+  const answered = parts.some(
+    (p) =>
+      (p.type === "text" && p.text.trim()) ||
+      (p.type === "component" && p.name === "Blocks" && p.status === "ready")
+  );
+  if (!answered) return false;
   const waiting = ["ChoiceChips", "LocationRequest", "SubagentPlan", "ResearchPlan", "Form"];
   return !parts.some((p) => {
     if (p.type !== "component") return false;
@@ -210,9 +236,11 @@ export async function runTurn(
     });
     engine.safety = td.safety.choice;
     const { intent, difficulty, search, delegation } = td;
+    const pres = td.presentation;
     for (const [kind, d] of [
       ["intent", intent],
       ["components", td.components],
+      ["presentation", pres],
       ["difficulty", difficulty],
       ["search", search],
       ["delegation", delegation],
@@ -259,8 +287,16 @@ export async function runTurn(
     // Intent routing → skip unneeded tools (only when Jev is confident).
     const it = act(intent) ? intent.choice : null;
     const wantsData = !it || it === "ui" || it === "search";
+    // How the answer should look: a composed answer (Blocks) stays on the table whenever it's a real
+    // possibility, even for a question routed as plain chat, and is asked for when it's likely.
+    const compose = pres.choice.visual + pres.choice.tool;
     const wantsCards =
-      !it || it === "ui" || it === "search" || it === "research" || act(td.components);
+      !it ||
+      it === "ui" ||
+      it === "search" ||
+      it === "research" ||
+      act(td.components) ||
+      compose >= COMPOSE_OFFER;
 
     // Web: the model's own search when it has one, plus app tools (SearXNG by default) whenever the
     // model can call tools in Auto. A profile flag alone doesn't prove search runs through a chat
@@ -351,6 +387,22 @@ export async function runTurn(
         `This request splits into about ${Math.max(1, delegate.n)} independent task(s): call spawn_subagents with one task each, then answer from their results.`
       );
     }
+    // Asked for next to the user's message rather than at the end of a long system prompt, where
+    // models (especially mid-conversation, with earlier cards in the history) tend to miss it.
+    let presentAs: string | undefined;
+    if (canTools && compose >= COMPOSE_ASK) {
+      // A card built for this exact shape beats a composed one when the router is sure of it.
+      const [card, p] = Object.entries(td.components.choice).sort((x, y) => y[1] - x[1])[0] ?? [];
+      if (
+        card &&
+        p >= COMPOSE_ASK &&
+        EXACT_CARDS.has(card) &&
+        components.includes(card as ModelComponent)
+      )
+        presentAs = `Present this answer with the ui_${card} card, then add at most a sentence or two.`;
+      else if (components.includes("Blocks"))
+        presentAs = COMPOSE_DIRECTIVE[pres.choice.tool > pres.choice.visual ? "tool" : "visual"];
+    }
     if (opts.injected) extra.push(opts.injected);
 
     const hist = await toChatMessages(ctx, history, {
@@ -398,7 +450,10 @@ export async function runTurn(
     const result = await runModelLoop({
       engine,
       sink,
-      messages: [{ role: "system", content: system }, ...hist.messages],
+      messages: [
+        { role: "system", content: system },
+        ...(presentAs ? withTurnNote(hist.messages, presentAs) : hist.messages),
+      ],
       tools,
       components,
       prompted: !canTools && wantsCards,
@@ -412,7 +467,9 @@ export async function runTurn(
       webRounds,
       webRoundsDone,
       // After searching, only cards that lay out what was found; photos answer for themselves.
-      answerCards: photos ? [] : ["Table", "Timeline", "Compare", "ProductGrid", "MapCard"],
+      answerCards: photos
+        ? []
+        : ["Table", "Timeline", "Compare", "ProductGrid", "MapCard", "Blocks"],
       // Only when a search is near certain: if the model answers from what it knows instead, that
       // first step is the answer, and it must be written at the level the user picked.
       routeLevel:

@@ -8,7 +8,7 @@ import {
   scoreOf,
   type JevQuestion,
 } from "./jev";
-import type { ModelComponent } from "./catalog";
+import { cardSummary, type ModelComponent } from "./catalog";
 import type { ErrorKind } from "./openai";
 import type { Difficulty } from "./reasoning";
 
@@ -71,12 +71,21 @@ export type TurnInput = {
 export type SafetyFlag = "pii_contact" | "pii_sensitive" | "credentials" | "unsafe";
 
 /** Every per-turn decision (PRD §4 table), answered in one Jev request or by heuristics. */
+export type PresentationKind = "text" | "visual" | "tool" | "data";
+/**
+ * How the reply should look, in the spirit of OpenAI's Intelligent UI ("the format depends on what
+ * you're asking"): plain text, a composed visual answer, a live tool, or a data card. The visual and
+ * tool probabilities are kept so borderline answers can still be offered the card.
+ */
+export type Presentation = { kind: PresentationKind; visual: number; tool: number };
+
 export type TurnDecisions = {
   intent: Decision<Intent>;
   difficulty: Decision<Difficulty>;
   search: Decision<SearchDecision>;
   delegation: Decision<Delegation>;
   components: Decision<Partial<Record<ModelComponent, number>>>;
+  presentation: Decision<Presentation>;
   memory: Decision<MemoryGate>;
   safety: Decision<SafetyFlag[]>;
   costUsd?: number;
@@ -125,6 +134,11 @@ const COMPONENT_HINTS: [ModelComponent, RegExp, number][] = [
   ["Stepper", /\b(how do i|how to|set ?up|install|steps|guide|recipe)\b/i, 0.75],
   ["Compare", /\b(compare|vs\.?|versus|difference between|better than)\b/i, 0.85],
   ["Table", /\b(table|list of|breakdown|specs|prices of)\b/i, 0.6],
+  [
+    "Blocks",
+    /\b(plan (a|an|my|for|out)|itinerary|calculator|calculate|split (the )?(bill|check)|tip calc|scale (a |the |this )?recipe|break (it |this )?down|how does .{1,40} work)\b/i,
+    0.7,
+  ],
 ];
 
 const SMALL_TALK =
@@ -257,6 +271,17 @@ const PII: [string, RegExp, string][] = [
   ["ip", /\b\d{1,3}(\.\d{1,3}){3}\b/g, "[ip]"],
 ];
 
+const TOOL_HINT =
+  /\b(calculat\w*|split .{0,30}\b(bill|check)|tip (for|on)|how much (would|will|should|do) i|convert|scale (a |the |this )?recipe|budget|loan|payments?|compound)\b/i;
+const VISUAL_HINT =
+  /\b(plan (a|an|my|for|out)|itinerary|schedule|routine|break (it |this )?down|breakdown|how (does|do) .{1,40} work|how (to|do i)\b|steps? (to|for)|guide|explain how|difference between|compare|versus|vs\.?|recipe)\b/i;
+
+function presentationHeuristic(text: string): Decision<Presentation> {
+  if (TOOL_HINT.test(text)) return h({ kind: "tool", visual: 0.3, tool: 0.6 }, 0.6);
+  if (VISUAL_HINT.test(text)) return h({ kind: "visual", visual: 0.6, tool: 0.1 }, 0.6);
+  return h({ kind: "text", visual: 0, tool: 0 }, 0.55);
+}
+
 export const heuristicDecisions: DecisionProvider = {
   async turn(i) {
     const h_ = heuristicDecisions;
@@ -279,6 +304,7 @@ export const heuristicDecisions: DecisionProvider = {
       search,
       delegation,
       components,
+      presentation: presentationHeuristic(i.text),
       memory,
       safety: h(flags, safety.confidence),
     };
@@ -457,7 +483,7 @@ const TURN_QUESTIONS = (components: readonly string[]): Record<string, JevQuesti
     criteria: {
       chat: "Conversation, opinion, writing, coding or general knowledge answerable without tools.",
       search: "Current or factual information that needs a web search.",
-      ui: "Live data or structure best shown as an interactive card (weather, places, showtimes, charts, checklists, comparisons, steps, forms).",
+      ui: "Live data or structure best shown as an interactive card (weather, places, showtimes, charts, checklists, comparisons, steps, forms, plans, breakdowns, calculators).",
       image: "Understanding or discussing an image the user attached.",
       memory: "The user is mainly telling the assistant something about themselves.",
       research: "An in-depth, multi-source investigation that ends in a cited report.",
@@ -468,8 +494,19 @@ const TURN_QUESTIONS = (components: readonly string[]): Record<string, JevQuesti
     instructions: "Which interactive card would best present the answer?",
     criteria: Object.fromEntries([
       ["none", "Plain text is best."],
-      ...components.map((c) => [c, `The ${c} card.`]),
+      ...components.map((c) => [c, cardSummary(c)]),
     ]),
+  },
+  presentation: {
+    type: "choice",
+    instructions: "How should the reply to the user's latest message be presented on a phone?",
+    criteria: {
+      text: "Plain text reads best: conversation, reactions, opinions, creative writing, code, a quick fact or a one-line calculation.",
+      visual:
+        "The answer has a shape worth seeing laid out: a plan or itinerary, a schedule, how something works, a breakdown into parts, steps to follow, a ranked list or top picks, key numbers, or options weighed side by side.",
+      tool: "The user would want to change numbers and watch results update: amounts, quantities, headcount, rates, budgets, tips, splits, conversions or scaling.",
+      data: "Live data from an app tool: weather, places nearby, showtimes, products to buy, or figures over time.",
+    },
   },
   search_depth: {
     type: "choice",
@@ -597,6 +634,20 @@ const jevDecisions: DecisionProvider = {
         if (k !== "none" && prob > 0.05) probs[k as ModelComponent] = prob;
       }
       out.components = jevD(probs, card.confidence);
+    }
+
+    // Kept even below the confidence floor: the visual and tool probabilities are what the turn
+    // weighs, and they stay calibrated when no single format wins outright.
+    const pres = choiceOf(a.presentation);
+    if (pres) {
+      out.presentation = jevD(
+        {
+          kind: pres.choice as PresentationKind,
+          visual: pres.probabilities.visual ?? 0,
+          tool: pres.probabilities.tool ?? 0,
+        },
+        pres.confidence
+      );
     }
 
     const depth = choiceOf(a.search_depth);

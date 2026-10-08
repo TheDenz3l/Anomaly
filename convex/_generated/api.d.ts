@@ -9,6 +9,8 @@
  */
 
 import type * as agents from "../agents.js";
+import type * as ai_anthropic from "../ai/anthropic.js";
+import type * as ai_blocks from "../ai/blocks.js";
 import type * as ai_catalog from "../ai/catalog.js";
 import type * as ai_decisions from "../ai/decisions.js";
 import type * as ai_jev from "../ai/jev.js";
@@ -35,11 +37,13 @@ import type * as engine_research from "../engine/research.js";
 import type * as engine_tools from "../engine/tools.js";
 import type * as engine_turn from "../engine/turn.js";
 import type * as engine_writer from "../engine/writer.js";
+import type * as evals from "../evals.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_endpoint from "../lib/endpoint.js";
 import type * as lib_messages from "../lib/messages.js";
+import type * as lib_partialJson from "../lib/partialJson.js";
 import type * as lib_settings from "../lib/settings.js";
 import type * as lib_util from "../lib/util.js";
 import type * as lib_validators from "../lib/validators.js";
@@ -58,6 +62,7 @@ import type * as users from "../users.js";
 import type * as voice from "../voice.js";
 import type * as web_access from "../web/access.js";
 import type * as web_cache from "../web/cache.js";
+import type * as web_exa from "../web/exa.js";
 import type * as web_firecrawl from "../web/firecrawl.js";
 import type * as web_guard from "../web/guard.js";
 import type * as web_providers from "../web/providers.js";
@@ -74,6 +79,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
+  "ai/anthropic": typeof ai_anthropic;
+  "ai/blocks": typeof ai_blocks;
   "ai/catalog": typeof ai_catalog;
   "ai/decisions": typeof ai_decisions;
   "ai/jev": typeof ai_jev;
@@ -100,11 +107,13 @@ declare const fullApi: ApiFromModules<{
   "engine/tools": typeof engine_tools;
   "engine/turn": typeof engine_turn;
   "engine/writer": typeof engine_writer;
+  evals: typeof evals;
   http: typeof http;
   "lib/auth": typeof lib_auth;
   "lib/crypto": typeof lib_crypto;
   "lib/endpoint": typeof lib_endpoint;
   "lib/messages": typeof lib_messages;
+  "lib/partialJson": typeof lib_partialJson;
   "lib/settings": typeof lib_settings;
   "lib/util": typeof lib_util;
   "lib/validators": typeof lib_validators;
@@ -123,6 +132,7 @@ declare const fullApi: ApiFromModules<{
   voice: typeof voice;
   "web/access": typeof web_access;
   "web/cache": typeof web_cache;
+  "web/exa": typeof web_exa;
   "web/firecrawl": typeof web_firecrawl;
   "web/guard": typeof web_guard;
   "web/providers": typeof web_providers;
