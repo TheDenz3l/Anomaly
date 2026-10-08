@@ -1,4 +1,4 @@
-import { BlockSchema, type Block } from "../../src/genui/schemas";
+import { ACCENTS, BlockSchema, type Block } from "../../src/genui/schemas";
 import { z } from "zod";
 
 /**
@@ -44,6 +44,23 @@ const TYPES: Record<string, Block["type"]> = {
   alert: "callout",
   separator: "divider",
   hr: "divider",
+  bar: "bars",
+  bar_chart: "bars",
+  barchart: "bars",
+  chart: "bars",
+  comparison: "bars",
+  ranking: "bars",
+  question: "quiz",
+  trivia: "quiz",
+  test: "quiz",
+  flashcards: "cards",
+  flashcard: "cards",
+  flip: "cards",
+  flipcards: "cards",
+  myths: "cards",
+  blockquote: "quote",
+  pullquote: "quote",
+  citation: "quote",
   slider: "input",
   stepper: "input",
   toggle: "input",
@@ -214,6 +231,62 @@ function normalizeBlock(input: unknown): unknown {
       });
       break;
   }
+  if (type === "bars") {
+    b.items = list(b, "bars", "items", "data", "values")?.map((i) => {
+      const o = { ...obj(i) };
+      o.label = str(pick(o, "label", "name", "title")) ?? o.label;
+      const raw = pick(o, "value", "amount", "count");
+      if (typeof raw === "string") {
+        // "146 m" or "~2.3M": the number drives the bar, the text is what's shown.
+        // Only a capital M is millions: "146 m" is metres.
+        const scale = /\d\s?(k|K|M|B|bn)\b/.exec(raw)?.[1]?.toLowerCase();
+        const n = parseFloat(
+          raw
+            .replace(/,/g, "")
+            .replace(/[^0-9.-]+/g, " ")
+            .trim()
+            .split(" ")[0]
+        );
+        const times = scale === "k" ? 1e3 : scale === "m" ? 1e6 : scale ? 1e9 : 1;
+        o.value = Number.isFinite(n) ? n * times : raw;
+        o.display ??= raw;
+      } else o.value = num(raw);
+      if (o.display !== undefined) o.display = str(o.display);
+      if (o.note !== undefined) o.note = str(o.note);
+      return o;
+    });
+  } else if (type === "quiz") {
+    b.question ??= str(pick(b, "text", "prompt", "title"));
+    const choices = list(b, "choices", "options", "answers")?.map(
+      (c) => str(c) ?? str(pick(obj(c), "label", "text", "title")) ?? ""
+    );
+    b.choices = choices;
+    const answer = pick(b, "answer", "correct", "correctIndex", "correct_index");
+    const index =
+      typeof answer === "string" && choices?.includes(answer)
+        ? choices.indexOf(answer)
+        : num(answer);
+    // An answer that isn't one of the choices drops the quiz, not the whole card.
+    b.answer =
+      typeof index === "number" &&
+      Number.isInteger(index) &&
+      index >= 0 &&
+      index < (choices?.length ?? 0)
+        ? index
+        : undefined;
+    b.explanation ??= str(pick(b, "explain", "why", "detail"));
+  } else if (type === "cards") {
+    b.cards = list(b, "cards", "items", "pairs")?.map((c) => {
+      const o = obj(c);
+      return {
+        front: str(pick(o, "front", "term", "myth", "question", "title")) ?? "",
+        back: str(pick(o, "back", "definition", "fact", "answer", "detail")) ?? "",
+      };
+    });
+  } else if (type === "quote") {
+    b.text ??= str(pick(b, "quote", "content", "body"));
+    b.cite ??= str(pick(b, "author", "source", "by", "attribution"));
+  }
   return b;
 }
 
@@ -226,6 +299,8 @@ const FIELD: Partial<Record<Block["type"], string>> = {
   items: "items",
   steps: "steps",
   computed: "rows",
+  bars: "bars",
+  cards: "cards",
 };
 
 /**
@@ -292,9 +367,13 @@ export const ModelBlocksSchema = z.object({
             "input",
             "computed",
             "divider",
+            "bars",
+            "quiz",
+            "cards",
+            "quote",
           ])
           .describe(
-            "Fields per type. heading: text, subtitle, image. text: text. images: images. stats: items {value, label, note}, up to 4. facts: title, image, items {label, value}. items: title, items {title, detail, meta, image, url}. steps: title, steps {title, detail, when, image}, checkable. callout: tone, text. input: id, label, kind, value, min, max, step, prefix, unit, options. computed: title, rows, currency, note. divider: none."
+            "Fields per type. heading: text, subtitle, image. text: text. images: images. stats: items {value, label, note}, up to 4. facts: title, image, items {label, value}. items: title, items {title, detail, meta, image, url}. steps: title, steps {title, detail, when, image}, checkable. callout: tone, text. input: id, label, kind, value, min, max, step, prefix, unit, options. computed: title, rows, currency, note. divider: none. bars: title, unit, bars {label, value, display, note}, 2 to 10. quiz: question, choices, answer, explanation. cards: title, cards {front, back}. quote: text, cite."
           ),
         text: z
           .string()
@@ -374,8 +453,34 @@ export const ModelBlocksSchema = z.object({
           .optional(),
         currency: z.string().optional().describe("ISO code for currency rows; USD when omitted."),
         note: z.string().optional(),
+        bars: z
+          .array(
+            z.object({
+              label: z.string(),
+              value: z.number(),
+              display: z.string().optional().describe("As shown: '~2.3M', '146 m'."),
+              note: z.string().optional().describe("Shown when the bar is tapped."),
+            })
+          )
+          .optional()
+          .describe("bars: magnitudes to compare, drawn to scale."),
+        question: z.string().optional(),
+        choices: z.array(z.string()).optional().describe("quiz: 2 to 5 short answers."),
+        answer: z.number().int().optional().describe("quiz: index of the right choice."),
+        explanation: z.string().optional().describe("quiz: why, shown after the user picks."),
+        cards: z
+          .array(z.object({ front: z.string(), back: z.string() }))
+          .optional()
+          .describe("cards: flip cards, like term and meaning or myth and fact."),
+        cite: z.string().optional().describe("quote: who said or wrote it."),
       })
     )
     .min(1)
     .max(40),
+  accent: z
+    .enum(ACCENTS)
+    .optional()
+    .describe(
+      "Colour theme that suits the subject: sand (history, architecture, deserts), ocean (travel, sea, space, science), forest (nature, health, food), citrus (money, energy, sport), violet (music, art, culture), rose (people, fashion, relationships), steel (tech, work)."
+    ),
 });

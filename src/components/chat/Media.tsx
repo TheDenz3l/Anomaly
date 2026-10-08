@@ -4,7 +4,7 @@ import { ScrollView, StyleSheet, View, useWindowDimensions } from "react-native"
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
-import { openLink, useLinkTitle } from "@/lib/links";
+import { domainOf, openLink, useLinkTitle } from "@/lib/links";
 import { colors } from "@/lib/theme";
 
 export type ImageRef = { url: string; alt: string };
@@ -66,14 +66,67 @@ function GalleryImage({
   );
 }
 
+/** Image URLs the user chose to load this session. */
+const revealed = new Set<string>();
+
+/**
+ * Stands in for an image the model linked on its own. Loading it tells that host the image was
+ * opened (and whatever the URL carries), so it waits for a tap.
+ */
+function ImagePlaceholder({
+  image,
+  height,
+  width,
+  onReveal,
+}: {
+  image: ImageRef;
+  height: number;
+  width?: number;
+  onReveal: () => void;
+}) {
+  const host = domainOf(image.url);
+  return (
+    <Tap
+      accessibilityRole="button"
+      accessibilityLabel={`Load image from ${host}`}
+      accessibilityHint="The image comes from that site, which can see that you opened it"
+      onPress={onReveal}
+      style={[
+        styles.image,
+        styles.placeholder,
+        width ? { width, height: Math.min(height, 200) } : { width: 220, height },
+      ]}
+    >
+      <Icon name="image-outline" size={22} color={colors.textMuted} />
+      <Text weight="medium" className="text-center text-[13px]" numberOfLines={1}>
+        {host}
+      </Text>
+      <Text muted className="text-xs">
+        Tap to load image
+      </Text>
+    </Tap>
+  );
+}
+
 /**
  * Photos from a reply: one fills the width; several scroll sideways, past the text margin. While
  * more may still arrive (`live`) they line up in the row, so each new photo slides in beside the
  * last instead of reshaping the ones already on screen.
  */
-export function ImageGallery({ images, live = false }: { images: ImageRef[]; live?: boolean }) {
+export function ImageGallery({
+  images,
+  live = false,
+  trusted,
+}: {
+  images: ImageRef[];
+  live?: boolean;
+  /** When given, images it rejects show a tap-to-load placeholder instead of loading. */
+  trusted?: (url: string) => boolean;
+}) {
   const { width } = useWindowDimensions();
   const [failed, setFailed] = useState<Set<string>>(() => new Set());
+  const [, setShown] = useState(0);
+  const allowed = (url: string) => !trusted || trusted(url) || revealed.has(url);
   const shown = images.filter((i) => !failed.has(i.url));
   if (shown.length === 0) return null;
   const fail = (url: string) => setFailed((f) => new Set(f).add(url));
@@ -88,15 +141,28 @@ export function ImageGallery({ images, live = false }: { images: ImageRef[]; liv
       style={{ marginHorizontal: -GUTTER }}
       contentContainerStyle={{ gap: 10, paddingHorizontal: GUTTER }}
     >
-      {shown.map((image) => (
-        <GalleryImage
-          key={image.url}
-          image={image}
-          width={single ? Math.min(width, 720) - GUTTER * 2 : undefined}
-          height={single ? 360 : ROW_H}
-          onFail={() => fail(image.url)}
-        />
-      ))}
+      {shown.map((image) =>
+        allowed(image.url) ? (
+          <GalleryImage
+            key={image.url}
+            image={image}
+            width={single ? Math.min(width, 720) - GUTTER * 2 : undefined}
+            height={single ? 360 : ROW_H}
+            onFail={() => fail(image.url)}
+          />
+        ) : (
+          <ImagePlaceholder
+            key={image.url}
+            image={image}
+            width={single ? Math.min(width, 720) - GUTTER * 2 : undefined}
+            height={single ? 360 : ROW_H}
+            onReveal={() => {
+              revealed.add(image.url);
+              setShown((n) => n + 1);
+            }}
+          />
+        )
+      )}
     </ScrollView>
   );
 }
@@ -150,6 +216,7 @@ export function VideoCard({ id, url, label }: { id: string; url: string; label: 
 
 const styles = StyleSheet.create({
   image: { borderRadius: RADIUS, backgroundColor: colors.surface },
+  placeholder: { alignItems: "center", justifyContent: "center", gap: 4, paddingHorizontal: 16 },
   card: { borderRadius: RADIUS, overflow: "hidden", backgroundColor: colors.surface },
   thumb: { width: "100%", aspectRatio: 16 / 9, backgroundColor: colors.raised },
   playWrap: {

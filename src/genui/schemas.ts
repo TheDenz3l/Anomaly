@@ -446,6 +446,54 @@ export const ComputedBlock = z.object({
 
 export const DividerBlock = z.object({ type: z.literal("divider") });
 
+export const BarsBlock = z.object({
+  type: z.literal("bars"),
+  title: z.string().optional(),
+  unit: z.string().optional().describe("Shown after each value, like 'm' or 'M copies'."),
+  items: z
+    .array(
+      z.object({
+        label: z.string(),
+        value: z.number(),
+        display: z
+          .string()
+          .optional()
+          .describe("The value as shown when the bare number isn't right: '~2.3M', '146 m'."),
+        note: z.string().optional().describe("Shown when the bar is tapped."),
+      })
+    )
+    .min(2)
+    .max(10),
+});
+
+export const QuizBlock = z.object({
+  type: z.literal("quiz"),
+  question: z.string(),
+  choices: z.array(z.string()).min(2).max(5),
+  answer: z.number().int().min(0).describe("Index of the right choice."),
+  explanation: z.string().optional().describe("Shown once the user picks."),
+});
+
+export const CardsBlock = z.object({
+  type: z.literal("cards"),
+  title: z.string().optional(),
+  cards: z
+    .array(z.object({ front: z.string(), back: z.string() }))
+    .min(1)
+    .max(10)
+    .describe("Tap to turn over: term and meaning, myth and fact, question and answer."),
+});
+
+export const QuoteBlock = z.object({
+  type: z.literal("quote"),
+  text: z.string(),
+  cite: z.string().optional().describe("Who said or wrote it."),
+});
+
+/** Colour themes for a Blocks answer, named for the subjects they suit. */
+export const ACCENTS = ["sand", "ocean", "forest", "citrus", "violet", "rose", "steel"] as const;
+export type Accent = (typeof ACCENTS)[number];
+
 export const BlockSchema = z.discriminatedUnion("type", [
   HeadingBlock,
   TextBlock,
@@ -458,6 +506,10 @@ export const BlockSchema = z.discriminatedUnion("type", [
   InputBlock,
   ComputedBlock,
   DividerBlock,
+  BarsBlock,
+  QuizBlock,
+  CardsBlock,
+  QuoteBlock,
 ]);
 
 export type Block = z.infer<typeof BlockSchema>;
@@ -468,6 +520,13 @@ export type Block = z.infer<typeof BlockSchema>;
  * index of the first block that fails with the reason, or null when all pass.
  */
 export function checkBlocks(blocks: Block[]): { index: number; error: string } | null {
+  for (const [index, b] of blocks.entries()) {
+    if (b.type === "quiz" && b.answer >= b.choices.length)
+      return {
+        index,
+        error: `quiz: answer ${b.answer} is not one of the ${b.choices.length} choices`,
+      };
+  }
   const ids = new Set<string>();
   for (const [index, b] of blocks.entries()) {
     if (b.type !== "input") continue;
@@ -481,6 +540,7 @@ export function checkBlocks(blocks: Block[]): { index: number; error: string } |
 }
 
 export const BlocksSchema = z.object({
+  accent: z.enum(ACCENTS).optional(),
   blocks: z
     .array(BlockSchema)
     .min(1)
@@ -516,14 +576,24 @@ export const catalogSchemas = {
 export type CatalogName = keyof typeof catalogSchemas;
 export type CatalogProps<N extends CatalogName> = z.infer<(typeof catalogSchemas)[N]>;
 
+/** Rules a schema can't carry: the model's tool schemas are generated from these schemas, so they stay plain objects. */
+const extraChecks: { [N in CatalogName]?: (props: CatalogProps<N>) => string | null } = {
+  Chart: (p) =>
+    p.model || p.series?.length ? null : "series: give a model or at least one series",
+};
+
 export function validateComponent(
   name: string,
   props: unknown
 ): { ok: true; props: unknown } | { ok: false; error: string } {
+  if (!Object.prototype.hasOwnProperty.call(catalogSchemas, name))
+    return { ok: false, error: `Unknown component "${name}"` };
   const schema = (catalogSchemas as Record<string, z.ZodType>)[name];
-  if (!schema) return { ok: false, error: `Unknown component "${name}"` };
   const result = schema.safeParse(props);
-  if (result.success) return { ok: true, props: result.data };
+  if (result.success) {
+    const problem = extraChecks[name as CatalogName]?.(result.data as never);
+    return problem ? { ok: false, error: problem } : { ok: true, props: result.data };
+  }
   const first = result.error.issues[0];
   return {
     ok: false,

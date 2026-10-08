@@ -75,6 +75,34 @@ export function planBudget(tasks: { role: AgentRole }[]): Budget {
   };
 }
 
+/** The plan's search allowance, drawn down by every worker of a run. */
+export type SearchPool = { used: number; max: number };
+
+/**
+ * A worker's tool budget whose searches count against the shared pool (tools read `searches`
+ * against `maxSearches` and increment it); `own` is how many this worker ran.
+ */
+export function workerBudget(pool: SearchPool, maxReads = 4) {
+  let own = 0;
+  return {
+    get searches() {
+      return pool.used;
+    },
+    set searches(n: number) {
+      own += n - pool.used;
+      pool.used = n;
+    },
+    get maxSearches() {
+      return pool.max;
+    },
+    reads: 0,
+    maxReads,
+    get own() {
+      return own;
+    },
+  };
+}
+
 export function estimateTaskTokens(role: AgentRole): number {
   return EST_TOKENS[role];
 }
@@ -100,18 +128,20 @@ async function runWorker(
   state: WorkerState,
   perWorkerTokens: number,
   isCancelled: () => Promise<boolean>,
+  pool: SearchPool,
   context?: string
 ): Promise<{ cancelled: boolean }> {
   const engine = await forkEngine(parent, task.model);
   const sources = new SourceCollector();
   const sink = new BufferSink(isCancelled);
+  const budget = workerBudget(pool);
   const env: ToolEnv = {
     engine,
     sink,
     sources,
     origin: "subagent",
     render: false,
-    budget: { searches: 0, maxSearches: task.role === "search" ? 4 : 3, reads: 0, maxReads: 4 },
+    budget,
     location: () => parent.thread.location,
     setLocation: async () => {},
   };
@@ -149,7 +179,7 @@ async function runWorker(
   });
   state.tokens = res.promptTokens + res.completionTokens;
   state.sources = sources.all();
-  state.sourcesRead = env.budget.reads + env.budget.searches;
+  state.sourcesRead = budget.reads + budget.own;
   state.result = res.text.trim() || sink.out.trim();
   return { cancelled: sink.stopped };
 }
@@ -199,6 +229,7 @@ export async function runWorkers(
   render();
 
   const deadline = Date.now() + opts.budget.maxMinutes * 60_000;
+  const pool: SearchPool = { used: 0, max: opts.budget.maxSearches };
   await Promise.all(
     states.map(async (s) => {
       const isCancelled = async () =>
@@ -223,6 +254,7 @@ export async function runWorkers(
           s,
           perWorker,
           isCancelled,
+          pool,
           opts.context
         );
         s.status = cancelled ? "cancelled" : s.result ? "done" : "failed";
@@ -356,6 +388,8 @@ export function spawnTool(env: SpawnEnv, sink: Sink): LoopTool {
         env.forceApproval ||
         engine.settings.subagentMode === "offer" ||
         tasks.length >= 4 ||
+        // No published price: the cost is unknown, not free.
+        (costEstimateUsd === 0 && tasks.length >= 3) ||
         costEstimateUsd > Math.max(0.1, engine.settings.researchCostCapUsd / 2);
 
       if (needsApproval) {

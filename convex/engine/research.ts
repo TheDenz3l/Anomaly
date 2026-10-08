@@ -417,13 +417,18 @@ async function gather(
     notes,
     sources: sources.all(),
     spentUsd: spent,
+    finishedAt: sink.stopped ? Date.now() : undefined,
   });
   if (sink.stopped) {
     await finishTurn(engine, sink, { messageId, sources, meta: baseMeta(engine) });
     return;
   }
   await sink.detach();
-  await ctx.scheduler.runAfter(0, internal.research.synthesize, { runId: run._id, messageId });
+  await ctx.scheduler.runAfter(0, internal.research.synthesize, {
+    runId: run._id,
+    messageId,
+    writerRunId: sink.runId,
+  });
 }
 
 function baseMeta(engine: Engine) {
@@ -464,6 +469,7 @@ export async function researchTurn(
         await engine.ctx.runMutation(internal.research.patch, {
           runId: run._id,
           status: "cancelled",
+          finishedAt: Date.now(),
         });
         return false;
       }
@@ -492,7 +498,20 @@ export async function researchTurn(
         startedAt: Date.now(),
         progressMessageId: messageId,
       });
-      await gather(engine, sink, messageId, { ...run, plan: planned, depth }, planned);
+      try {
+        await gather(engine, sink, messageId, { ...run, plan: planned, depth }, planned);
+      } catch (e) {
+        // The turn reports the error in the reply; the run must not stay "running" behind it.
+        await engine.ctx
+          .runMutation(internal.research.patch, {
+            runId: run._id,
+            status: "failed",
+            error: String(e).slice(0, 500),
+            finishedAt: Date.now(),
+          })
+          .catch(() => {});
+        throw e;
+      }
       return true;
     }
     if (!ev && input.text.trim()) {

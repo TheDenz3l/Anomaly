@@ -11,6 +11,20 @@ import {
   type ActionCtx,
 } from "./_generated/server";
 import { fetchBalance } from "./ai/balance";
+import {
+  CHATGPT_BASE,
+  CHATGPT_VERIFY_URL,
+  ChatgptAuthError,
+  chatgptHeaders,
+  fetchChatgptLimits,
+  listChatgptModels,
+  pollDeviceAuth,
+  refreshTokens,
+  REFRESH_EARLY_MS,
+  startDeviceAuth,
+  type ChatgptTokens,
+} from "./ai/chatgpt";
+import { isCodex } from "./ai/codex";
 import { listModels, LlmError, type Endpoint } from "./ai/openai";
 import {
   applyRemoteRules,
@@ -31,13 +45,41 @@ import {
 } from "./lib/crypto";
 import { endpointFor } from "./lib/endpoint";
 import { errorMessage } from "./lib/util";
-import { vHeader, vProviderBalance } from "./lib/validators";
+import { vHeader, vProviderBalance, vProviderLimits } from "./lib/validators";
 import { webCache } from "./web/cache";
 import { providerUrl } from "./web/guard";
 
 /** Bring-your-own providers (PRD §3.4). Keys are encrypted and never returned to the client. */
 
 const PROVIDER_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
+type Header = { key: string; value: string };
+
+/**
+ * Headers as sent by the app, with saved secrets restored. The app sends back masked values for
+ * headers the user didn't change, so a value equal to a saved header's mask keeps that header's
+ * real value, even when the key was renamed or padded with spaces. Keys are trimmed.
+ */
+export function mergeHeaders(sent: Header[], previous: Header[], hints: Header[]): Header[] {
+  const maskOf = (p: Header) => hints.find((h) => h.key === p.key)?.value;
+  return sent
+    .map((h) => ({ key: h.key.trim(), value: h.value }))
+    .filter((h) => h.key)
+    .map((h) => {
+      const matches = previous.filter((p) => maskOf(p) === h.value);
+      const prior =
+        matches.find((p) => p.key.trim().toLowerCase() === h.key.toLowerCase()) ?? matches[0];
+      return { key: h.key, value: prior ? prior.value : h.value };
+    });
+}
+
+/** Masks of saved headers whose real value is hidden, i.e. the secrets. */
+function secretMasks(previous: Header[], hints: Header[]): string[] {
+  return previous.flatMap((p) => {
+    const mask = hints.find((h) => h.key === p.key)?.value;
+    return mask !== undefined && mask !== p.value ? [mask] : [];
+  });
+}
 
 function publicProvider(p: Doc<"providers">) {
   return {
@@ -52,6 +94,10 @@ function publicProvider(p: Doc<"providers">) {
     modelsFetchedAt: p.modelsFetchedAt,
     balance: p.balance,
     usage: p.usage,
+    subscription: p.auth
+      ? { vendor: p.auth.type, email: p.auth.email, plan: p.auth.plan ?? p.limits?.plan }
+      : undefined,
+    limits: p.limits,
   };
 }
 
@@ -92,6 +138,18 @@ export const save = action({
     const url = providerUrl(args.baseUrl.trim());
     const baseUrl = url.toString().replace(/\/+$/, "");
     const existing = await ctx.runQuery(internal.providers.getInternal, { userId, providerId });
+    if (existing?.auth) {
+      throw new ConvexError(
+        "This provider is a ChatGPT sign-in. Sign out and in again to change it."
+      );
+    }
+    // A saved key and header secrets belong to the host they were entered for.
+    const moved = existing ? new URL(existing.baseUrl).host !== new URL(baseUrl).host : false;
+    if (moved && args.apiKey === undefined && existing?.keyCipher) {
+      throw new ConvexError(
+        "The base URL now points to a different host. Paste the API key again to use it there."
+      );
+    }
 
     let keyCipher = existing?.keyCipher;
     let keyHint = existing?.keyHint ?? "none";
@@ -102,19 +160,26 @@ export const save = action({
     }
     let headersCipher = existing?.headersCipher;
     let headerHints = existing?.headerHints ?? [];
-    if (args.headers !== undefined) {
-      const previous: { key: string; value: string }[] = existing?.headersCipher
+    if (args.headers !== undefined || moved) {
+      const previous: Header[] = existing?.headersCipher
         ? JSON.parse(await decryptSecret(existing.headersCipher))
         : [];
-      const merged = args.headers
-        .filter((h) => h.key.trim())
-        .map((h) => {
-          const prior = previous.find((p) => p.key === h.key);
-          const masked = existing?.headerHints.find((p) => p.key === h.key)?.value;
-          return { key: h.key.trim(), value: prior && h.value === masked ? prior.value : h.value };
-        });
-      headersCipher = merged.length ? await encryptSecret(JSON.stringify(merged)) : undefined;
-      headerHints = maskHeaders(merged);
+      const hints = existing?.headerHints ?? [];
+      const masks = secretMasks(previous, hints);
+      if (
+        moved &&
+        masks.length &&
+        (args.headers === undefined || args.headers.some((h) => masks.includes(h.value)))
+      ) {
+        throw new ConvexError(
+          "The base URL now points to a different host. Type the header values again to use them there."
+        );
+      }
+      if (args.headers !== undefined) {
+        const merged = mergeHeaders(args.headers, previous, hints);
+        headersCipher = merged.length ? await encryptSecret(JSON.stringify(merged)) : undefined;
+        headerHints = maskHeaders(merged);
+      }
     }
     await ctx.runMutation(internal.providers.upsertInternal, {
       userId,
@@ -216,11 +281,20 @@ export const refreshInternal = internalAction({
     ctx,
     { userId, providerId }
   ): Promise<{ status: "connected" | "error"; models: number; error?: string }> => {
-    const ep: Endpoint | null = await endpointFor(ctx, userId, providerId);
-    if (!ep) throw new ConvexError("Provider not found.");
+    const first: Endpoint | null = await endpointFor(ctx, userId, providerId);
+    if (!first) throw new ConvexError("Provider not found.");
+    let ep: Endpoint = first;
     await ctx.runMutation(internal.providers.setStatus, { userId, providerId, status: "checking" });
     try {
-      const found = await discoverModels(ep);
+      const chatgpt = isCodex(ep.baseUrl);
+      if (chatgpt) {
+        // A refresh is also how a ChatGPT sign-in renews an access token that's about to lapse.
+        await renewChatgpt(ctx, userId, providerId, false);
+        ep = (await endpointFor(ctx, userId, providerId)) ?? ep;
+      }
+      const found = chatgpt
+        ? { raw: await listChatgptModels(ep), baseUrl: ep.baseUrl }
+        : await discoverModels(ep);
       const raw = found.raw;
       if (found.baseUrl !== ep.baseUrl) {
         ep.baseUrl = found.baseUrl;
@@ -252,13 +326,17 @@ export const refreshInternal = internalAction({
       return { status: "connected", models: models.filter((m) => m.kind === "chat").length };
     } catch (e) {
       const msg =
-        e instanceof LlmError && e.kind === "auth"
-          ? "The provider rejected the API key."
-          : isWebPage(e)
-            ? "This URL answered with a web page, not the API. Check the base URL; most end in /v1."
-            : e instanceof LlmError && e.kind === "not_found"
-              ? "No /models endpoint at this base URL. Check it ends in /v1 (or the provider's equivalent)."
-              : errorMessage(e);
+        e instanceof ChatgptAuthError
+          ? `${e.message} Sign in to ChatGPT again.`
+          : e instanceof LlmError && e.kind === "auth" && isCodex(ep.baseUrl)
+            ? "ChatGPT signed this app out. Sign in again."
+            : e instanceof LlmError && e.kind === "auth"
+              ? "The provider rejected the API key."
+              : isWebPage(e)
+                ? "This URL answered with a web page, not the API. Check the base URL; most end in /v1."
+                : e instanceof LlmError && e.kind === "not_found"
+                  ? "No /models endpoint at this base URL. Check it ends in /v1 (or the provider's equivalent)."
+                  : errorMessage(e);
       await ctx.runMutation(internal.providers.setStatus, {
         userId,
         providerId,
@@ -278,8 +356,10 @@ const UNSUPPORTED_RETRY_MS = 3600_000;
 const BOOKING_DELAY_MS = 3_000;
 
 type ProviderBalance = Infer<typeof vProviderBalance>;
+type ProviderLimits = Infer<typeof vProviderLimits>;
 
 function balanceDue(p: Doc<"providers">, now = Date.now()): boolean {
+  if (p.auth) return !p.limits || now - p.limits.checkedAt > BALANCE_FRESH_MS;
   const b = p.balance;
   if (!b) return true;
   return now - b.checkedAt > (b.status === "unsupported" ? UNSUPPORTED_RETRY_MS : BALANCE_FRESH_MS);
@@ -292,6 +372,30 @@ async function updateBalance(
 ): Promise<void> {
   const ep = await endpointFor(ctx, userId, providerId);
   if (!ep) return;
+  // A ChatGPT plan has no balance: its 5-hour and weekly windows are what run out.
+  if (isCodex(ep.baseUrl)) {
+    let limits: ProviderLimits;
+    try {
+      const found = await fetchChatgptLimits(ep);
+      limits = { ...found, checkedAt: Date.now() };
+    } catch (e) {
+      limits = {
+        windows: [],
+        checkedAt: Date.now(),
+        error:
+          e instanceof LlmError && e.kind === "auth"
+            ? "ChatGPT signed this app out. Sign in again."
+            : "Couldn't read the plan's usage limits.",
+      };
+    }
+    await ctx.runMutation(internal.providers.setLimits, { userId, providerId, limits });
+    await ctx.runMutation(internal.providers.setBalance, {
+      userId,
+      providerId,
+      balance: { status: "unsupported", checkedAt: Date.now() },
+    });
+    return;
+  }
   let balance: ProviderBalance;
   try {
     const found = await fetchBalance(ep);
@@ -325,7 +429,9 @@ export const checkBalance = action({
     const due = rows.filter(
       (p) =>
         (!providerId || p.providerId === providerId) &&
-        (force ? now - (p.balance?.checkedAt ?? 0) > 3_000 : balanceDue(p, now))
+        (force
+          ? now - ((p.auth ? p.limits?.checkedAt : p.balance?.checkedAt) ?? 0) > 3_000
+          : balanceDue(p, now))
     );
     await Promise.all(due.map((p) => updateBalance(ctx, userId, p.providerId)));
   },
@@ -366,7 +472,25 @@ export const setBalance = internalMutation({
       balance.status === "error" && prior && prior.status !== "unsupported"
         ? { ...prior, status: "error", error: balance.error, checkedAt: balance.checkedAt }
         : balance;
-    await ctx.db.patch(row._id, { balance: next });
+    // The drop since the last read is money spent: the only spend figure for endpoints that
+    // publish no prices. A rise is a top-up and isn't counted.
+    const drop =
+      balance.status === "ok" &&
+      prior?.remaining !== undefined &&
+      balance.remaining !== undefined &&
+      (prior.currency ?? "USD") === (balance.currency ?? "USD")
+        ? prior.remaining - balance.remaining
+        : 0;
+    const patch: Partial<Doc<"providers">> = { balance: next };
+    if (drop > 1e-6) {
+      const month = new Date(balance.checkedAt).toISOString().slice(0, 7);
+      const usage =
+        row.usage?.month === month
+          ? row.usage
+          : { month, costUsd: 0, unpriced: 0, promptTokens: 0, completionTokens: 0, replies: 0 };
+      patch.usage = { ...usage, balanceSpent: (usage.balanceSpent ?? 0) + drop };
+    }
+    await ctx.db.patch(row._id, patch);
   },
 });
 
@@ -414,6 +538,195 @@ export const recordUsage = internalMutation({
       providerId: a.providerId,
       after: now,
     });
+  },
+});
+
+// ── ChatGPT sign-in ────────────────────────────────────────────────────────────
+
+const CHATGPT_ID = "chatgpt";
+
+/** Starts signing in with a ChatGPT plan: the code the user approves at auth.openai.com. */
+export const chatgptStart = action({
+  args: {},
+  handler: async (
+    ctx
+  ): Promise<{ deviceAuthId: string; userCode: string; intervalMs: number; verifyUrl: string }> => {
+    await requireUser(ctx);
+    try {
+      return { ...(await startDeviceAuth()), verifyUrl: CHATGPT_VERIFY_URL };
+    } catch (e) {
+      throw new ConvexError(errorMessage(e));
+    }
+  },
+});
+
+/**
+ * One check on a pending sign-in. Once the code is approved the plan is saved as the "chatgpt"
+ * provider (its access token as the key) and its models are loaded.
+ */
+export const chatgptPoll = action({
+  args: { deviceAuthId: v.string(), userCode: v.string() },
+  handler: async (
+    ctx,
+    { deviceAuthId, userCode }
+  ): Promise<{ status: "pending" | "connected" | "error"; error?: string; models?: number }> => {
+    const userId = await requireUser(ctx);
+    let tokens: ChatgptTokens | null;
+    try {
+      tokens = await pollDeviceAuth(deviceAuthId, userCode);
+    } catch (e) {
+      return { status: "error", error: errorMessage(e) };
+    }
+    if (!tokens) return { status: "pending" };
+    await storeChatgpt(ctx, userId, CHATGPT_ID, tokens, true);
+    const res = await ctx.runAction(internal.providers.refreshInternal, {
+      userId,
+      providerId: CHATGPT_ID,
+    });
+    return res.status === "connected"
+      ? { status: "connected", models: res.models }
+      : { status: "error", error: res.error };
+  },
+});
+
+async function storeChatgpt(
+  ctx: ActionCtx,
+  userId: Id<"users">,
+  providerId: string,
+  t: ChatgptTokens,
+  fresh: boolean
+): Promise<void> {
+  const headers = chatgptHeaders(t.accountId);
+  await ctx.runMutation(internal.providers.setChatgpt, {
+    userId,
+    providerId,
+    fresh,
+    keyCipher: await encryptSecret(t.access),
+    keyHint: t.email ?? "ChatGPT",
+    headersCipher: await encryptSecret(JSON.stringify(headers)),
+    headerHints: maskHeaders(headers),
+    auth: {
+      type: "chatgpt",
+      refreshCipher: await encryptSecret(t.refresh),
+      expiresAt: t.expiresAt,
+      accountId: t.accountId,
+      email: t.email,
+      plan: t.plan,
+    },
+  });
+  // Renewed shortly before it lapses, so replies never meet an expired token.
+  await ctx.scheduler.runAfter(
+    Math.max(60_000, t.expiresAt - REFRESH_EARLY_MS - Date.now()),
+    internal.providers.chatgptRenew,
+    { userId, providerId }
+  );
+}
+
+/** Renews the access token when it's close to lapsing (or always, with `force`). */
+async function renewChatgpt(
+  ctx: ActionCtx,
+  userId: Id<"users">,
+  providerId: string,
+  force: boolean
+): Promise<void> {
+  const row = await ctx.runQuery(internal.providers.getInternal, { userId, providerId });
+  if (!row?.auth) return;
+  if (!force && row.auth.expiresAt - Date.now() > REFRESH_EARLY_MS) return;
+  try {
+    const t = await refreshTokens(await decryptSecret(row.auth.refreshCipher));
+    await storeChatgpt(ctx, userId, providerId, t, false);
+  } catch (e) {
+    if (e instanceof ChatgptAuthError && e.status >= 400 && e.status < 500) {
+      await ctx.runMutation(internal.providers.setStatus, {
+        userId,
+        providerId,
+        status: "error",
+        error: "ChatGPT signed this app out. Sign in again.",
+      });
+    }
+    throw e;
+  }
+}
+
+export const chatgptRenew = internalAction({
+  args: { userId: v.id("users"), providerId: v.string() },
+  handler: async (ctx, { userId, providerId }) => {
+    await renewChatgpt(ctx, userId, providerId, false).catch((e) =>
+      console.warn("chatgpt renew failed", errorMessage(e))
+    );
+  },
+});
+
+export const setChatgpt = internalMutation({
+  args: {
+    userId: v.id("users"),
+    providerId: v.string(),
+    fresh: v.boolean(),
+    keyCipher: v.string(),
+    keyHint: v.string(),
+    headersCipher: v.string(),
+    headerHints: v.array(vHeader),
+    auth: v.object({
+      type: v.literal("chatgpt"),
+      refreshCipher: v.string(),
+      expiresAt: v.number(),
+      accountId: v.string(),
+      email: v.optional(v.string()),
+      plan: v.optional(v.string()),
+    }),
+  },
+  handler: async (ctx, { fresh, ...a }) => {
+    const row = await ctx.db
+      .query("providers")
+      .withIndex("by_user_provider", (q) => q.eq("userId", a.userId).eq("providerId", a.providerId))
+      .first();
+    const fields = {
+      keyCipher: a.keyCipher,
+      keyHint: a.keyHint,
+      headersCipher: a.headersCipher,
+      headerHints: a.headerHints,
+      auth: a.auth,
+    };
+    if (row) {
+      await ctx.db.patch(row._id, {
+        ...fields,
+        ...(fresh
+          ? {
+              label: "ChatGPT",
+              baseUrl: CHATGPT_BASE,
+              status: "checking" as const,
+              lastError: undefined,
+            }
+          : {}),
+      });
+    } else {
+      await ctx.db.insert("providers", {
+        userId: a.userId,
+        providerId: a.providerId,
+        label: "ChatGPT",
+        baseUrl: CHATGPT_BASE,
+        status: "checking",
+        models: [],
+        ...fields,
+      });
+    }
+  },
+});
+
+export const setLimits = internalMutation({
+  args: { userId: v.id("users"), providerId: v.string(), limits: vProviderLimits },
+  handler: async (ctx, { userId, providerId, limits }) => {
+    const row = await ctx.db
+      .query("providers")
+      .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", providerId))
+      .first();
+    if (!row) return;
+    // A failed read keeps the last windows, marked with what went wrong.
+    const next =
+      limits.error && row.limits?.windows.length
+        ? { ...row.limits, error: limits.error, checkedAt: limits.checkedAt }
+        : limits;
+    await ctx.db.patch(row._id, { limits: next });
   },
 });
 

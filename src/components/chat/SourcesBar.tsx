@@ -8,6 +8,7 @@ import { Icon, type IconName } from "@/components/ui/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
+import { reportText, tableMarkdown } from "@/lib/artifacts";
 import { fadeIn, popIn } from "@/lib/motion";
 import { findModel, useApp } from "@/lib/store";
 import { colors } from "@/lib/theme";
@@ -21,7 +22,7 @@ export function plainText(message: Message): string {
       p.type === "text"
         ? p.text.replace(/\*\*/g, "").replace(/\s?\[\d+\]/g, "")
         : p.type === "component"
-          ? p.fallbackText
+          ? (p.name === "Table" && tableMarkdown(p.props)) || p.fallbackText
           : ""
     )
     .filter(Boolean)
@@ -98,7 +99,7 @@ export function SourcesBar({ message, sources }: { message: Message; sources: So
   };
 
   const exportReport = async () => {
-    const body = plainText(message);
+    const body = reportText(message);
     const refs = sources.map((s, i) => `[${i + 1}] ${s.title}: ${s.url}`).join("\n");
     await Clipboard.setStringAsync(`${body}\n\n## Sources\n${refs}`);
     showToast("Report copied as Markdown");

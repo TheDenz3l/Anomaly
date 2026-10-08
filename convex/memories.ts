@@ -80,6 +80,9 @@ export const create = mutation({
     if (args.threadId) {
       const t = await ctx.db.get(args.threadId);
       if (!t || t.userId !== userId) throw new ConvexError("Chat not found.");
+    } else if (args.scope === "thread") {
+      // A one-chat memory with no chat would never be recalled anywhere.
+      throw new ConvexError("A one-chat memory needs a chat. Save it for all chats instead.");
     }
     const id = await ctx.db.insert("memories", {
       userId,

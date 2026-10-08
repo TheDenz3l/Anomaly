@@ -208,8 +208,11 @@ const WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5 };
 
 function memoryText(raw: string): string {
   let s = raw
-    .replace(/^(please\s+)?(remember|note|keep in mind)\s+(that\s+)?/i, "")
-    .replace(/[.!]+$/, "")
+    .replace(
+      /^(please\s+)?((can|could|would|will) you\s+(please\s+)?|i want you to\s+|i'?d like you to\s+|make sure (to|you)\s+)?(remember|note|keep in mind|don'?t forget|do not forget)\s+(that\s+)?/i,
+      ""
+    )
+    .replace(/[.!?]+$/, "")
     .trim();
   const swaps: [RegExp, string][] = [
     [/^i'?m\s+/i, ""],
@@ -245,7 +248,12 @@ function categorize(text: string): MemoryCategory {
   return "fact";
 }
 
-const EXPLICIT_MEMORY = /\b(remember|keep in mind|note that|don'?t forget)\b/i;
+/**
+ * The user asking to be remembered: an instruction ("remember that…", "can you keep in mind…"),
+ * not a mention ("I can't remember…", "do you remember…", "remember when…").
+ */
+const EXPLICIT_MEMORY =
+  /(^|[.!?]\s+|\b(please|can you|could you|would you|will you|i want you to|i'?d like you to|make sure to|make sure you)\s+)(remember|note that|keep in mind|don'?t forget|do not forget)\b(?!\s+(when|what|where|who|how|if|whether|why)\b)/i;
 const IMPLICIT_MEMORY =
   /\b(i'?m (a |an )?(vegetarian|vegan|pescatarian|allergic|lactose)|i am allergic|my name is|i live in|i moved to|i work (at|for|as)|my (wife|husband|partner|son|daughter|dog|cat)('?s name)? is|i (prefer|always|never|hate|love) )/i;
 
@@ -348,7 +356,7 @@ export const heuristicDecisions: DecisionProvider = {
     const m = text.match(EXPLICIT_AGENTS);
     const research = /\bresearch with (\d+|two|three|four|five) agents\b/i.exec(text);
     if (m || research) {
-      const raw = (research?.[1] ?? m?.[4] ?? "").trim().toLowerCase();
+      const raw = (research?.[1] ?? m?.[3] ?? "").trim().toLowerCase();
       const n = Math.min(5, Math.max(2, Number(raw) || WORDS[raw] || 3));
       return h({ mode: research ? "research" : "parallel", n, explicit: true }, 0.97);
     }
@@ -894,6 +902,20 @@ export function decisionProvider(): DecisionProvider {
 /** Text-only "remember" detection used to decide whether the write gate should run at all. */
 export function mightBeMemory(text: string): boolean {
   return EXPLICIT_MEMORY.test(text) || IMPLICIT_MEMORY.test(text);
+}
+
+/** The user's own message asks to remember something. Only this counts as consent to save without asking. */
+export function askedToRemember(text: string): boolean {
+  return EXPLICIT_MEMORY.test(text);
+}
+
+const SECRET_WORDS =
+  /\b(passwords?|passcodes?|passwd|pin( code| number)?|api[ -]?keys?|secret (key|code|answer)|access token|auth token|seed phrase|recovery (phrase|code)|social security|ssn|bank account|routing number|cvv|cvc)\b/i;
+
+/** Text memory must never keep: passwords and other secrets, keys, card numbers. */
+export function isSensitiveMemory(text: string): boolean {
+  const flags = heuristicDecisions.pii(text).choice.flags;
+  return flags.includes("card") || flags.includes("api_key") || SECRET_WORDS.test(text);
 }
 
 export function maskPii(text: string): string {

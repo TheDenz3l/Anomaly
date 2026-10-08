@@ -60,6 +60,17 @@ export const vImagePart = v.object({
   height: v.optional(v.number()),
 });
 
+/** A file the user attached; its text is read on the server (convex/files.ts) and given to the model. */
+export const vFilePart = v.object({
+  id: v.string(),
+  type: v.literal("file"),
+  storageId: v.optional(v.id("_storage")),
+  uri: v.optional(v.string()),
+  name: v.string(),
+  mime: v.string(),
+  size: v.number(),
+});
+
 export const vSourcesPart = v.object({
   id: v.string(),
   type: v.literal("sources"),
@@ -82,6 +93,7 @@ export const vPart = v.union(
   vSearchPart,
   vComponentPart,
   vImagePart,
+  vFilePart,
   vSourcesPart,
   vUiEventPart
 );
@@ -98,7 +110,8 @@ export const vReplyMeta = v.object({
   levelRequested: v.string(),
   levelSent: v.string(),
   reasoningTokens: v.number(),
-  kind: v.optional(v.literal("report")),
+  /** report: a Deep Research report; subagents: the answer to an approved sub-agent plan. */
+  kind: v.optional(v.union(v.literal("report"), v.literal("subagents"))),
   promptTokens: v.optional(v.number()),
   completionTokens: v.optional(v.number()),
   costUsd: v.optional(v.number()),
@@ -207,6 +220,32 @@ export const vProviderBalance = v.object({
   checkedAt: v.number(),
 });
 
+/** A provider signed in with a subscription instead of a key: the refresh side of its tokens. */
+export const vProviderAuth = v.object({
+  type: v.literal("chatgpt"),
+  refreshCipher: v.string(),
+  expiresAt: v.number(),
+  accountId: v.string(),
+  email: v.optional(v.string()),
+  plan: v.optional(v.string()),
+});
+
+/** A subscription's usage windows (5-hour, weekly) as last read. */
+export const vProviderLimits = v.object({
+  plan: v.optional(v.string()),
+  windows: v.array(
+    v.object({
+      id: v.string(),
+      label: v.string(),
+      usedPercent: v.number(),
+      resetsAt: v.optional(v.number()),
+      windowMinutes: v.optional(v.number()),
+    })
+  ),
+  checkedAt: v.number(),
+  error: v.optional(v.string()),
+});
+
 /** What replies sent from the app spent through one provider in a calendar month (UTC). */
 export const vProviderUsage = v.object({
   month: v.string(),
@@ -216,6 +255,11 @@ export const vProviderUsage = v.object({
   promptTokens: v.number(),
   completionTokens: v.number(),
   replies: v.number(),
+  /**
+   * How far the provider's balance fell this month, summed read to read (top-ups ignored). The
+   * spend for endpoints that publish no prices; it counts use of the key outside this app too.
+   */
+  balanceSpent: v.optional(v.number()),
 });
 
 export const vLocation = v.object({ lat: v.number(), lng: v.number(), label: v.string() });
@@ -228,6 +272,7 @@ export type ThinkingPart = Infer<typeof vThinkingPart>;
 export type SearchPart = Infer<typeof vSearchPart>;
 export type ComponentPart = Infer<typeof vComponentPart>;
 export type ImagePart = Infer<typeof vImagePart>;
+export type FilePart = Infer<typeof vFilePart>;
 export type UiEventPart = Infer<typeof vUiEventPart>;
 export type MessageStatus = Infer<typeof vMessageStatus>;
 export type ReplyMeta = Infer<typeof vReplyMeta>;

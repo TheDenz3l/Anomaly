@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
+  Platform,
   Pressable,
   StyleSheet,
   TextInput,
@@ -29,6 +30,7 @@ import {
   formatSpend,
   formatTokens,
   monthUsage,
+  resetLabel,
   timeAgo,
 } from "@/lib/balance";
 
@@ -50,6 +52,13 @@ const PRESETS: Preset[] = [
     baseUrl: "https://api.openai.com/v1",
     site: "openai.com",
     keys: "https://platform.openai.com/api-keys",
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    site: "anthropic.com",
+    keys: "https://console.anthropic.com/settings/keys",
   },
   {
     id: "openrouter",
@@ -134,6 +143,24 @@ const presetFor = (baseUrl: string) =>
   PRESETS.find((p) => hostOf(p.baseUrl) === hostOf(baseUrl)) ?? null;
 const sameDraft = (a: Draft, b: Draft) => JSON.stringify(a) === JSON.stringify(b);
 const cleanKey = (t: string) => t.replace(/\s+/g, "");
+
+/** Alert.alert does nothing on web (react-native-web stubs it), so web asks with confirm(). */
+function confirmDestructive(
+  title: string,
+  message: string | undefined,
+  labels: { cancel: string; confirm: string },
+  onConfirm: () => void
+) {
+  if (Platform.OS === "web") {
+    const ask = (globalThis as { confirm?: (text: string) => boolean }).confirm;
+    if (!ask || ask(message ? `${title}\n\n${message}` : title)) onConfirm();
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: labels.cancel, style: "cancel" },
+    { text: labels.confirm, style: "destructive", onPress: onConfirm },
+  ]);
+}
 
 function Divider({ inset = 16 }: { inset?: number }) {
   return <View pointerEvents="none" style={[styles.divider, { left: inset }]} />;
@@ -303,6 +330,255 @@ function Identity({
 /** How often an open sheet reads the balance again; the server answers from its copy when it's fresh. */
 const BALANCE_POLL_MS = 20_000;
 
+/** Used share of a window, coloured as it nears the limit. */
+function limitColor(used: number): string {
+  return used >= 95 ? colors.danger : used >= 80 ? colors.warning : colors.success;
+}
+
+/**
+ * A signed-in plan's usage windows (the rolling 5-hour limit and the weekly one), read again
+ * while the sheet is open and after every reply.
+ */
+function PlanLimits({
+  provider,
+  now,
+  busy,
+  onRefresh,
+}: {
+  provider: Provider;
+  now: number;
+  busy: boolean;
+  onRefresh: () => void;
+}) {
+  const l = provider.limits;
+  const usage = monthUsage(provider, now);
+  const tokens = usage ? usage.promptTokens + usage.completionTokens : 0;
+  return (
+    <View className="mb-6">
+      <View className="mb-2 flex-row items-center justify-between px-4">
+        <Text weight="medium" muted className="text-[13px]">
+          Usage limits
+        </Text>
+        <Tap
+          accessibilityRole="button"
+          accessibilityLabel="Refresh usage limits"
+          disabled={busy}
+          hitSlop={8}
+          onPress={onRefresh}
+          className="flex-row items-center gap-1.5"
+        >
+          {busy ? (
+            <ActivityIndicator size="small" color={colors.primaryStrong} />
+          ) : (
+            <Icon name="refresh" size={14} color={colors.primaryStrong} />
+          )}
+          <Text weight="medium" className="text-[13px] text-primary-strong">
+            Refresh
+          </Text>
+        </Tap>
+      </View>
+      <View style={styles.group}>
+        {l?.windows.length ? (
+          l.windows.map((w, i) => (
+            <View
+              key={w.id}
+              accessibilityLiveRegion="polite"
+              className="px-4 py-4"
+              style={i > 0 ? styles.topRule : undefined}
+            >
+              <View className="flex-row items-baseline justify-between gap-3">
+                <Text weight="medium" className="text-[15px] leading-5">
+                  {w.label}
+                </Text>
+                <Text weight="bold" className="text-[22px] leading-7" style={styles.tabular}>
+                  {`${Math.round(w.usedPercent)}%`}
+                </Text>
+              </View>
+              <View
+                style={styles.meter}
+                accessibilityRole="progressbar"
+                accessibilityLabel={`${w.label} used`}
+                accessibilityValue={{ min: 0, max: 100, now: Math.round(w.usedPercent) }}
+              >
+                <View
+                  style={[
+                    styles.meterFill,
+                    {
+                      width: `${Math.max(2, w.usedPercent)}%`,
+                      backgroundColor: limitColor(w.usedPercent),
+                    },
+                  ]}
+                />
+              </View>
+              <Text muted className="mt-2 text-[13px] leading-[18px]">
+                {w.resetsAt ? resetLabel(w.resetsAt, now) : "Used of this window"}
+              </Text>
+            </View>
+          ))
+        ) : (
+          <View className="flex-row items-center gap-2.5 px-4 py-4">
+            {l ? null : <ActivityIndicator size="small" color={colors.textMuted} />}
+            <Text muted className="flex-1 text-[14px] leading-5">
+              {!l
+                ? "Reading the plan’s limits…"
+                : (l.error ?? "ChatGPT reported no limits for this plan.")}
+            </Text>
+          </View>
+        )}
+        <View style={styles.usageRow}>
+          <View className="flex-1">
+            <Text weight="medium" className="text-[15px] leading-5">
+              This month
+            </Text>
+            <Text muted className="text-[13px] leading-[18px]">
+              {usage
+                ? `${usage.replies} ${usage.replies === 1 ? "reply" : "replies"}, ${formatTokens(tokens)} tokens`
+                : "No replies yet"}
+            </Text>
+          </View>
+          <Text weight="medium" className="text-[15px]">
+            In your plan
+          </Text>
+        </View>
+      </View>
+      <View className="mt-2 gap-1.5 px-4">
+        {l?.error && l.windows.length ? <Notice tone="danger">{l.error}</Notice> : null}
+        <Footnote>
+          {l
+            ? `Updated ${timeAgo(l.checkedAt, now)}. Reads again after each reply. Codex and ChatGPT share these limits.`
+            : "Replies use your ChatGPT plan, so there’s nothing to pay per token."}
+        </Footnote>
+      </View>
+    </View>
+  );
+}
+
+type ChatgptSession = {
+  deviceAuthId: string;
+  userCode: string;
+  intervalMs: number;
+  verifyUrl: string;
+};
+
+/** Codes from OpenAI last about 15 minutes. */
+const CODE_LIFETIME_MS = 15 * 60_000;
+
+/**
+ * Signing in with a ChatGPT plan: OpenAI's device-code flow. The code is copied, OpenAI's page
+ * opens in a browser sheet, and this polls until the code is approved there.
+ */
+function ChatgptSignIn({ onConnected }: { onConnected: () => void }) {
+  const start = useApp((s) => s.chatgptStart);
+  const poll = useApp((s) => s.chatgptPoll);
+  const [session, setSession] = useState<ChatgptSession | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void start().then((r) => {
+      if (!alive) return;
+      if (r.ok) setSession(r);
+      else setError(r.error);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [start, attempt]);
+
+  useEffect(() => {
+    if (!session) return;
+    let alive = true;
+    const deadline = Date.now() + CODE_LIFETIME_MS;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (!alive) return;
+      if (Date.now() > deadline) {
+        setError("The code expired. Get a new one and try again.");
+        return;
+      }
+      const r = await poll(session.deviceAuthId, session.userCode);
+      if (!alive) return;
+      if (r.status === "connected") return onConnected();
+      if (r.status === "error") return setError(r.error ?? "OpenAI didn’t finish the sign-in.");
+      timer = setTimeout(() => void tick(), session.intervalMs);
+    };
+    timer = setTimeout(() => void tick(), session.intervalMs);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [session, poll, onConnected]);
+
+  const retry = () => {
+    setSession(null);
+    setError(null);
+    setCopied(false);
+    setAttempt((n) => n + 1);
+  };
+
+  const openSignIn = async () => {
+    if (!session) return;
+    await Clipboard.setStringAsync(session.userCode);
+    setCopied(true);
+    await openLink(session.verifyUrl);
+  };
+
+  return (
+    <>
+      <Identity
+        site="https://chatgpt.com"
+        name="ChatGPT"
+        detail="Use your Plus, Pro or Business plan instead of an API key"
+      />
+      <FormGroup
+        footer={
+          <>
+            {error ? <Notice tone="danger">{error}</Notice> : null}
+            <Footnote>
+              Paste the code on OpenAI’s page and approve it, then come back here. If OpenAI asks,
+              allow device code sign-in in ChatGPT’s security settings.
+            </Footnote>
+          </>
+        }
+      >
+        <View className="items-center gap-4 px-4 py-6">
+          {session ? (
+            <Text
+              selectable
+              accessibilityLabel={`Sign-in code ${session.userCode.split("").join(" ")}`}
+              style={styles.code}
+            >
+              {session.userCode}
+            </Text>
+          ) : error ? null : (
+            <ActivityIndicator color={colors.textMuted} />
+          )}
+          {error ? (
+            <ActionButton label="Get a new code" icon="refresh" onPress={retry} />
+          ) : (
+            <ActionButton
+              label={copied ? "Open OpenAI again" : "Copy code and sign in"}
+              icon="open-outline"
+              disabled={!session}
+              onPress={() => void openSignIn()}
+            />
+          )}
+          {session && !error ? (
+            <View accessibilityLiveRegion="polite" className="flex-row items-center gap-2">
+              <ActivityIndicator size="small" color={colors.textMuted} />
+              <Text muted className="text-[13px]">
+                {copied ? "Code copied. Waiting for you to approve it…" : "Waiting for approval…"}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </FormGroup>
+    </>
+  );
+}
+
 /**
  * The key's balance, read again while the sheet is open and after every reply, and what replies
  * from this app spent through the provider this month.
@@ -331,6 +607,11 @@ function ProviderBalance({ provider, active }: { provider: Provider; active: boo
     setBusy(false);
   };
 
+  if (provider.subscription)
+    return (
+      <PlanLimits provider={provider} now={now} busy={busy} onRefresh={() => void refresh()} />
+    );
+
   const b = provider.balance;
   const usage = monthUsage(provider, now);
   const fraction = balanceFraction(provider);
@@ -342,6 +623,25 @@ function ProviderBalance({ provider, active }: { provider: Provider; active: boo
         ? colors.warning
         : colors.danger;
   const tokens = usage ? usage.promptTokens + usage.completionTokens : 0;
+  // Priced replies give the spend directly. An endpoint that publishes no prices (most resellers)
+  // is measured by how far its balance fell instead.
+  const fromBalance = !usage?.costUsd && (usage?.balanceSpent ?? 0) > 0;
+  const spendLabel = usage?.costUsd
+    ? formatSpend(usage.costUsd)
+    : fromBalance
+      ? formatAmount(usage!.balanceSpent!, b?.currency)
+      : usage && usage.unpriced > 0
+        ? "Not published"
+        : formatSpend(0);
+  const spendNote = fromBalance
+    ? "Spend is how far the balance fell this month, so it includes use of this key outside the app."
+    : usage && usage.unpriced > 0 && !usage.costUsd
+      ? b && figure !== null
+        ? `${hostOf(provider.baseUrl)} doesn’t publish model prices. Spend shows here as the balance goes down.`
+        : `${hostOf(provider.baseUrl)} doesn’t publish model prices or a balance, so spend can’t be counted.`
+      : usage && usage.unpriced > 0
+        ? "Models without a published price aren’t in the total."
+        : null;
 
   return (
     <View className="mb-6">
@@ -424,9 +724,7 @@ function ProviderBalance({ provider, active }: { provider: Provider; active: boo
             </Text>
           </View>
           <Text weight="medium" className="text-[15px]" style={styles.tabular}>
-            {usage && usage.costUsd === 0 && usage.unpriced > 0
-              ? "No price listed"
-              : formatSpend(usage?.costUsd ?? 0)}
+            {spendLabel}
           </Text>
         </View>
       </View>
@@ -438,9 +736,7 @@ function ProviderBalance({ provider, active }: { provider: Provider; active: boo
           {b && figure !== null
             ? `Updated ${timeAgo(b.checkedAt, now)}. Reads again after each reply.`
             : "This month counts replies sent from this app."}
-          {usage && usage.unpriced > 0 && usage.costUsd > 0
-            ? " Models without a published price aren’t in the total."
-            : ""}
+          {spendNote ? ` ${spendNote}` : ""}
         </Footnote>
       </View>
     </View>
@@ -725,7 +1021,7 @@ function ModelProfile({ model }: { model: Model }) {
   );
 }
 
-type Mode = "pick" | "new" | "edit";
+type Mode = "pick" | "new" | "edit" | "chatgpt";
 
 /**
  * Add or edit a provider, laid out like iOS Mail's Add Account: pick a service from a list (no
@@ -838,10 +1134,12 @@ export function ProviderSheet({
 
   const guard = (action: () => void) => {
     if (!dirty || saving) return action();
-    Alert.alert(mode === "new" ? "Discard this provider?" : "Discard your changes?", undefined, [
-      { text: "Keep editing", style: "cancel" },
-      { text: "Discard", style: "destructive", onPress: action },
-    ]);
+    confirmDestructive(
+      mode === "new" ? "Discard this provider?" : "Discard your changes?",
+      undefined,
+      { cancel: "Keep editing", confirm: "Discard" },
+      action
+    );
   };
 
   const choose = (p: Preset | null) => {
@@ -878,7 +1176,9 @@ export function ProviderSheet({
       providerId: id,
       label: form.label.trim() || preset?.label || id,
       baseUrl: url,
-      headers: form.headers.filter((h) => h.key.trim()),
+      headers: form.headers
+        .map((h) => ({ key: h.key.trim(), value: h.value }))
+        .filter((h) => h.key),
     };
     const res = await saveProvider(draft, key || undefined);
     setSaving(false);
@@ -896,21 +1196,15 @@ export function ProviderSheet({
   };
 
   const remove = () =>
-    Alert.alert(
+    confirmDestructive(
       `Remove ${form.label || id}?`,
       `Its ${count} ${count === 1 ? "model leaves" : "models leave"} the model picker and the key is deleted from the server.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: () => {
-            removeProvider(id);
-            showToast("Provider removed");
-            onClose();
-          },
-        },
-      ]
+      { cancel: "Cancel", confirm: "Remove" },
+      () => {
+        removeProvider(id);
+        showToast("Provider removed");
+        onClose();
+      }
     );
 
   const setKey = (t: string) => {
@@ -1080,8 +1374,34 @@ export function ProviderSheet({
 
   let body: ReactNode;
   if (mode === "pick") {
+    const plan = providers.find((p) => p.subscription?.vendor === "chatgpt");
     body = (
       <>
+        <Text weight="medium" muted className="mb-2 px-4 text-[13px]">
+          Use a plan you pay for
+        </Text>
+        <FormGroup>
+          <ListRow
+            icon={<Favicon url="https://chatgpt.com" size={30} />}
+            label="ChatGPT"
+            detail={
+              plan
+                ? `Signed in${plan.subscription?.email ? ` as ${plan.subscription.email}` : ""}`
+                : "Plus, Pro or Business"
+            }
+            last
+            onPress={() => {
+              setMotion("forward");
+              if (plan) return startEdit(plan);
+              setMode("chatgpt");
+              setPreset(null);
+              setError(null);
+            }}
+          />
+        </FormGroup>
+        <Text weight="medium" muted className="mb-2 px-4 text-[13px]">
+          Use an API key
+        </Text>
         <FormGroup>
           {PRESETS.map((p, i) => {
             const added = matchFor(p);
@@ -1133,6 +1453,55 @@ export function ProviderSheet({
             last
             onPress={() => choose(null)}
           />
+        </FormGroup>
+      </>
+    );
+  } else if (mode === "chatgpt") {
+    body = (
+      <ChatgptSignIn
+        onConnected={() => {
+          showToast("Signed in to ChatGPT");
+          onClose();
+        }}
+      />
+    );
+  } else if (existing?.subscription) {
+    const connected = existing.status === "connected";
+    const signOut = () =>
+      Alert.alert(
+        "Sign out of ChatGPT?",
+        "Its models leave the model picker. You can sign in again any time.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Sign out",
+            style: "destructive",
+            onPress: () => {
+              removeProvider(id);
+              showToast("Signed out of ChatGPT");
+              onClose();
+            },
+          },
+        ]
+      );
+    body = (
+      <>
+        <Identity
+          site="https://chatgpt.com"
+          name="ChatGPT"
+          detail={
+            connected
+              ? `Signed in${existing.subscription.email ? ` as ${existing.subscription.email}` : ""}${existing.subscription.plan ? `, ${existing.subscription.plan} plan` : ""}`
+              : existing.status === "checking"
+                ? "Checking…"
+                : (existing.lastError ?? "Not connected")
+          }
+          dot={connected ? colors.success : colors.danger}
+        />
+        <ProviderBalance provider={existing} active={open} />
+        <ProviderModels providerId={id} />
+        <FormGroup>
+          <ListRow label="Sign out" danger last onPress={signOut} />
         </FormGroup>
       </>
     );
@@ -1216,7 +1585,13 @@ export function ProviderSheet({
     );
   }
 
-  const step = mode === "edit" ? `edit:${id}` : `${mode}:${preset?.id ?? "other"}`;
+  const step =
+    mode === "edit"
+      ? `edit:${id}`
+      : mode === "chatgpt"
+        ? "chatgpt"
+        : `${mode}:${preset?.id ?? "other"}`;
+  const nothingToSave = mode === "pick" || mode === "chatgpt" || Boolean(existing?.subscription);
   const entering =
     motion === "forward"
       ? SlideInRight.duration(260)
@@ -1232,9 +1607,11 @@ export function ProviderSheet({
       title={
         mode === "pick"
           ? "Add provider"
-          : mode === "new"
-            ? (preset?.label ?? "Other endpoint")
-            : form.label || id
+          : mode === "chatgpt"
+            ? "ChatGPT"
+            : mode === "new"
+              ? (preset?.label ?? "Other endpoint")
+              : form.label || id
       }
       leading={
         fromList && mode !== "pick"
@@ -1242,7 +1619,7 @@ export function ProviderSheet({
           : { label: "Close", icon: "close", onPress: () => guard(onClose) }
       }
       confirm={
-        mode === "pick"
+        nothingToSave
           ? undefined
           : {
               label: mode === "new" ? "Connect" : "Save",
@@ -1301,6 +1678,14 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.10)",
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  code: {
+    fontFamily: fonts.display,
+    fontSize: 30,
+    lineHeight: 38,
+    letterSpacing: 3,
+    color: colors.text,
+  },
+  topRule: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(255,255,255,0.10)" },
   tabular: { fontVariant: ["tabular-nums"] },
   meter: {
     height: 6,

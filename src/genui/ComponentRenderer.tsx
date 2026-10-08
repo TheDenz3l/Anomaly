@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from "react";
+import { Component as ReactComponent, useState, type ComponentType, type ReactNode } from "react";
 import { View } from "react-native";
 import Animated from "react-native-reanimated";
 import { Icon } from "@/components/ui/Icon";
@@ -37,48 +37,103 @@ export function ComponentRenderer({ part, threadId, messageStreaming }: Props) {
     return <GenSkeleton name={part.name} />;
 
   if (part.status === "invalid") {
-    return (
-      <View className="gap-2 rounded-3xl border border-[rgba(220,74,68,0.4)] bg-card p-4">
-        <View className="flex-row items-center gap-2">
-          <Icon name="alert-circle" size={16} color={colors.danger} />
-          <Text weight="bold" className="text-sm">
-            Couldn’t show this {part.name}
-          </Text>
-        </View>
-        <Text muted className="text-xs">
-          {part.error}
-        </Text>
-        <Text className="text-[15px] leading-6">{part.fallbackText}</Text>
-      </View>
-    );
+    return <CardError name={part.name} error={part.error} fallbackText={part.fallbackText} />;
   }
 
-  const Component = registry[part.name as CatalogName];
+  const Component = Object.prototype.hasOwnProperty.call(registry, part.name)
+    ? registry[part.name as CatalogName]
+    : undefined;
   if (!Component) {
     return <Text className="text-[15px] leading-6">{part.fallbackText}</Text>;
   }
 
   return (
     <Animated.View entering={animateIn ? cardIn : undefined}>
-      <Component
-        key={building && !GROWS_IN_PLACE.has(part.name) ? "building" : "ready"}
-        building={building}
-        props={part.props as GenProps<CatalogName>["props"]}
-        events={events}
-        busy={busy}
-        live={messageStreaming}
-        emit={(action, label, payload) =>
-          emitUiEvent(threadId, {
-            componentId: part.id,
-            component: part.name,
-            action,
-            label,
-            payload,
-          })
+      <CardBoundary
+        resetKey={part.props}
+        fallback={
+          <CardError
+            name={part.name}
+            error="Something in this card couldn’t be drawn."
+            fallbackText={part.fallbackText}
+          />
         }
-      />
+      >
+        <Component
+          key={building && !GROWS_IN_PLACE.has(part.name) ? "building" : "ready"}
+          building={building}
+          props={part.props as GenProps<CatalogName>["props"]}
+          events={events}
+          busy={busy}
+          live={messageStreaming}
+          emit={(action, label, payload) =>
+            emitUiEvent(threadId, {
+              componentId: part.id,
+              component: part.name,
+              action,
+              label,
+              payload,
+            })
+          }
+        />
+      </CardBoundary>
     </Animated.View>
   );
+}
+
+function CardError({
+  name,
+  error,
+  fallbackText,
+}: {
+  name: string;
+  error?: string;
+  fallbackText: string;
+}) {
+  return (
+    <View className="gap-2 rounded-3xl border border-[rgba(220,74,68,0.4)] bg-card p-4">
+      <View className="flex-row items-center gap-2">
+        <Icon name="alert-circle" size={16} color={colors.danger} />
+        <Text weight="bold" className="text-sm">
+          Couldn’t show this {name}
+        </Text>
+      </View>
+      {error ? (
+        <Text muted className="text-xs">
+          {error}
+        </Text>
+      ) : null}
+      <Text className="text-[15px] leading-6">{fallbackText}</Text>
+    </View>
+  );
+}
+
+/**
+ * Keeps a card that throws while drawing (props the schema allowed but the component can't
+ * handle) from taking the whole chat down with it. Tries again when the card's props change.
+ */
+class CardBoundary extends ReactComponent<
+  { resetKey: unknown; fallback: ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.warn("A card failed to render", error);
+  }
+
+  componentDidUpdate(prev: { resetKey: unknown }) {
+    if (this.state.failed && prev.resetKey !== this.props.resetKey)
+      this.setState({ failed: false });
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
 }
 /**
  * Cards that take each new prop set in place while they stream. The rest remount once complete, so

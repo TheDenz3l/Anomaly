@@ -84,6 +84,8 @@ export default function SettingsScreen() {
   const [providerSheet, setProviderSheet] = useState<{ id: string | null } | null>(null);
   const [picker, setPicker] = useState<"default" | "research" | null>(null);
   const [editingInstructions, setEditingInstructions] = useState(false);
+  // What's typed stays put while the field has focus; settings arriving from the server lag behind.
+  const [searchKey, setSearchKey] = useState<string | null>(null);
   const instructions = settings.customInstructions.trim();
 
   // Balances stay current while Settings is on screen; the server skips any read that's still fresh.
@@ -225,8 +227,13 @@ export default function SettingsScreen() {
             />
             {settings.searchProvider !== "none" ? (
               <TextInput
-                value={settings.searchKeyHint}
-                onChangeText={(searchKeyHint) => update({ searchKeyHint })}
+                value={searchKey ?? settings.searchKeyHint}
+                onFocus={() => setSearchKey(settings.searchKeyHint)}
+                onBlur={() => setSearchKey(null)}
+                onChangeText={(searchKeyHint) => {
+                  setSearchKey(searchKeyHint);
+                  update({ searchKeyHint });
+                }}
                 placeholder={
                   settings.searchProvider === "searxng"
                     ? "Your SearXNG URL (blank uses the built-in pool)"
@@ -255,29 +262,10 @@ export default function SettingsScreen() {
           </Stack>
         </Group>
 
-        <Group label="Voice">
-          <Stack label="Speech to text">
-            <Segmented
-              accessibilityLabel="Speech to text"
-              value={settings.voiceInput}
-              onChange={(voiceInput) => update({ voiceInput })}
-              options={[
-                { value: "device", label: "On device" },
-                { value: "endpoint", label: "My endpoint" },
-              ]}
-            />
-          </Stack>
-          <Stack label="Text to speech">
-            <Segmented
-              accessibilityLabel="Text to speech"
-              value={settings.voiceOutput}
-              onChange={(voiceOutput) => update({ voiceOutput })}
-              options={[
-                { value: "device", label: "Device voice" },
-                { value: "endpoint", label: "My endpoint" },
-              ]}
-            />
-          </Stack>
+        <Group
+          label="Voice"
+          footer="Dictation and read-aloud run on this iPhone, with Apple's speech recognition and voices."
+        >
           <Row
             label="Read replies aloud"
             detail="Components are summarised in a sentence."

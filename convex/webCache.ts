@@ -3,7 +3,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 
 /** URL/content cache with per-content-type TTLs (PRD §3.8) — also backs robots.txt and circuit breakers. */
 
-const MAX_CONTENT = 180_000;
+export const MAX_CONTENT = 180_000;
 
 export const get = internalQuery({
   args: { key: v.string() },

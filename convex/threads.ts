@@ -185,6 +185,7 @@ export const purge = internalMutation({
         .collect();
       for (const a of atts) {
         await ctx.storage.delete(a.storageId).catch(() => {});
+        if (a.textStorageId) await ctx.storage.delete(a.textStorageId).catch(() => {});
         await ctx.db.delete(a._id);
       }
       const saved = await ctx.db
@@ -192,6 +193,11 @@ export const purge = internalMutation({
         .withIndex("by_user_ref", (q) => q.eq("userId", userId).eq("refId", m._id))
         .collect();
       for (const s of saved) await ctx.db.delete(s._id);
+      const logged = await ctx.db
+        .query("decisions")
+        .withIndex("by_ref", (q) => q.eq("refId", m._id))
+        .collect();
+      for (const d of logged) await ctx.db.delete(d._id);
       await ctx.db.delete(m._id);
     }
     if (messages.length === BATCH) {

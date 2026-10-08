@@ -1,7 +1,7 @@
 import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { LlmError } from "../ai/openai";
+import { displayUrl, LlmError } from "../ai/openai";
 import { textOf } from "../lib/messages";
 import { errorMessage, uid } from "../lib/util";
 import type { ReplyMeta } from "../lib/validators";
@@ -94,9 +94,14 @@ export async function finishTurn(
 export function friendlyError(e: unknown, engine: Engine | null): string {
   if (e instanceof ConvexError) return typeof e.data === "string" ? e.data : errorMessage(e.data);
   if (e instanceof LlmError) {
-    const where = engine ? engine.endpoint.baseUrl : "the provider";
+    const where = engine ? displayUrl(engine.endpoint.baseUrl) : "the provider";
     switch (e.kind) {
       case "auth":
+        if (
+          e.status === 402 ||
+          /insufficient_quota|billing|out of credit|credit balance|quota/i.test(e.body)
+        )
+          return "Your account with this provider is out of credit. Top it up, or pick a model from another provider.";
         return `The provider rejected the API key (${e.status}). Update it in Settings → Providers.`;
       case "not_found":
         return `The model ${engine?.modelId ?? ""} wasn't found at ${where}. Pick another model.`;

@@ -142,12 +142,13 @@ export const executeApproved = internalAction({
     const plan = await ctx.runQuery(internal.agents.getPlan, { planRunId });
     const data = await ctx.runQuery(internal.engine.data.turnContext, { messageId });
     if (!plan || !data || plan.status !== "queued") return;
-    const sink = new PartWriter(ctx, messageId, data.message.parts).start();
+    const sink = new PartWriter(ctx, messageId, data.message.parts, data.message.runId).start();
     const meta = {
       modelRef: data.thread.modelRef,
       levelRequested: data.thread.reasoningLevel,
       levelSent: "off",
       reasoningTokens: 0,
+      kind: "subagents" as const,
     };
     let engine = null;
     try {
@@ -214,6 +215,7 @@ export const executeApproved = internalAction({
       }
       await sink.detach();
       await runTurn(ctx, messageId, {
+        kind: "subagents",
         sources: sources.all(),
         injected: [
           "# Results from the sub-agents the user approved (cite with these [n] numbers)",

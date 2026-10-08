@@ -23,7 +23,16 @@ import type {
  * through <ConvexSync />; actions call Convex and show optimistic parts so the UI never waits.
  */
 
-export type Attachment = { uri: string; width?: number; height?: number };
+/** A photo from the library (kind omitted) or any file from the Files picker. */
+export type Attachment = {
+  uri: string;
+  width?: number;
+  height?: number;
+  kind?: "image" | "file";
+  name?: string;
+  mime?: string;
+  size?: number;
+};
 
 type Draft = { modelRef: string; reasoningLevel: string; incognito: boolean };
 
@@ -65,6 +74,8 @@ type State = {
   /** When each artifact was last opened, for "recently viewed" ordering. */
   artifactViews: Record<string, number>;
   toast: Toast | null;
+  /** Text and photos of a send the server refused, handed back to the composer. */
+  composerRestore: { id: string; text: string; attachments: Attachment[] } | null;
 };
 
 export type ProviderResult = { ok: boolean; saved: boolean; error?: string };
@@ -101,6 +112,16 @@ type Actions = {
   refreshProvider(providerId: string): Promise<ProviderResult>;
   /** Asks for fresh balances (one provider or all that are due); results arrive through the providers query. */
   checkBalance(providerId?: string, force?: boolean): Promise<void>;
+  /** Starts a ChatGPT sign-in: the code to approve and where to approve it. */
+  chatgptStart(): Promise<
+    | { ok: true; deviceAuthId: string; userCode: string; intervalMs: number; verifyUrl: string }
+    | { ok: false; error: string }
+  >;
+  /** One check on a pending ChatGPT sign-in. */
+  chatgptPoll(
+    deviceAuthId: string,
+    userCode: string
+  ): Promise<{ status: "pending" | "connected" | "error"; error?: string; models?: number }>;
   removeProvider(providerId: string): void;
   overrideProfile(ref: string, patch: Partial<CapabilityProfile>): void;
   runProbes(ref: string): Promise<string[]>;
@@ -108,6 +129,7 @@ type Actions = {
   ensureProfile(ref: string): void;
   pinThread(id: string, pinned: boolean): void;
   showToast(text: string, tone?: Toast["tone"]): void;
+  clearComposerRestore(): void;
   /* sync — called by <ConvexSync /> only */
   hydrate(
     patch: Partial<
@@ -165,8 +187,11 @@ const SETTINGS_KEYS = [
 
 const fullThreads = new Set<string>();
 
-/** Incognito chats left before the server had them, thrown away as soon as it does. */
+/** Chats left (incognito) or deleted before the server had them, thrown away as soon as it does. */
 const discardOnArrival = new Set<string>();
+
+/** Optimistic replies stopped before the server gave them an id; stopped once it does. */
+const stopOnArrival = new Set<string>();
 
 /** How long the socket may stay down before a call is reported as unreachable. */
 const OFFLINE_GRACE_MS = 6_000;
@@ -225,19 +250,31 @@ function withStableKeys(prev: Message[], next: Message[]): Message[] {
 }
 let searchKeyTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function uploadImage(
+async function uploadAttachment(
   a: Attachment
 ): Promise<{ storageId: Id<"_storage">; width?: number; height?: number }> {
+  const file = a.kind === "file";
   const blob = await (await fetch(a.uri)).blob();
   const url = await convex.mutation(api.attachments.generateUploadUrl, {});
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": blob.type || "image/jpeg" },
+    headers: {
+      "Content-Type":
+        (file ? a.mime : undefined) ||
+        blob.type ||
+        (file ? "application/octet-stream" : "image/jpeg"),
+    },
     body: blob,
   });
-  if (!res.ok) throw new Error("Photo upload failed.");
+  if (!res.ok)
+    throw new Error(file ? `Couldn't upload ${a.name ?? "the file"}.` : "Photo upload failed.");
   const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
-  await convex.mutation(api.attachments.register, { storageId, width: a.width, height: a.height });
+  await convex.mutation(api.attachments.register, {
+    storageId,
+    width: a.width,
+    height: a.height,
+    ...(file ? { name: a.name, mime: a.mime } : {}),
+  });
   return { storageId, width: a.width, height: a.height };
 }
 
@@ -279,6 +316,29 @@ function reuseUnchanged(prev: Message[], next: Message[]): Message[] {
     if (!old || m.status === "streaming" || old.status !== m.status) return m;
     return serialize(old) === serialize(m) ? old : m;
   });
+}
+
+/**
+ * Artifact data for a chat whose own messages subscription has ended (it was left): finished
+ * replies replace the cached copies, so results that landed after leaving still show up.
+ */
+export function mergeArtifacts(prev: Message[], arts: Message[]): Message[] {
+  const byId = new Map(arts.map((m) => [m.id, m]));
+  let changed = false;
+  const out = prev.map((m) => {
+    const a = byId.get(m.id);
+    if (!a) return m;
+    byId.delete(m.id);
+    if (m.status === a.status && JSON.stringify(m.parts) === JSON.stringify(a.parts)) return m;
+    changed = true;
+    return m.key ? { ...a, key: m.key } : a;
+  });
+  if (byId.size) {
+    changed = true;
+    out.push(...byId.values());
+    out.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  return changed ? out : prev;
 }
 
 function streamingIn(threadId: string, list: Message[]): State["streaming"] {
@@ -332,6 +392,7 @@ export const useApp = create<AppStore>()((set, get) => {
     pinnedArtifacts: [],
     artifactViews: {},
     toast: null,
+    composerRestore: null,
 
     newChat() {
       const s = get();
@@ -356,6 +417,8 @@ export const useApp = create<AppStore>()((set, get) => {
 
     deleteThread(id) {
       const s = get();
+      // Not on the server yet: it goes as soon as send returns its id.
+      if (isPending(id)) discardOnArrival.add(id);
       const { [id]: _t, ...threads } = s.threads;
       const { [id]: _m, ...messages } = s.messages;
       set({
@@ -380,7 +443,7 @@ export const useApp = create<AppStore>()((set, get) => {
 
     renameThread(id, title) {
       const s = get();
-      if (!s.threads[id]) return;
+      if (!s.threads[id] || isPending(id)) return;
       set({ threads: { ...s.threads, [id]: { ...s.threads[id], title } } });
       convex
         .mutation(api.threads.update, { threadId: id as Id<"threads">, title })
@@ -409,18 +472,26 @@ export const useApp = create<AppStore>()((set, get) => {
       const trimmed = text.trim();
       if (!trimmed && attachments.length === 0) return;
       const s = get();
+      // What Send was pressed with: New chat during a photo upload resets the draft.
+      const draft = { ...s.draft };
+      const level = s.settings.thinkingLevel;
       const research = s.researchArmed;
       const existing = s.activeThreadId && !isPending(s.activeThreadId) ? s.activeThreadId : null;
       const threadKey = existing ?? `pending_${Date.now().toString(36)}`;
       const now = Date.now();
       const parts: Part[] = [
-        ...attachments.map((a): Part => ({
-          id: tempId("img"),
-          type: "image",
-          uri: a.uri,
-          width: a.width,
-          height: a.height,
-        })),
+        ...attachments.map((a): Part =>
+          a.kind === "file"
+            ? {
+                id: tempId("file"),
+                type: "file",
+                name: a.name ?? "File",
+                mime: a.mime ?? "",
+                size: a.size ?? 0,
+                uri: a.uri,
+              }
+            : { id: tempId("img"), type: "image", uri: a.uri, width: a.width, height: a.height }
+        ),
         ...(trimmed ? [{ id: tempId("txt"), type: "text", text: trimmed } as Part] : []),
       ];
       const userMsg: Message = {
@@ -432,7 +503,7 @@ export const useApp = create<AppStore>()((set, get) => {
         status: "done",
       };
       const replyId = tempId("msg");
-      const target = existing ? s.threads[existing] : s.draft;
+      const target = existing ? s.threads[existing] : draft;
       const reply: Message = {
         id: replyId,
         threadId: threadKey,
@@ -443,7 +514,7 @@ export const useApp = create<AppStore>()((set, get) => {
         // Mirrors the server's initial meta so the placeholder row doesn't change label on arrival.
         meta: {
           modelRef: target?.modelRef ?? "",
-          levelRequested: s.settings.thinkingLevel,
+          levelRequested: level,
           levelSent: "",
           reasoningTokens: 0,
         },
@@ -452,9 +523,9 @@ export const useApp = create<AppStore>()((set, get) => {
         const thread: Thread = {
           id: threadKey,
           key: threadKey,
-          title: titleFrom(trimmed || "Photo"),
+          title: titleFrom(trimmed || attachments.find((a) => a.kind === "file")?.name || "Photo"),
           mode: research ? "research" : "chat",
-          ...s.draft,
+          ...draft,
           createdAt: now,
           updatedAt: now,
         };
@@ -465,24 +536,29 @@ export const useApp = create<AppStore>()((set, get) => {
 
       void (async () => {
         try {
-          const uploaded = await Promise.all(attachments.map(uploadImage));
+          const uploaded = await Promise.all(attachments.map(uploadAttachment));
           const res = await convex.mutation(api.messages.send, {
             threadId: existing ? (existing as Id<"threads">) : undefined,
             text: trimmed,
             attachments: uploaded,
             research,
-            reasoningLevel: s.settings.thinkingLevel,
-            draft: existing ? undefined : get().draft,
+            reasoningLevel: level,
+            draft: existing ? undefined : draft,
           });
-          // An incognito chat left before the server had it goes as soon as it arrives.
+          // A chat deleted, or an incognito one left, before the server had it goes as it arrives.
           if (!existing && discardOnArrival.delete(threadKey)) {
+            stopOnArrival.delete(replyId);
             convex.mutation(api.threads.remove, { threadId: res.threadId }).catch(() => {});
             return;
+          }
+          if (stopOnArrival.delete(replyId)) {
+            convex.mutation(api.messages.stop, { threadId: res.threadId }).catch(toastError);
           }
           if (!existing) {
             const st = get();
             const { [threadKey]: pendingThread, ...threads } = st.threads;
             const { [threadKey]: pendingMsgs, ...messages } = st.messages;
+            if (!pendingThread) return;
             set({
               threads: { ...threads, [res.threadId]: { ...pendingThread, id: res.threadId } },
               messages: {
@@ -499,8 +575,27 @@ export const useApp = create<AppStore>()((set, get) => {
             });
           }
         } catch (e) {
-          patchMessages(threadKey, (list) => list.filter((m) => m.id !== replyId));
+          stopOnArrival.delete(replyId);
+          const gone = !existing && discardOnArrival.delete(threadKey);
+          const st = get();
+          if (existing) {
+            patchMessages(threadKey, (list) =>
+              list.filter((m) => m.id !== replyId && m.id !== userMsg.id)
+            );
+          } else {
+            const { [threadKey]: _t, ...threads } = st.threads;
+            const { [threadKey]: _m, ...messages } = st.messages;
+            const wasOpen = st.activeThreadId === threadKey;
+            set({
+              threads,
+              messages,
+              ...(wasOpen ? { activeThreadId: null, draft, researchArmed: research } : {}),
+            });
+          }
           if (get().streaming?.messageId === replyId) set({ streaming: null });
+          if (!gone) {
+            set({ composerRestore: { id: tempId("restore"), text: trimmed, attachments } });
+          }
           toastError(e);
         }
       })();
@@ -546,7 +641,17 @@ export const useApp = create<AppStore>()((set, get) => {
     stop() {
       const s = get();
       const threadId = s.streaming?.threadId ?? s.activeThreadId;
+      const messageId = s.streaming?.messageId;
       set({ streaming: null });
+      // The reply has no server id yet: send stops it the moment the server returns one.
+      if (messageId && isTemp(messageId)) {
+        stopOnArrival.add(messageId);
+        if (threadId)
+          patchMessages(threadId, (list) =>
+            list.map((m) => (m.id === messageId ? { ...m, status: "stopped" as const } : m))
+          );
+        return;
+      }
       if (threadId && !isPending(threadId)) {
         convex
           .mutation(api.messages.stop, { threadId: threadId as Id<"threads"> })
@@ -561,6 +666,7 @@ export const useApp = create<AppStore>()((set, get) => {
         s.messages[k].some((m) => m.id === messageId)
       );
       if (!threadId) return;
+      const previous = s.messages[threadId].find((m) => m.id === messageId)!;
       patchMessages(threadId, (list) =>
         list.map((m) =>
           m.id === messageId ? { ...m, parts: [], status: "streaming" as const } : m
@@ -570,7 +676,8 @@ export const useApp = create<AppStore>()((set, get) => {
       convex
         .mutation(api.messages.regenerate, { messageId: messageId as Id<"messages"> })
         .catch((e) => {
-          set({ streaming: null });
+          patchMessages(threadId, (list) => list.map((m) => (m.id === messageId ? previous : m)));
+          if (get().streaming?.messageId === messageId) set({ streaming: null });
           toastError(e);
         });
     },
@@ -692,6 +799,23 @@ export const useApp = create<AppStore>()((set, get) => {
       }
     },
 
+    async chatgptStart() {
+      try {
+        return { ok: true as const, ...(await convex.action(api.providers.chatgptStart, {})) };
+      } catch (e) {
+        return { ok: false as const, error: errorText(e) };
+      }
+    },
+
+    async chatgptPoll(deviceAuthId, userCode) {
+      try {
+        return await convex.action(api.providers.chatgptPoll, { deviceAuthId, userCode });
+      } catch (e) {
+        // A dropped request isn't a failed sign-in; the next poll tries again.
+        return { status: "pending" as const, error: errorText(e) };
+      }
+    },
+
     async checkBalance(providerId, force) {
       // Balances are a nicety: a failed read shows on the provider, never as a toast.
       await convex.action(api.providers.checkBalance, { providerId, force }).catch(() => {});
@@ -737,6 +861,10 @@ export const useApp = create<AppStore>()((set, get) => {
       setTimeout(() => {
         if (get().toast?.id === id) set({ toast: null });
       }, 2600);
+    },
+
+    clearComposerRestore() {
+      set({ composerRestore: null });
     },
 
     hydrate(patch) {
@@ -790,8 +918,11 @@ export const useApp = create<AppStore>()((set, get) => {
       const s = get();
       const messages = { ...s.messages };
       for (const [threadId, msgs] of Object.entries(byThread)) {
-        if (!fullThreads.has(threadId))
-          messages[threadId] = msgs.sort((a, b) => a.createdAt - b.createdAt);
+        const sorted = msgs.sort((a, b) => a.createdAt - b.createdAt);
+        if (!fullThreads.has(threadId)) messages[threadId] = sorted;
+        // Only the open chat has a live messages subscription; a left one learns of results here.
+        else if (threadId !== s.activeThreadId)
+          messages[threadId] = mergeArtifacts(messages[threadId] ?? [], sorted);
       }
       set({ messages });
     },

@@ -1,7 +1,8 @@
 import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
 import { HOUR, webCache, type WebCache } from "./cache";
-import { publicUrl } from "./guard";
+import { MAX_CONTENT } from "../webCache";
+import { fetchPublic, publicUrl } from "./guard";
 import type { SearchConfig } from "./providers";
 import { benchKey, FirecrawlError, firecrawlKeys, firecrawlScrape } from "./firecrawl";
 
@@ -56,9 +57,8 @@ async function fetchRobots(origin: string): Promise<string> {
   // Fetched before the page on a site's first read; a slow answer counts as no robots.txt.
   const timer = setTimeout(() => controller.abort(), 2000);
   try {
-    const res = await fetch(`${origin}/robots.txt`, {
+    const res = await fetchPublic(`${origin}/robots.txt`, {
       headers: { "User-Agent": UA },
-      redirect: "follow",
       signal: controller.signal,
     });
     return res.ok ? (await res.text()).slice(0, 100_000) : "";
@@ -67,6 +67,33 @@ async function fetchRobots(origin: string): Promise<string> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * A robots.txt path rule: `*` matches any run of characters and a trailing `$` pins the end.
+ * Matched by hand rather than through a regex built from the rule, which a hostile robots.txt
+ * could make backtrack for seconds.
+ */
+export function robotsMatch(rule: string, path: string): boolean {
+  const pattern = rule.endsWith("$") ? rule.slice(0, -1) : `${rule}*`;
+  let p = 0;
+  let s = 0;
+  let star = -1;
+  let mark = 0;
+  while (s < path.length) {
+    if (p < pattern.length && pattern[p] !== "*" && pattern[p] === path[s]) {
+      p++;
+      s++;
+    } else if (p < pattern.length && pattern[p] === "*") {
+      star = p++;
+      mark = s;
+    } else if (star >= 0) {
+      p = star + 1;
+      s = ++mark;
+    } else return false;
+  }
+  while (pattern[p] === "*") p++;
+  return p === pattern.length;
 }
 
 /** Minimal robots.txt check for "*" and our own agent: longest matching rule wins. */
@@ -96,19 +123,13 @@ export async function robotsAllowed(cache: WebCache, url: URL): Promise<boolean>
     }
     lastWasAgent = false;
     if (!applies) continue;
-    if ((f === "allow" || f === "disallow") && value)
+    if ((f === "allow" || f === "disallow") && value && value.length <= 512 && rules.length < 1000)
       rules.push({ allow: f === "allow", path: value });
   }
   const path = url.pathname + url.search;
   let best: { allow: boolean; len: number } | null = null;
   for (const r of rules) {
-    const pattern = new RegExp(
-      `^${r.path
-        .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-        .replace(/\*/g, ".*")
-        .replace(/\\\$$/, "$")}`
-    );
-    if (pattern.test(path) && (!best || r.path.length > best.len))
+    if (robotsMatch(r.path, path) && (!best || r.path.length > best.len))
       best = { allow: r.allow, len: r.path.length };
   }
   return best ? best.allow : true;
@@ -149,7 +170,13 @@ export async function readPage(
   const cache = webCache(ctx);
   const key = `read:v2:${url.toString()}`;
   const hit = await cache.get(key);
-  if (hit) return JSON.parse(hit.content) as PageContent;
+  if (hit) {
+    try {
+      return JSON.parse(hit.content) as PageContent;
+    } catch {
+      // An entry cut short by the cache's size limit: read the page again.
+    }
+  }
 
   if (!(await robotsAllowed(cache, url))) {
     throw new Error("This site's robots.txt asks automated readers not to fetch this page.");
@@ -169,6 +196,9 @@ export async function readPage(
       via: "pi-web-access",
     };
   }
-  await cache.put(key, JSON.stringify(page), page.contentType, ttlFor(page.contentType));
+  // The cache truncates long entries, which would leave JSON that no longer parses.
+  const json = JSON.stringify(page);
+  if (json.length <= MAX_CONTENT)
+    await cache.put(key, json, page.contentType, ttlFor(page.contentType));
   return page;
 }

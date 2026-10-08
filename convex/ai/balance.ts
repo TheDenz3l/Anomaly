@@ -149,8 +149,9 @@ export async function fetchBalance(ep: Endpoint): Promise<Balance | null> {
   if (/(^|\.)moonshot\.(ai|cn)$/.test(host)) return moonshot(ep, url.origin, host);
   if (/(^|\.)siliconflow\.(cn|com)$/.test(host)) return siliconFlow(ep, url.origin, host);
   // Unknown hosts get the gateway routes; any answer but a real one means there's nothing to read.
+  // A refused key is the key's problem, not a missing balance API: report it rather than cache it.
   return dashboard(ep).catch((err) => {
-    if (err instanceof LlmError && err.kind === "network") throw err;
+    if (err instanceof LlmError && (err.kind === "network" || err.kind === "auth")) throw err;
     return null;
   });
 }

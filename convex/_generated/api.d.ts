@@ -13,6 +13,8 @@ import type * as ai_anthropic from "../ai/anthropic.js";
 import type * as ai_balance from "../ai/balance.js";
 import type * as ai_blocks from "../ai/blocks.js";
 import type * as ai_catalog from "../ai/catalog.js";
+import type * as ai_chatgpt from "../ai/chatgpt.js";
+import type * as ai_codex from "../ai/codex.js";
 import type * as ai_decisions from "../ai/decisions.js";
 import type * as ai_jev from "../ai/jev.js";
 import type * as ai_openai from "../ai/openai.js";
@@ -39,6 +41,7 @@ import type * as engine_tools from "../engine/tools.js";
 import type * as engine_turn from "../engine/turn.js";
 import type * as engine_writer from "../engine/writer.js";
 import type * as evals from "../evals.js";
+import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_crypto from "../lib/crypto.js";
@@ -72,11 +75,7 @@ import type * as web_relevance from "../web/relevance.js";
 import type * as web_sources from "../web/sources.js";
 import type * as webCache from "../webCache.js";
 
-import type {
-  ApiFromModules,
-  FilterApi,
-  FunctionReference,
-} from "convex/server";
+import type { ApiFromModules, FilterApi, FunctionReference } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
@@ -84,6 +83,8 @@ declare const fullApi: ApiFromModules<{
   "ai/balance": typeof ai_balance;
   "ai/blocks": typeof ai_blocks;
   "ai/catalog": typeof ai_catalog;
+  "ai/chatgpt": typeof ai_chatgpt;
+  "ai/codex": typeof ai_codex;
   "ai/decisions": typeof ai_decisions;
   "ai/jev": typeof ai_jev;
   "ai/openai": typeof ai_openai;
@@ -110,6 +111,7 @@ declare const fullApi: ApiFromModules<{
   "engine/turn": typeof engine_turn;
   "engine/writer": typeof engine_writer;
   evals: typeof evals;
+  files: typeof files;
   http: typeof http;
   "lib/auth": typeof lib_auth;
   "lib/crypto": typeof lib_crypto;
@@ -152,10 +154,7 @@ declare const fullApi: ApiFromModules<{
  * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-export declare const api: FilterApi<
-  typeof fullApi,
-  FunctionReference<any, "public">
->;
+export declare const api: FilterApi<typeof fullApi, FunctionReference<any, "public">>;
 
 /**
  * A utility for referencing Convex functions in your app's internal API.
@@ -165,9 +164,6 @@ export declare const api: FilterApi<
  * const myFunctionReference = internal.myModule.myFunction;
  * ```
  */
-export declare const internal: FilterApi<
-  typeof fullApi,
-  FunctionReference<any, "internal">
->;
+export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, "internal">>;
 
 export declare const components: {};

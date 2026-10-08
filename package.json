@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "convex": "convex dev",
     "convex:deploy": "convex deploy",
     "setup:convex": "node scripts/setup-convex-env.mjs"
@@ -60,15 +61,19 @@
     "tailwind-variants": "^3.2.2",
     "tailwindcss": "^4.3.2",
     "uniwind": "^1.10.0",
+    "unpdf": "^1.8.1",
     "zod": "^4.6.5",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
     "@types/node": "^22.20.5",
     "@types/react": "~19.2.15",
+    "convex-test": "^0.0.60",
     "eslint": "^9.39.4",
     "eslint-config-expo": "~57.0.2",
     "prettier": "^3.8.3",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^3.2.7"
   }
 }

@@ -218,6 +218,31 @@ function openAiProfile(id: string): CapabilityProfile {
   return p;
 }
 
+/**
+ * A model on a ChatGPT plan (the Codex backend). Its /models entry lists the reasoning levels it
+ * takes; the Responses API reads them from reasoning.effort.
+ */
+function chatgptProfile(meta?: any): CapabilityProfile {
+  const listed: string[] = Array.isArray(meta?.supported_reasoning_levels)
+    ? meta.supported_reasoning_levels
+        .map((l: any) => (typeof l === "string" ? l : l?.effort))
+        .filter((l: unknown): l is string => typeof l === "string" && l !== "none")
+    : [];
+  const levels = listed.length ? listed : EFFORT_3;
+  const preferred =
+    typeof meta?.default_reasoning_level === "string" ? meta.default_reasoning_level : "medium";
+  return merge(base(), {
+    reasoning: {
+      style: "effort",
+      field: "reasoning.effort",
+      levels,
+      defaultLevel: levels.includes(preferred) ? preferred : levels[Math.floor(levels.length / 2)],
+    },
+    features: { vision: true, reasoningText: true },
+    confidence: 0.9,
+  });
+}
+
 function anthropicProfile(id: string): CapabilityProfile {
   const m = id.toLowerCase();
   const thinks = /claude-(3-7|sonnet-4|opus-4|haiku-4)/.test(m);
@@ -288,6 +313,7 @@ export function registryProfile(baseUrl: string, modelId: string, meta?: any): C
   if (host.endsWith("openrouter.ai")) return openRouterProfile(modelId, meta);
   if (host === "api.openai.com") return openAiProfile(modelId);
   if (host === "api.anthropic.com") return anthropicProfile(modelId);
+  if (host === "chatgpt.com") return chatgptProfile(meta);
   if (host === "api.deepseek.com") {
     return merge(base(), {
       features: { reasoningText: m.includes("reasoner") },

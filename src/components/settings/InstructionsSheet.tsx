@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Alert, TextInput } from "react-native";
+import { Alert, Platform, TextInput } from "react-native";
 import { FormSheet } from "@/components/ui/FormSheet";
 import { Text } from "@/components/ui/Text";
 import { colors, fonts } from "@/lib/theme";
@@ -30,6 +30,13 @@ export function InstructionsSheet({
 
   const close = () => {
     if (!changed) return onClose();
+    // Alert.alert does nothing on web (react-native-web stubs it).
+    if (Platform.OS === "web") {
+      const ask = (globalThis as { confirm?: (text: string) => boolean }).confirm;
+      if (!ask || ask("Discard your changes?\n\nYour edits to the instructions won't be saved."))
+        onClose();
+      return;
+    }
     Alert.alert("Discard your changes?", "Your edits to the instructions won't be saved.", [
       { text: "Keep editing", style: "cancel" },
       { text: "Discard", style: "destructive", onPress: onClose },

@@ -177,38 +177,34 @@ async function send(
   price: { prompt: number; completion: number },
   maxField: { value: "max_tokens" | "max_completion_tokens" }
 ): Promise<ProbeOutcome> {
-  const tokens = Number(body.max_tokens ?? 16);
-  delete body.max_tokens;
-  body[maxField.value] = tokens;
+  // Probes run in parallel and share maxField: fix the field this request uses before it goes out.
+  const field = maxField.value;
+  const tokens = Number(body.max_tokens ?? body.max_completion_tokens ?? 16);
+  const req: Record<string, unknown> = { ...body };
+  delete req.max_tokens;
+  delete req.max_completion_tokens;
+  req[field] = tokens;
   let out: ProbeOutcome;
   try {
     const res = await complete(ep, {
       model: who.modelId,
       stream_options: { include_usage: true },
-      ...body,
+      ...req,
     });
     out = { ok: true, status: 200, res };
   } catch (e) {
     if (
+      field === "max_tokens" &&
       e instanceof LlmError &&
       /max_tokens/.test(e.body) &&
-      /max_completion_tokens/.test(e.body) &&
-      maxField.value === "max_tokens"
+      /max_completion_tokens/.test(e.body)
     ) {
       maxField.value = "max_completion_tokens";
-      return await send(
-        ctx,
-        ep,
-        who,
-        probe,
-        { ...body, max_tokens: tokens, [maxField.value]: undefined },
-        price,
-        maxField
-      );
+      return await send(ctx, ep, who, probe, { ...body, max_tokens: tokens }, price, maxField);
     }
     if (e instanceof LlmError && /stream_options/.test(e.body)) {
       try {
-        const res = await complete(ep, { model: who.modelId, ...body });
+        const res = await complete(ep, { model: who.modelId, ...req });
         out = { ok: true, status: 200, res };
       } catch (e2) {
         out = {
@@ -227,7 +223,7 @@ async function send(
   }
   const u = out.res?.usage;
   const cost = u?.costUsd ?? costOf(price, u?.promptTokens ?? 20, u?.completionTokens ?? 0);
-  const { messages: _m, ...logged } = body;
+  const { messages: _m, ...logged } = req;
   await ctx.runMutation(internal.probes.log, {
     ...who,
     probe,
@@ -297,10 +293,10 @@ export async function scheduleAutoProbe(
   const prof = await ctx.db.query("capabilityProfiles").withIndex("by_user_model", byModel).first();
   if (prof?.manualReasoning) return false;
   if (!needsCheck(prof ?? registryProfile(provider.baseUrl, parsed.modelId))) return false;
-  // Once real requests went out, the answer is in; a bare marker means a run is in flight, or one
-  // that sent nothing (spend cap), which may try again after a while.
+  // Once a probe got a real answer, the check is done; otherwise (a run in flight, one that sent
+  // nothing under the spend cap, or one that only failed) it may try again after a while.
   const logs = await ctx.db.query("probeLogs").withIndex("by_user_model", byModel).collect();
-  const probed = logs.some((l) => l.probe !== "auto");
+  const probed = logs.some((l) => l.probe !== "auto" && l.status === 200);
   const pending = logs.some((l) => l.probe === "auto" && Date.now() - l.ts < RETRY_AFTER_MS);
   if (probed || pending) return false;
   await ctx.db.insert("probeLogs", {
@@ -377,6 +373,15 @@ async function runProbes(
   let sawReasoningText = false;
   let effortField: string | null = null;
   let levels: string[] = [];
+  /** Probes that got no answer either way (rate limit, outage, network): their settings stay as they were. */
+  const unclear = new Set<ProbeName>();
+  let reasoningUnclear = false;
+  /** Only a 400 or 422 says the request shape was refused. */
+  const inconclusive = (p: ProbeName, r: ProbeOutcome | null): boolean => {
+    if (!r || r.ok || r.status === 400 || r.status === 422) return false;
+    unclear.add(p);
+    return true;
+  };
 
   const can = (p: ProbeName) => {
     const est = costOf(price, ...EST_TOKENS[p]);
@@ -422,6 +427,7 @@ async function runProbes(
     }
     features.streaming = true;
   }
+  if (inconclusive("effort_flat", low)) reasoningUnclear = true;
   let budgetField: string | null = null;
   let unconfirmed = false;
   if (low?.ok) {
@@ -455,22 +461,26 @@ async function runProbes(
   if (!effortField && !budgetField && wanted.includes("effort_nested") && can("effort_nested")) {
     const r = await go("effort_nested", { reasoning: { effort: "low" } });
     if (r.ok) effortField = "reasoning.effort";
+    else if (inconclusive("effort_nested", r)) reasoningUnclear = true;
   }
   if (!effortField && !budgetField && wanted.includes("budget") && can("budget")) {
     const a = await go("budget", { reasoning: { max_tokens: 1024 }, max_tokens: 1100 });
     if (a.ok) budgetField = "reasoning.max_tokens";
     else {
+      if (inconclusive("budget", a)) reasoningUnclear = true;
       const b = await go("budget", {
         thinking: { type: "enabled", budget_tokens: 1024 },
         max_tokens: 1100,
       });
       if (b.ok) budgetField = "thinking.budget_tokens";
+      else if (inconclusive("budget", b)) reasoningUnclear = true;
     }
   }
   let toggleField: string | null = null;
   if (!effortField && !budgetField && wanted.includes("toggle") && can("toggle")) {
     const r = await go("toggle", { chat_template_kwargs: { enable_thinking: false } });
     if (r.ok && !r.res?.reasoning) toggleField = "chat_template_kwargs.enable_thinking";
+    else if (inconclusive("toggle", r)) reasoningUnclear = true;
   }
 
   if (effortField) {
@@ -503,7 +513,10 @@ async function runProbes(
       defaultLevel: "on",
     });
     findings.push("Reasoning can be switched on/off.");
-  } else if (ran.some((p) => ["effort_flat", "effort_nested", "budget", "toggle"].includes(p))) {
+  } else if (
+    !reasoningUnclear &&
+    ran.some((p) => ["effort_flat", "effort_nested", "budget", "toggle"].includes(p))
+  ) {
     Object.assign(reasoning, {
       style: "none",
       levels: [],
@@ -552,14 +565,16 @@ async function runProbes(
       ],
       max_tokens: 40,
     });
-    features.tools = r.ok;
-    findings.push(
-      r.ok
-        ? r.res?.toolCalls.length
-          ? "Tool calling works."
-          : "Tools accepted (model didn't call one)."
-        : "No tool calling; using prompted-JSON cards."
-    );
+    if (!inconclusive("tools", r)) {
+      features.tools = r.ok;
+      findings.push(
+        r.ok
+          ? r.res?.toolCalls.length
+            ? "Tool calling works."
+            : "Tools accepted (model didn't call one)."
+          : "No tool calling; using prompted-JSON cards."
+      );
+    }
   }
   if (wanted.includes("vision") && can("vision")) {
     const r = await go("vision", {
@@ -573,23 +588,35 @@ async function runProbes(
         },
       ],
     });
-    features.vision = r.ok;
-    findings.push(r.ok ? "Accepts images." : "No image input.");
+    if (!inconclusive("vision", r)) {
+      features.vision = r.ok;
+      findings.push(r.ok ? "Accepts images." : "No image input.");
+    }
   }
+  // Checked before can(): a model without native search costs nothing and records nothing.
   if (
     wanted.includes("web_search") &&
-    can("web_search") &&
-    current.params?.nativeSearch === "openrouter"
+    current.params?.nativeSearch === "openrouter" &&
+    can("web_search")
   ) {
     const r = await go("web_search", {
       plugins: [{ id: "web", max_results: 1 }],
       max_tokens: 64,
     });
-    features.webSearch = r.ok;
+    if (!inconclusive("web_search", r)) features.webSearch = r.ok;
   }
   features.reasoningText = features.reasoningText || sawReasoningText;
-  // Nothing went out (spend cap): there's no evidence to record.
-  if (!ran.length) return { ran, skipped, findings, profile: current };
+  if (unclear.size) {
+    findings.push(
+      `No answer from ${[...unclear].join(", ")}: the provider was busy or unreachable, so those settings stay as they were. Run probes again later.`
+    );
+  }
+  // Nothing went out (spend cap), or nothing beyond the basic check got an answer: no evidence to record.
+  if (
+    !ran.length ||
+    (unclear.size && !ran.some((p) => p !== "basic" && !unclear.has(p as ProbeName)))
+  )
+    return { ran, skipped, findings, profile: current };
 
   await ctx.runMutation(internal.models.applyProbeResult, {
     userId,
@@ -597,7 +624,7 @@ async function runProbes(
     reasoning,
     features,
     maxTokensField: maxField.value,
-    confidence: unconfirmed ? 0.65 : 0.9,
+    confidence: unconfirmed || unclear.size ? 0.65 : 0.9,
   });
   const profile = await ctx.runQuery(internal.models.profileInternal, { userId, ...parsed });
   return { ran, skipped, findings, profile };

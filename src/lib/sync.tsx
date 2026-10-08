@@ -1,6 +1,7 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { api, type Id } from "@/lib/convex";
 import { useApp } from "@/lib/store";
 import type { Memory, Message, Model, Provider, Settings, Thread } from "@/lib/types";
@@ -13,30 +14,78 @@ export function ConvexSync() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { signIn } = useAuthActions();
   const signingIn = useRef(false);
+  const failures = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
+  // Sign-in keeps trying with growing pauses (2 s up to a minute), and at once when the app
+  // comes back to the foreground, so a launch without network doesn't leave the app signed out.
   useEffect(() => {
     if (isLoading || isAuthenticated || signingIn.current) return;
     signingIn.current = true;
     signIn("anonymous")
-      .catch((e) => useApp.getState().showToast(`Couldn't sign in: ${String(e)}`, "danger"))
+      .then(() => {
+        failures.current = 0;
+      })
+      .catch(() => {
+        failures.current++;
+        if (failures.current === 1)
+          useApp
+            .getState()
+            .showToast("Couldn't sign in. Check your connection; the app keeps trying.", "danger");
+        const delay = Math.min(60_000, 2_000 * 2 ** (failures.current - 1));
+        if (retryTimer.current) clearTimeout(retryTimer.current);
+        retryTimer.current = setTimeout(() => setAttempt((n) => n + 1), delay);
+      })
       .finally(() => {
         signingIn.current = false;
       });
-  }, [isLoading, isAuthenticated, signIn]);
+  }, [isLoading, isAuthenticated, signIn, attempt]);
+
+  const signedIn = useRef(isAuthenticated);
+  useEffect(() => {
+    signedIn.current = isAuthenticated;
+  }, [isAuthenticated]);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active" || signedIn.current) return;
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+      setAttempt((n) => n + 1);
+    });
+    return () => {
+      sub.remove();
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
+  }, []);
 
   // Incognito chats never outlive the session: whatever an earlier one left on the server goes as
-  // soon as the app is signed in again (all but the chat still open).
+  // soon as the app is signed in again (all but the chat still open). Retried until it goes through.
   const discardIncognito = useMutation(api.threads.discardIncognito);
   const discarded = useRef(false);
+  const discarding = useRef(false);
+  const [discardAttempt, setDiscardAttempt] = useState(0);
   useEffect(() => {
-    if (!isAuthenticated || discarded.current) return;
-    discarded.current = true;
+    if (!isAuthenticated || discarded.current || discarding.current) return;
+    discarding.current = true;
     const s = useApp.getState();
     const open = s.activeThreadId ? s.threads[s.activeThreadId] : undefined;
     const keep =
       open?.incognito && !open.id.startsWith("pending_") ? (open.id as Id<"threads">) : undefined;
-    discardIncognito({ keep }).catch(() => {});
-  }, [isAuthenticated, discardIncognito]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    discardIncognito({ keep })
+      .then(() => {
+        discarded.current = true;
+      })
+      .catch(() => {
+        timer = setTimeout(() => setDiscardAttempt((n) => n + 1), 10_000);
+      })
+      .finally(() => {
+        discarding.current = false;
+      });
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [isAuthenticated, discardIncognito, discardAttempt]);
 
   const on = isAuthenticated ? {} : "skip";
   const threads = useQuery(api.threads.list, on);

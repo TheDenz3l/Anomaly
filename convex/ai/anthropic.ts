@@ -8,6 +8,8 @@ import type { ChatMessage, Citation, ContentPart, StreamEvent, ToolDef } from ".
 type Block = Record<string, unknown>;
 
 const routed = new Set<string>();
+/** Routes whose Messages endpoint turned out not to exist; they stay on chat completions. */
+const refused = new Set<string>();
 const routeKey = (baseUrl: string, model: unknown) => `${baseUrl}|${String(model)}`;
 
 /** True when a provider error says the model is only served over the Messages API. */
@@ -19,8 +21,51 @@ export function prefersMessages(baseUrl: string, model: unknown): boolean {
   return routed.has(routeKey(baseUrl, model));
 }
 
-export function routeToMessages(baseUrl: string, model: unknown): void {
-  routed.add(routeKey(baseUrl, model));
+/** False when this route was already tried and the Messages endpoint wasn't there. */
+export function routeToMessages(baseUrl: string, model: unknown): boolean {
+  const key = routeKey(baseUrl, model);
+  if (refused.has(key)) return false;
+  routed.add(key);
+  return true;
+}
+
+export function unrouteMessages(baseUrl: string, model: unknown): void {
+  const key = routeKey(baseUrl, model);
+  routed.delete(key);
+  refused.add(key);
+}
+
+const ERROR_STATUS: Record<string, number> = {
+  invalid_request_error: 400,
+  authentication_error: 401,
+  permission_error: 403,
+  not_found_error: 404,
+  request_too_large: 413,
+  rate_limit_error: 429,
+  insufficient_quota: 429,
+  api_error: 500,
+  overloaded_error: 529,
+};
+
+/** HTTP status for an error event inside a stream: Anthropic names the error type, others may give a code. */
+export function streamErrorStatus(err: unknown): number {
+  if (err && typeof err === "object") {
+    const e = err as { type?: unknown; code?: unknown };
+    if (typeof e.type === "string" && ERROR_STATUS[e.type]) return ERROR_STATUS[e.type];
+    const code = Number(e.code);
+    if (Number.isInteger(code) && code >= 400 && code < 600) return code;
+    if (typeof e.code === "string" && ERROR_STATUS[e.code]) return ERROR_STATUS[e.code];
+  }
+  return 500;
+}
+
+/** Anthropic's own API, as opposed to a gateway that also serves Claude. */
+export function anthropicHost(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === "api.anthropic.com";
+  } catch {
+    return false;
+  }
 }
 
 export function messagesUrl(baseUrl: string): string {
@@ -174,6 +219,9 @@ export function toMessagesBody(body: Record<string, unknown>): Record<string, un
     out.unshift({ role: "user", content: [{ type: "text", text: "Continue." }] });
 
   let thinking = thinkingFor(body);
+  // Anthropic rejects thinking together with a tool_choice that forces a tool.
+  const forced = toolChoice(body.tool_choice)?.type;
+  if (native && (forced === "any" || forced === "tool")) thinking = undefined;
   // With thinking on, an assistant turn that called tools must open with its thinking block.
   const lastAssistant = [...out].reverse().find((m) => m.role === "assistant");
   if (

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { catalogSchemas, checkBlocks, validateComponent } from "../../src/genui/schemas";
+import { ACCENTS, catalogSchemas, checkBlocks, validateComponent } from "../../src/genui/schemas";
 import { parsePartialJson, type PartialJsonOptions } from "../lib/partialJson";
 import { ModelBlocksSchema, readBlocks } from "./blocks";
 import type { ToolDef } from "./openai";
@@ -48,7 +48,7 @@ const descriptions: Record<ModelComponent, string> = {
   Weather:
     "Current conditions plus hourly and daily forecast. Prefer get_weather, which builds this for you.",
   Blocks:
-    "A visual answer composed from blocks in reading order: plans, guides, breakdowns, explainers, and small tools the user asks for (scalers, splitters, calculators) where input blocks drive computed rows live on the phone. Headings, facts, items and steps can carry photos, and an images block shows a gallery. Blocks appear to the user as you write them, so put the most important one first. This card is the answer: at most one short sentence of text before it, none after.",
+    "A visual answer composed from blocks in reading order: plans, guides, breakdowns, explainers, and small tools the user asks for (scalers, splitters, calculators) where input blocks drive computed rows live on the phone. Headings, facts, items and steps can carry photos, and an images block shows a gallery. Bars draw magnitudes to scale, a quiz lets the user test themselves, cards turn over to reveal an answer, and a quote sets off a voice. Set accent to a colour that suits the subject. Blocks appear to the user as you write them, so put the most important one first. This card is the answer: at most one short sentence of text before it, none after.",
   ProductGrid:
     "Products the user can buy: real prices you found, each product's page url, and a photo url when you have one. Not for articles, sources or links.",
 };
@@ -126,7 +126,7 @@ export function cardSummary(name: string): string {
 }
 
 export function isCatalogName(name: string): boolean {
-  return name in catalogSchemas;
+  return Object.prototype.hasOwnProperty.call(catalogSchemas, name);
 }
 
 const IMAGE_KEYS = new Set(["image", "poster"]);
@@ -162,9 +162,14 @@ export function validateToolArgs(
   const obj = args && typeof args === "object" ? { ...(args as Record<string, unknown>) } : {};
   const fallbackText = typeof obj.fallbackText === "string" ? obj.fallbackText : "";
   delete obj.fallbackText;
+  // Only the model's cards: system cards (MemoryConfirm, LocationRequest) come from the engine alone.
+  if (!(MODEL_COMPONENTS as readonly string[]).includes(name))
+    return { ok: false, error: `Unknown component "${name}"`, fallbackText };
   for (const k of ENGINE_ONLY[name as ModelComponent] ?? []) delete obj[k];
   dropBadImages(obj);
   if (name === "Blocks") {
+    // An accent outside the palette costs the card its colour, not the whole card.
+    if (!(ACCENTS as readonly unknown[]).includes(obj.accent)) delete obj.accent;
     const { blocks, firstError } = readBlocks(obj.blocks);
     if (!blocks.length) return { ok: false, error: firstError ?? "blocks: none", fallbackText };
     obj.blocks = blocks;

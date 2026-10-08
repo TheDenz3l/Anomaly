@@ -82,7 +82,7 @@ Thresholds: > 0.85 act, 0.5–0.85 lightweight confirm, < 0.5 heuristic fallback
 | Settings         | `settings.ts`                                                        | `settings.get/update/setSearchKey/registerPushToken`                                                        |
 | Memory           | `memories.ts`, `engine/memory.ts`                                    | `memories.list/create/update/remove/removeAll/exportAll`                                                    |
 | Agents, research | `engine/agents.ts`, `engine/research.ts`, `agents.ts`, `research.ts` | `agents.forThread`, `research.forThread`                                                                    |
-| Media            | `attachments.ts`, `voice.ts`                                         | `attachments.generateUploadUrl/register`, `voice.transcribe/speak/turnTaking`                               |
+| Media            | `attachments.ts`, `voice.ts`                                         | `attachments.generateUploadUrl/register`, `voice.turnTaking`                                                |
 
 How a reply runs: `messages.send` inserts the user message and an empty `streaming` assistant message, then schedules `chat.run`. The engine (`engine/turn.ts`) runs heuristic/Jev decisions, recalls memories, and loops the model with the component catalog (`src/genui/schemas.ts`, shared with the client) plus app tools (web search/read, weather, places, showtimes, location, memory, sub-agents). Parts stream into the message with buffered writes (~200 ms), so `messages.list` is the live stream. Parts match `src/lib/types.ts`; ids are Convex ids, `createdAt` is `_creationTime`.
 

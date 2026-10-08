@@ -5,7 +5,9 @@ import {
   vAgentRole,
   vFeatures,
   vHeader,
+  vProviderAuth,
   vProviderBalance,
+  vProviderLimits,
   vProviderUsage,
   vLocation,
   vMemoryCategory,
@@ -93,6 +95,9 @@ export default defineSchema({
     modelsFetchedAt: v.optional(v.number()),
     balance: v.optional(vProviderBalance),
     usage: v.optional(vProviderUsage),
+    /** Set for a ChatGPT sign-in; keyCipher then holds its access token. */
+    auth: v.optional(vProviderAuth),
+    limits: v.optional(vProviderLimits),
   })
     .index("by_user", ["userId"])
     .index("by_user_provider", ["userId", "providerId"]),
@@ -156,6 +161,10 @@ export default defineSchema({
     error: v.optional(v.string()),
     /** Plain text of the message, kept for History search. */
     searchText: v.optional(v.string()),
+    /** The engine run allowed to write this reply; a regenerate gives it a new one. */
+    runId: v.optional(v.string()),
+    /** When the current run started streaming (regenerate restarts it). */
+    streamStartedAt: v.optional(v.number()),
   })
     .index("by_thread", ["threadId"])
     .index("by_user", ["userId"])
@@ -169,6 +178,26 @@ export default defineSchema({
     mime: v.string(),
     width: v.optional(v.number()),
     height: v.optional(v.number()),
+    /** Rows without a kind are photos (the only kind before files). */
+    kind: v.optional(v.union(v.literal("image"), v.literal("file"))),
+    name: v.optional(v.string()),
+    size: v.optional(v.number()),
+    /** Reading the file's text: pending until convex/files.ts has run. */
+    extract: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("ok"),
+        v.literal("empty"),
+        v.literal("unsupported"),
+        v.literal("error")
+      )
+    ),
+    /** The text read from the file, stored as a text blob beside it. */
+    textStorageId: v.optional(v.id("_storage")),
+    textChars: v.optional(v.number()),
+    pages: v.optional(v.number()),
+    /** Why there's no text, in words for the model and the user. */
+    extractNote: v.optional(v.string()),
   })
     .index("by_storage", ["storageId"])
     .index("by_message", ["messageId"]),

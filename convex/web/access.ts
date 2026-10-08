@@ -3,7 +3,7 @@
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { vSearchProvider } from "../lib/validators";
@@ -42,7 +42,21 @@ const KEY_ENV = {
 } as const;
 const KEYLESS = ["duckduckgo", "keenable"] as const;
 const MAX_TEXT = 150_000;
-const PDF_SAVED = /^PDF extracted and saved to: (.+)$/m;
+/** Where pi-web-access writes the Markdown it extracts from a PDF (pdf-extract.ts DEFAULT_OUTPUT_DIR). */
+const PDF_DIR = join(tmpdir(), "pi-web-pdf");
+/** pi's whole reply for a PDF: the saved file's path and nothing else. */
+const PDF_SAVED = /^PDF extracted and saved to: (.+)\n\nPages: \d+\nCharacters: \d+$/;
+
+/**
+ * The file pi-web-access saved a PDF's text to, or null. Page text can say anything, so only a
+ * reply that is exactly pi's notice, naming a file inside pi's PDF folder, counts.
+ */
+export function savedPdfPath(content: string): string | null {
+  const m = PDF_SAVED.exec(content.trim());
+  if (!m) return null;
+  const file = resolve(m[1]);
+  return file.startsWith(PDF_DIR + sep) ? file : null;
+}
 
 /** The slice of pi-web-access this file uses (gemini-search.ts `search`, extract.ts `extractContent`). */
 type Pi = {
@@ -234,10 +248,10 @@ export const read = internalAction({
     if (r.error) return { ok: false, error: firstLine(r.error).slice(0, 300) };
     let text = r.content;
     let contentType = r.mimeType ?? "text/html";
-    const saved = text.match(PDF_SAVED);
+    const saved = savedPdfPath(text);
     if (saved) {
-      text = readFileSync(saved[1], "utf8");
-      rmSync(saved[1], { force: true });
+      text = readFileSync(saved, "utf8");
+      rmSync(saved, { force: true });
       contentType = "application/pdf";
     }
     return {

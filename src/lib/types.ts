@@ -31,6 +31,15 @@ export type ComponentPart = {
   error?: string;
 };
 export type ImagePart = { id: string; type: "image"; uri: string; width?: number; height?: number };
+/** A file the user attached; `uri` is the local copy while sending, then the stored file. */
+export type FilePart = {
+  id: string;
+  type: "file";
+  name: string;
+  mime: string;
+  size: number;
+  uri?: string;
+};
 export type SourcesPart = { id: string; type: "sources"; sources: Source[] };
 export type UiEventPart = {
   id: string;
@@ -53,7 +62,14 @@ export type SearchPart = {
 };
 
 export type Part =
-  TextPart | ThinkingPart | SearchPart | ComponentPart | ImagePart | SourcesPart | UiEventPart;
+  | TextPart
+  | ThinkingPart
+  | SearchPart
+  | ComponentPart
+  | ImagePart
+  | FilePart
+  | SourcesPart
+  | UiEventPart;
 
 export type ReplyMeta = {
   modelRef: string;
@@ -151,6 +167,24 @@ export type ProviderUsage = {
   promptTokens: number;
   completionTokens: number;
   replies: number;
+  /** How far the balance fell this month (all use of the key, not just this app). */
+  balanceSpent?: number;
+};
+
+/** A subscription's usage window: the rolling 5-hour limit or the weekly one. */
+export type LimitWindow = {
+  id: string;
+  label: string;
+  usedPercent: number;
+  resetsAt?: number;
+  windowMinutes?: number;
+};
+
+export type ProviderLimits = {
+  plan?: string;
+  windows: LimitWindow[];
+  checkedAt: number;
+  error?: string;
 };
 
 export type Provider = {
@@ -163,6 +197,9 @@ export type Provider = {
   lastError?: string;
   balance?: ProviderBalance;
   usage?: ProviderUsage;
+  /** Set when the provider is a signed-in plan rather than a key. */
+  subscription?: { vendor: "chatgpt"; email?: string; plan?: string };
+  limits?: ProviderLimits;
 };
 
 export type MemoryCategory = "preference" | "fact" | "person" | "place" | "work";

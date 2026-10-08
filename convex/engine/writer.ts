@@ -50,7 +50,9 @@ export class PartWriter implements Sink {
   constructor(
     private ctx: ActionCtx,
     private messageId: Id<"messages">,
-    initial: Part[] = []
+    initial: Part[] = [],
+    /** The run this writer belongs to (messages.runId); writes stop once the reply has a newer one. */
+    readonly runId?: string
   ) {
     this.parts = initial.map((p) => ({ ...p }));
   }
@@ -201,6 +203,7 @@ export class PartWriter implements Sink {
     try {
       const r = await this.ctx.runMutation(internal.engine.data.writeParts, {
         messageId: this.messageId,
+        runId: this.runId,
         parts,
         ...(final ?? {}),
       });

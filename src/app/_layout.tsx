@@ -1,6 +1,6 @@
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { useFonts } from "expo-font";
-import { Stack } from "expo-router";
+import { DarkTheme, Stack, ThemeProvider, type Theme } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { HeroUINativeProvider } from "heroui-native";
@@ -17,6 +17,20 @@ import { colors } from "@/lib/theme";
 import "../global.css";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { PortalHost } from "@/components/ui/Portal";
+
+/**
+ * React Navigation paints the stack's container in its theme's background, which shows at the
+ * screen edges while a screen slides in or out. The default theme is light (rgb 242), so a pale
+ * rim flashed around every transition; the app's own black matches the screens.
+ */
+const navTheme: Theme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: colors.background,
+    card: colors.background,
+  },
+};
 
 Uniwind.setTheme("dark");
 void SplashScreen.preventAutoHideAsync();
@@ -54,19 +68,21 @@ export default function RootLayout() {
           <HeroUINativeProvider
             config={{ devInfo: { stylingPrinciples: false }, toast: "disabled" }}
           >
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: colors.background },
-              }}
-            >
-              <Stack.Screen name="index" />
-              <Stack.Screen name="history" />
-              <Stack.Screen name="memory" />
-              <Stack.Screen name="settings" />
-              <Stack.Screen name="artifacts" />
-              <Stack.Screen name="artifact/[id]" />
-            </Stack>
+            <ThemeProvider value={navTheme}>
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: colors.background },
+                }}
+              >
+                <Stack.Screen name="index" />
+                <Stack.Screen name="history" />
+                <Stack.Screen name="memory" />
+                <Stack.Screen name="settings" />
+                <Stack.Screen name="artifacts" />
+                <Stack.Screen name="artifact/[id]" />
+              </Stack>
+            </ThemeProvider>
             <PortalHost />
             <ToastHost />
             <StatusBar style="light" />

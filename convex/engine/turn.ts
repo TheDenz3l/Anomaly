@@ -3,6 +3,7 @@ import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import { MODEL_COMPONENTS, promptedCatalog, type ModelComponent } from "../ai/catalog";
 import {
+  askedToRemember,
   band,
   heuristicDecisions,
   searchQueryFrom,
@@ -112,13 +113,13 @@ function followUpCandidates(intent: string, cards: string[], tools: string[]): s
 export async function runTurn(
   ctx: ActionCtx,
   messageId: Id<"messages">,
-  opts: { injected?: string; sources?: Source[] } = {}
+  opts: { injected?: string; sources?: Source[]; kind?: ReplyMeta["kind"] } = {}
 ): Promise<void> {
   const startedAt = Date.now();
   const data = await ctx.runQuery(internal.engine.data.turnContext, { messageId });
   if (!data || data.message.status !== "streaming") return;
   const { thread, settings, history } = data;
-  const sink = new PartWriter(ctx, messageId, data.message.parts).start();
+  const sink = new PartWriter(ctx, messageId, data.message.parts, data.message.runId).start();
   const signal = new AbortController();
   sink.onStop = () => signal.abort();
   const meta: ReplyMeta = {
@@ -126,6 +127,7 @@ export async function runTurn(
     levelRequested: thread.reasoningLevel,
     levelSent: "off",
     reasoningTokens: 0,
+    ...(opts.kind ? { kind: opts.kind } : {}),
   };
   let engine: Engine | null = null;
   try {
@@ -205,6 +207,8 @@ export async function runTurn(
       !previous &&
       !input.event &&
       !input.images &&
+      // A question about an attached file is answered from the file, not a search on its wording.
+      !input.files &&
       !opts.injected &&
       text.trim().length >= 8 &&
       !/https?:\/\//i.test(text)
@@ -274,7 +278,9 @@ export async function runTurn(
       },
       location: () => location,
       setLocation,
-      memory: memoryOn ? { threadId: thread._id, used: false } : undefined,
+      memory: memoryOn
+        ? { threadId: thread._id, used: false, requested: askedToRemember(text) }
+        : undefined,
       stoppedRef: () => sink.stopped,
       photos,
       // Jev leaned toward delegating but wasn't sure: show the plan card before any worker runs.
@@ -301,12 +307,14 @@ export async function runTurn(
     // Web: the model's own search when it has one, plus app tools (SearXNG by default) whenever the
     // model can call tools in Auto. A profile flag alone doesn't prove search runs through a chat
     // completions endpoint, and a model with no working search refuses current-events questions.
-    const appWeb =
+    const appWebAllowed =
       (settings.webMode === "app" ||
         !nativeAvailable ||
         (settings.webMode === "auto" && canTools)) &&
-      !skipWeb &&
       it !== "memory";
+    const appWeb = appWebAllowed && !skipWeb;
+    // "Don't search" isn't "don't open the link I gave you".
+    const readLink = !appWeb && appWebAllowed && /https?:\/\/\S/i.test(text);
     const useNative = nativeAvailable && searchMode !== "none";
 
     // Sub-agent decision → delegation.
@@ -320,6 +328,7 @@ export async function runTurn(
     const tools: LoopTool[] = [];
     if (canTools) {
       if (appWeb) tools.push(webSearchTool(env), readUrlTool(env));
+      else if (readLink) tools.push(readUrlTool(env));
       if (wantsData)
         tools.push(weatherTool(env), findPlacesTool(env), geocodeTool(env), showtimesTool(env));
       if (wantsData && !location) tools.push(requestLocationTool(env));
@@ -378,6 +387,10 @@ export async function runTurn(
     }
     if (searchMode === "deep")
       extra.push("Search several angles and cross-check sources before answering.");
+    if (canTools && readLink)
+      extra.push(
+        "The user's message links to a page: read it with read_url before answering. No web search for this one."
+      );
     if (
       !delegate.explicit &&
       act(delegation) &&

@@ -260,9 +260,14 @@ export function GenSkeleton({ name }: { name: string }) {
 }
 
 export function formatMoney(n: number, currency = "USD"): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 0,
-  }).format(n);
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(n);
+  } catch {
+    // Not an ISO code ("$", "dollars"): Intl throws, so show the amount with what was given.
+    return `${Math.round(n).toLocaleString("en-US")} ${currency}`.trim();
+  }
 }

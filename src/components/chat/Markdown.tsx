@@ -382,17 +382,21 @@ function TableView({ raw, index, live }: { raw: string; index: number; live: boo
 
 const HEADING_SIZE = ["text-[22px] leading-7", "text-[19px] leading-7", "text-[17px] leading-6"];
 
+const NO_TRUSTED_IMAGES: ReadonlySet<string> = new Set();
+
 const BlockView = memo(function BlockView({
   kind,
   raw,
   index,
   live,
+  trustedImages,
 }: {
   kind: BlockKind;
   raw: string;
   index: number;
   /** The block still being written, at the end of a reply that is streaming. */
   live: boolean;
+  trustedImages: ReadonlySet<string>;
 }) {
   if (kind === "heading") {
     const [, hashes, text] = raw.match(HEADING)!;
@@ -411,7 +415,7 @@ const BlockView = memo(function BlockView({
     });
     return (
       <View className="my-1">
-        <ImageGallery images={images} live={live} />
+        <ImageGallery images={images} live={live} trusted={(url) => trustedImages.has(url)} />
       </View>
     );
   }
@@ -490,7 +494,19 @@ const BlockView = memo(function BlockView({
  * fences, rules, bold, italic, code, [label](https://…) links and [n] citations. While streaming,
  * text is revealed smoothly and only the block still growing re-renders.
  */
-export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export function Markdown({
+  text,
+  streaming = false,
+  trustedImages = NO_TRUSTED_IMAGES,
+}: {
+  text: string;
+  streaming?: boolean;
+  /**
+   * Image URLs the message itself vouches for (its photos, search results, sources; see
+   * trustedImageUrls). Other image URLs in the text wait for a tap before anything is fetched.
+   */
+  trustedImages?: ReadonlySet<string>;
+}) {
   const smooth = useSmoothText(text, streaming);
   // More may follow whenever the reply is still streaming, not just while the reveal is behind:
   // the text the server has sent so far can itself stop halfway through a link.
@@ -505,6 +521,7 @@ export function Markdown({ text, streaming = false }: { text: string; streaming?
           raw={b.raw}
           index={bi}
           live={growing && bi === list.length - 1}
+          trustedImages={trustedImages}
         />
       ))}
     </View>

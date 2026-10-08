@@ -82,15 +82,18 @@ export const modelContext = internalQuery({
 export const writeParts = internalMutation({
   args: {
     messageId: v.id("messages"),
+    /** The run doing the writing; a reply that was regenerated since refuses it. */
+    runId: v.optional(v.string()),
     parts: v.array(vPart),
     status: v.optional(vMessageStatus),
     meta: v.optional(vReplyMeta),
     error: v.optional(v.string()),
     searchText: v.optional(v.string()),
   },
-  handler: async (ctx, { messageId, parts, status, meta, error, searchText }) => {
+  handler: async (ctx, { messageId, runId, parts, status, meta, error, searchText }) => {
     const m = await ctx.db.get(messageId);
     if (!m) return { stopped: true };
+    if (m.runId && m.runId !== runId) return { stopped: true };
     const stopped = m.status === "stopped";
     const patch: Partial<Doc<"messages">> = { parts };
     if (status && !stopped) patch.status = status;
@@ -167,7 +170,10 @@ export const recordTurn = internalMutation({
   },
 });
 
-/** Marks replies left "streaming" by a crashed or timed-out action as errors. */
+/**
+ * Marks replies left "streaming" by a crashed or timed-out action as errors, along with a Deep
+ * Research run whose progress reply that was.
+ */
 export const reapStale = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -178,8 +184,21 @@ export const reapStale = internalMutation({
       .take(200);
     let n = 0;
     for (const m of rows) {
-      if (m._creationTime < cutoff) {
+      if ((m.streamStartedAt ?? m._creationTime) < cutoff) {
         await ctx.db.patch(m._id, { status: "error", error: "The reply timed out." });
+        const runs = await ctx.db
+          .query("researchRuns")
+          .withIndex("by_thread", (q) => q.eq("threadId", m.threadId))
+          .order("desc")
+          .take(10);
+        for (const r of runs) {
+          if (r.progressMessageId === m._id && ["running", "synthesizing"].includes(r.status))
+            await ctx.db.patch(r._id, {
+              status: "failed",
+              error: "The research timed out.",
+              finishedAt: Date.now(),
+            });
+        }
         n++;
       }
     }

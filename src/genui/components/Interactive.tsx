@@ -71,7 +71,7 @@ export function Form({ props, emit, events, busy }: GenProps<"Form">) {
                   <Tap
                     disabled={locked}
                     accessibilityLabel={`Decrease ${f.label}`}
-                    onPress={() => set(f.id, Math.max(1, Number(v) - 1))}
+                    onPress={() => set(f.id, Math.max(0, Number(v) - 1))}
                     className="h-10 w-10 items-center justify-center rounded-full bg-raised"
                   >
                     <Icon name="remove" size={18} />

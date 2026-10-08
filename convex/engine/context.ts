@@ -2,7 +2,13 @@ import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
-import { decisionProvider, maskPii, type Decision, type DecisionProvider } from "../ai/decisions";
+import {
+  decisionProvider,
+  heuristicDecisions,
+  maskPii,
+  type Decision,
+  type DecisionProvider,
+} from "../ai/decisions";
 import type { Endpoint } from "../ai/openai";
 import { decryptSecret } from "../lib/crypto";
 import type { SettingsFields } from "../lib/settings";
@@ -94,7 +100,8 @@ export async function modelEngine(
     profile: m.profile,
     cache: webCache(ctx),
     search,
-    dp: decisionProvider(),
+    // Incognito text stays between the user and their own model: no Jev calls for routing.
+    dp: base.thread.incognito ? heuristicDecisions : decisionProvider(),
     decisions: base.decisions ?? [],
     learn: base.learn ?? new Map(),
     safety: [],
@@ -141,18 +148,15 @@ export function learn(engine: Engine, ev: LearnEvent): void {
 export async function flushRecords(engine: Engine, refId?: string): Promise<void> {
   const { ctx } = engine;
   const jobs: Promise<unknown>[] = [];
+  // Incognito chats leave no decision log: the text in it would outlive the chat.
+  if (engine.thread.incognito) engine.decisions.length = 0;
   if (engine.decisions.length) {
     const sensitive =
       engine.safety.includes("pii_sensitive") || engine.safety.includes("credentials");
     const items = engine.decisions.splice(0).map((d) => ({
       ...d,
-      input:
-        typeof d.input === "string"
-          ? sensitive
-            ? "[redacted: sensitive]"
-            : maskPii(d.input).slice(0, 500)
-          : sanitizeLog(d.input),
-      output: sanitizeLog(d.output),
+      input: scrubLog(d.input, sensitive),
+      output: scrubLog(d.output, sensitive),
     }));
     jobs.push(
       ctx.runMutation(internal.decisionLog.recordMany, { userId: engine.userId, refId, items })
@@ -175,12 +179,26 @@ export async function flushRecords(engine: Engine, refId?: string): Promise<void
   await Promise.allSettled(jobs);
 }
 
-function sanitizeLog(v: unknown): unknown {
+/**
+ * Plain JSON for the decision log with every string masked for PII, or redacted outright on a
+ * sensitive turn. Outputs too: a memory gate's output carries the user's own words.
+ */
+function scrubLog(value: unknown, sensitive: boolean): unknown {
+  let plain: unknown;
   try {
-    return JSON.parse(JSON.stringify(v ?? null));
+    plain = JSON.parse(JSON.stringify(value ?? null));
   } catch {
     return null;
   }
+  const scrub = (x: unknown): unknown => {
+    if (typeof x === "string")
+      return sensitive ? "[redacted: sensitive]" : maskPii(x).slice(0, 500);
+    if (Array.isArray(x)) return x.map(scrub);
+    if (x && typeof x === "object")
+      return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, scrub(v)]));
+    return x;
+  };
+  return scrub(plain);
 }
 
 export function estimateCost(

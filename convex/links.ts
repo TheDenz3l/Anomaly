@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { requireUser } from "./lib/auth";
 import { HOUR, webCache } from "./web/cache";
-import { publicUrl } from "./web/guard";
+import { fetchPublic, publicUrl } from "./web/guard";
 
 /** Titles for links pasted into the composer, shown beside the site's icon in the input and the bubble. */
 
@@ -95,9 +95,8 @@ async function headOf(url: URL): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
   try {
-    const res = await fetch(url, {
+    const res = await fetchPublic(url.toString(), {
       headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml" },
-      redirect: "follow",
       signal: controller.signal,
     });
     if (!res.ok || !/html/i.test(res.headers.get("content-type") ?? "")) return null;

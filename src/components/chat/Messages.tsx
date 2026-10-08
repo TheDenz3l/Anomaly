@@ -1,9 +1,10 @@
 import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
-import { memo, useState, useEffect, useRef } from "react";
+import { useMemo, memo, useState, useEffect, useRef } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { Tap } from "@/components/ui/Tap";
-import { withLinkUrls } from "@/lib/links";
+import { openLink, trustedImageUrls, withLinkUrls } from "@/lib/links";
+import { fileIcon, humanSize, typeLabel } from "@/lib/files";
 import { useApp } from "@/lib/store";
 import { Icon } from "@/components/ui/Icon";
 import { Text } from "@/components/ui/Text";
@@ -94,6 +95,7 @@ function UserMessageRow({ message }: { message: Message }) {
     );
   }
   const images = message.parts.filter((p) => p.type === "image");
+  const files = message.parts.filter((p) => p.type === "file");
   const text = message.parts.find((p) => p.type === "text");
   return (
     <View className="items-end gap-1.5">
@@ -112,6 +114,40 @@ function UserMessageRow({ message }: { message: Message }) {
                 }}
                 contentFit="cover"
               />
+            ) : null
+          )}
+        </View>
+      ) : null}
+      {files.length > 0 ? (
+        <View className="items-end gap-1.5">
+          {files.map((p) =>
+            p.type === "file" ? (
+              <Tap
+                key={p.id}
+                accessibilityRole="button"
+                accessibilityLabel={`${p.name}, ${typeLabel(p.name, p.mime)}`}
+                accessibilityHint="Opens the file"
+                disabled={!p.uri?.startsWith("https://")}
+                onPress={() => {
+                  if (p.uri) void openLink(p.uri);
+                }}
+                className="max-w-[280px] flex-row items-center gap-3 rounded-[18px] bg-raised py-2.5 pl-2.5 pr-4"
+              >
+                <View
+                  className="h-10 w-10 items-center justify-center rounded-xl"
+                  style={{ backgroundColor: colors.raisedHigh }}
+                >
+                  <Icon name={fileIcon(p.name, p.mime)} size={19} color={colors.text} />
+                </View>
+                <View className="shrink">
+                  <Text weight="medium" className="text-[15px] leading-5" numberOfLines={1}>
+                    {p.name}
+                  </Text>
+                  <Text muted className="text-[13px] leading-[18px]" numberOfLines={1}>
+                    {`${typeLabel(p.name, p.mime)}${p.size ? `, ${humanSize(p.size)}` : ""}`}
+                  </Text>
+                </View>
+              </Tap>
             ) : null
           )}
         </View>
@@ -184,6 +220,7 @@ function AssistantMessageRow({ message, last }: { message: Message; last: boolea
     wasStreaming.current = streaming;
   }, [streaming, message.status]);
   const sources = collectSources(message);
+  const trustedImages = useMemo(() => trustedImageUrls(message.parts), [message.parts]);
   const visible = displayParts(message.parts);
   const reasoning = message.meta && message.meta.levelSent !== "off";
   const end = visible.length - 1;
@@ -205,7 +242,14 @@ function AssistantMessageRow({ message, last }: { message: Message; last: boolea
       case "search":
         return <SearchBlock key="search" part={p} animate={streaming} />;
       case "text":
-        return <Markdown key={p.id} text={p.text} streaming={streaming && i === end} />;
+        return (
+          <Markdown
+            key={p.id}
+            text={p.text}
+            streaming={streaming && i === end}
+            trustedImages={trustedImages}
+          />
+        );
       case "component":
         return (
           <ComponentRenderer

@@ -1,14 +1,18 @@
 import { useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
-import { TextInput, View } from "react-native";
+import * as Haptics from "expo-haptics";
+import { useMemo, useRef, useState } from "react";
+import { Platform, TextInput, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { Glass } from "@/components/ui/Glass";
 import { Icon } from "@/components/ui/Icon";
 import { Group, Page } from "@/components/ui/Page";
-import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
-import { ActionButton } from "@/genui/kit";
+import {
+  ThreadMenu,
+  type RowLook,
+  type ThreadMenuTarget,
+} from "@/components/navigation/ThreadMenu";
 import { fadeIn, fadeOut, reflow } from "@/lib/motion";
 import { goBack } from "@/lib/nav";
 import { findModel, useApp } from "@/lib/store";
@@ -50,11 +54,10 @@ export default function HistoryScreen() {
   const activeId = useApp((s) => s.activeThreadId);
   const openThread = useApp((s) => s.openThread);
   const newChat = useApp((s) => s.newChat);
-  const deleteThread = useApp((s) => s.deleteThread);
-  const showToast = useApp((s) => s.showToast);
   const { search } = useLocalSearchParams<{ search?: string }>();
   const [query, setQuery] = useState("");
-  const [menuFor, setMenuFor] = useState<Thread | null>(null);
+  const rows = useRef(new Map<string, View>());
+  const [menu, setMenu] = useState<ThreadMenuTarget | null>(null);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -80,6 +83,19 @@ export default function HistoryScreen() {
   const open = (id: string) => {
     openThread(id);
     goBack();
+  };
+
+  /**
+   * Long press lifts the row into the same menu the side drawer's recents use (pin, rename,
+   * delete), drawn exactly as the row looks in its card so nothing changes shape.
+   */
+  const openMenu = (t: Thread, look: RowLook) => {
+    if (Platform.OS !== "web") void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    rows.current
+      .get(t.id)
+      ?.measureInWindow((x, y, width, height) =>
+        setMenu({ thread: t, anchor: { x, y, width, height }, look })
+      );
   };
 
   return (
@@ -152,78 +168,65 @@ export default function HistoryScreen() {
                   : t.incognito
                     ? "eye-off-outline"
                     : "chatbubble-outline";
+              const look: RowLook = {
+                kind: "history",
+                detail: preview(messages[t.id]) || t.preview || model.name,
+                time: when(t.updatedAt),
+                active: t.id === activeId,
+                first: i === 0,
+                last: i === g.items.length - 1,
+              };
               return (
                 <Animated.View key={t.id} entering={fadeIn} exiting={fadeOut} layout={reflow}>
-                  <Tap
-                    accessibilityRole="button"
-                    accessibilityLabel={`${t.title}${t.id === activeId ? ", open" : ""}`}
-                    onPress={() => open(t.id)}
-                    onLongPress={() => setMenuFor(t)}
-                    className={`flex-row items-center gap-3 px-4 py-3.5 ${i < g.items.length - 1 ? "border-b border-hairline" : ""}`}
+                  <View
+                    collapsable={false}
+                    ref={(node) => {
+                      if (!node) return;
+                      rows.current.set(t.id, node);
+                      return () => {
+                        rows.current.delete(t.id);
+                      };
+                    }}
                   >
-                    <Icon
-                      name={icon}
-                      size={18}
-                      color={t.id === activeId ? colors.primary : colors.textMuted}
-                    />
-                    <View className="flex-1">
-                      <View className="flex-row items-baseline gap-2">
-                        <Text weight="bold" className="flex-1 text-base" numberOfLines={1}>
-                          {t.title}
-                        </Text>
-                        <Text className="text-xs text-ink-faint">{when(t.updatedAt)}</Text>
-                      </View>
-                      <Text muted className="mt-0.5 text-sm leading-5" numberOfLines={1}>
-                        {preview(messages[t.id]) || t.preview || model.name}
-                      </Text>
-                    </View>
                     <Tap
-                      accessibilityLabel={`Options for ${t.title}`}
-                      hitSlop={8}
-                      onPress={() => setMenuFor(t)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${t.title}${t.id === activeId ? ", open" : ""}`}
+                      accessibilityHint="Long press to pin, rename or delete"
+                      accessibilityActions={[{ name: "longpress", label: "Chat options" }]}
+                      onAccessibilityAction={() => openMenu(t, look)}
+                      onPress={() => open(t.id)}
+                      onLongPress={() => openMenu(t, look)}
+                      delayLongPress={380}
+                      className={`flex-row items-center gap-3 px-4 py-3.5 ${i < g.items.length - 1 ? "border-b border-hairline" : ""}`}
                     >
-                      <Icon name="ellipsis-horizontal" size={16} color={colors.textFaint} />
+                      <Icon
+                        name={icon}
+                        size={18}
+                        color={t.id === activeId ? colors.primary : colors.textMuted}
+                      />
+                      <View className="flex-1">
+                        <View className="flex-row items-baseline gap-2">
+                          <Text weight="bold" className="flex-1 text-base" numberOfLines={1}>
+                            {t.title}
+                          </Text>
+                          {t.pinnedAt ? (
+                            <Icon name="pin" size={12} color={colors.textFaint} />
+                          ) : null}
+                          <Text className="text-xs text-ink-faint">{look.time}</Text>
+                        </View>
+                        <Text muted className="mt-0.5 text-sm leading-5" numberOfLines={1}>
+                          {look.detail}
+                        </Text>
+                      </View>
                     </Tap>
-                  </Tap>
+                  </View>
                 </Animated.View>
               );
             })}
           </Group>
         ))}
       </Page>
-
-      <Sheet
-        open={menuFor !== null}
-        onClose={() => setMenuFor(null)}
-        title={menuFor?.title}
-        subtitle={
-          menuFor
-            ? `${findModel(models, menuFor.modelRef).name}${messages[menuFor.id]?.length ? `, ${messages[menuFor.id].length} messages` : ""}`
-            : undefined
-        }
-      >
-        <View className="gap-2">
-          <ActionButton
-            variant="secondary"
-            icon="open-outline"
-            label="Open chat"
-            onPress={() => {
-              if (menuFor) open(menuFor.id);
-              setMenuFor(null);
-            }}
-          />
-          <ActionButton
-            variant="danger-soft"
-            icon="trash-outline"
-            label="Delete chat"
-            onPress={() => {
-              if (menuFor) deleteThread(menuFor.id);
-              setMenuFor(null);
-              showToast("Chat deleted");
-            }}
-          />
-        </View>
-      </Sheet>
+      <ThreadMenu target={menu} onClose={() => setMenu(null)} />
     </View>
   );
 }

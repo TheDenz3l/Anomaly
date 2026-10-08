@@ -311,20 +311,23 @@ export default function MemoryScreen() {
                 })}
               </View>
             </View>
-            <View className="gap-2">
-              <Text weight="medium" muted className="text-[13px]">
-                Applies to
-              </Text>
-              <Segmented
-                accessibilityLabel="Memory scope"
-                value={draft.scope}
-                onChange={(scope) => setDraft({ ...draft, scope })}
-                options={[
-                  { value: "global", label: "All chats" },
-                  { value: "thread", label: "One chat" },
-                ]}
-              />
-            </View>
+            {/* One-chat memories come from inside a chat; here they can only be widened to all chats. */}
+            {draft.id && memories.find((m) => m.id === draft.id)?.scope === "thread" ? (
+              <View className="gap-2">
+                <Text weight="medium" muted className="text-[13px]">
+                  Applies to
+                </Text>
+                <Segmented
+                  accessibilityLabel="Memory scope"
+                  value={draft.scope}
+                  onChange={(scope) => setDraft({ ...draft, scope })}
+                  options={[
+                    { value: "global", label: "All chats" },
+                    { value: "thread", label: "One chat" },
+                  ]}
+                />
+              </View>
+            ) : null}
           </View>
         ) : null}
       </Sheet>

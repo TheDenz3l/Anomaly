@@ -139,12 +139,30 @@ const REPORT_SYSTEM = [
 
 /** Step 5–7: synthesize with the strongest model at high reasoning, verify citations, deliver. */
 export const synthesize = internalAction({
-  args: { runId: v.id("researchRuns"), messageId: v.id("messages") },
-  handler: async (ctx, { runId, messageId }): Promise<void> => {
+  args: {
+    runId: v.id("researchRuns"),
+    messageId: v.id("messages"),
+    /** The reply run that gathered the notes (messages.runId). */
+    writerRunId: v.optional(v.string()),
+  },
+  handler: async (ctx, { runId, messageId, writerRunId }): Promise<void> => {
     const run: Doc<"researchRuns"> | null = await ctx.runQuery(internal.research.get, { runId });
+    if (!run) return;
     const data = await ctx.runQuery(internal.engine.data.turnContext, { messageId });
-    if (!run || !data) return;
-    if (data.message.status !== "streaming" || run.status === "cancelled") {
+    if (!data) {
+      await ctx.runMutation(internal.research.patch, {
+        runId,
+        status: "failed",
+        error: "The research reply was deleted.",
+        finishedAt: Date.now(),
+      });
+      return;
+    }
+    if (
+      data.message.status !== "streaming" ||
+      run.status === "cancelled" ||
+      (writerRunId !== undefined && data.message.runId !== writerRunId)
+    ) {
       await ctx.runMutation(internal.research.patch, {
         runId,
         status: "cancelled",
@@ -152,7 +170,7 @@ export const synthesize = internalAction({
       });
       return;
     }
-    const sink = new PartWriter(ctx, messageId, data.message.parts).start();
+    const sink = new PartWriter(ctx, messageId, data.message.parts, data.message.runId).start();
     const signal = new AbortController();
     sink.onStop = () => signal.abort();
     const meta: ReplyMeta = {

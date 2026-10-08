@@ -1,6 +1,6 @@
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { band } from "../ai/decisions";
+import { isSensitiveMemory, band } from "../ai/decisions";
 import { complete } from "../ai/openai";
 import { buildRequest } from "../ai/reasoning";
 import { findPlaces, geocode, POI_KINDS, reverseGeocode, type PoiResult } from "../data/geo";
@@ -40,7 +40,8 @@ export type ToolEnv = {
   budget: { searches: number; maxSearches: number; reads: number; maxReads: number };
   location: () => GeoLocation | undefined;
   setLocation: (loc: GeoLocation) => Promise<void>;
-  memory?: { threadId: Id<"threads">; used: boolean };
+  /** `requested`: the user's own message asked to remember something (the model's say-so never counts). */
+  memory?: { threadId: Id<"threads">; used: boolean; requested: boolean };
   /** Lookups started early (before the model asks), keyed by place. */
   prefetched?: Map<string, ShowtimeData>;
   /** Work that keeps filling cards after a tool returned; the turn waits for it before finishing. */
@@ -694,6 +695,8 @@ function hashOf(s: string): string {
   return (h >>> 0).toString(36);
 }
 
+const BLOCKED_RE =
+  /you have been blocked|enable (cookies|javascript)|access denied|attention required|verify you are (a )?human|just a moment/i;
 const TIME_RE = /\b\d{1,2}:\d{2}\s?(am|pm|a\.m\.|p\.m\.)?(?![\d:])/i;
 
 /**
@@ -708,8 +711,13 @@ async function theatrePage(env: ToolEnv, raw: string): Promise<{ url: string; te
       headers: { "X-Return-Format": "text", Accept: "text/plain" },
       signal: AbortSignal.timeout(20_000),
     });
-    // A rendered page without clock times won't have them in the plain reader either.
-    if (res.ok) return { url: url.toString(), text: await res.text() };
+    if (res.ok) {
+      const text = await res.text();
+      // A bot-check page ("Sorry, you have been blocked") goes to the regular reader instead,
+      // which tries Firecrawl first. A real page without clock times wouldn't have them there either.
+      if (!BLOCKED_RE.test(text.slice(0, 1500)) || TIME_RE.test(text))
+        return { url: url.toString(), text };
+    }
   } catch {
     /* fall back to the regular reader */
   }
@@ -763,10 +771,16 @@ async function cinemaTimes(
   closed: () => boolean
 ): Promise<void> {
   const day = new Date().toISOString().slice(0, 10);
-  const keyOf = (t: PoiResult) => `times:v4:${t.website}:${day}:${hashOf(titles.join("|"))}`;
+  const keyOf = (t: PoiResult) => `times:v5:${t.website}:${day}:${hashOf(titles.join("|"))}`;
   type Found = { url: string; rows: Extracted[] };
+  // A page with no times may only have been unreadable this time, so that answer expires sooner.
   const save = (t: PoiResult, found: Found) =>
-    env.engine.cache.put(keyOf(t), JSON.stringify(found), "application/json", 3 * HOUR);
+    env.engine.cache.put(
+      keyOf(t),
+      JSON.stringify(found),
+      "application/json",
+      found.rows.length ? 3 * HOUR : HOUR / 2
+    );
   const report = async (theatre: PoiResult, found: Found) => {
     if (!found.rows.length || closed()) return;
     env.sources.add(
@@ -1025,8 +1039,11 @@ export async function proposeMemory(
   env: ToolEnv,
   candidate: { text: string; category: MemoryCategory; scope: "global" | "thread" },
   confidence: number
-): Promise<"saved" | "asked" | "skipped"> {
+): Promise<"saved" | "asked" | "skipped" | "sensitive"> {
   if (!env.memory) return "skipped";
+  // Secrets and card numbers never go into memory, whatever the gate or the model decided.
+  const flagged = env.engine.safety.some((f) => f === "credentials" || f === "pii_sensitive");
+  if (flagged || isSensitiveMemory(candidate.text)) return "sensitive";
   const b = band(confidence);
   if (b === "fallback") return "skipped";
   const componentId = uid("cmp");
@@ -1078,7 +1095,6 @@ export function rememberTool(env: ToolEnv): LoopTool {
           enum: ["global", "thread"],
           description: "thread = only this chat",
         },
-        explicit: { type: "boolean", description: "True if the user asked you to remember it" },
       },
       ["text", "category", "scope"]
     ),
@@ -1088,11 +1104,11 @@ export function rememberTool(env: ToolEnv): LoopTool {
       if (!text) return { content: "text is required." };
       const gate = await env.engine.dp.memoryGate(text);
       note(env.engine, "memory_gate", text, gate);
-      const confidence = args.explicit
+      // Saving without asking needs the user's own request. The model calling this on its own, or
+      // because a web page told it to, gets a confirm card at most.
+      const confidence = env.memory.requested
         ? Math.max(gate.confidence, 0.93)
-        : gate.choice.remember
-          ? Math.max(gate.confidence, 0.75)
-          : 0.6;
+        : Math.min(gate.choice.remember ? Math.max(gate.confidence, 0.75) : 0.6, 0.84);
       const category = CATEGORIES.includes(args.category) ? args.category : gate.choice.category;
       const outcome = await proposeMemory(
         env,
@@ -1105,7 +1121,9 @@ export function rememberTool(env: ToolEnv): LoopTool {
             ? "Saved to memory (the user can undo it). Mention it in a few words at most."
             : outcome === "asked"
               ? "Shown a confirm card; the user decides. Don't ask again in text."
-              : "Not saved (not durable or a duplicate).",
+              : outcome === "sensitive"
+                ? "Not saved: memory never keeps passwords, keys, card numbers or other secrets. Tell the user so."
+                : "Not saved (not durable or a duplicate).",
       };
     },
   };

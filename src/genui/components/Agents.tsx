@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { Orb } from "@/components/orb/Orb";
 import { Icon, type IconName } from "@/components/ui/Icon";
@@ -24,18 +24,24 @@ const roleIcon: Record<Role, IconName> = {
 
 /** Milliseconds since mount while `live`; jumps to the end when replaying a finished thread. */
 function useElapsed(live: boolean, total: number): number {
-  const [elapsed, setElapsed] = useState(live ? 0 : Number.POSITIVE_INFINITY);
+  const [elapsed, setElapsed] = useState(0);
+  // The clock starts once, however often the server revises the estimate.
+  const start = useRef<number | null>(null);
+  const totalRef = useRef(total);
+  useEffect(() => {
+    totalRef.current = total;
+  }, [total]);
   useEffect(() => {
     if (!live) return;
-    const start = Date.now();
+    start.current ??= Date.now();
     const id = setInterval(() => {
-      const e = Date.now() - start;
-      setElapsed(e);
-      if (e > total) clearInterval(id);
+      const e = Date.now() - start.current!;
+      // Past the estimate it holds still (no renders) until a longer one arrives or the run ends.
+      if (e <= totalRef.current + 150) setElapsed(e);
     }, 150);
     return () => clearInterval(id);
-  }, [live, total]);
-  return elapsed;
+  }, [live]);
+  return live ? elapsed : Number.POSITIVE_INFINITY;
 }
 
 function tokens(n: number) {

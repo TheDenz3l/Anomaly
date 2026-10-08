@@ -11,7 +11,9 @@ export function textOf(parts: Part[]): string {
           ? p.label
           : p.type === "component"
             ? p.fallbackText
-            : ""
+            : p.type === "file"
+              ? p.name
+              : ""
     )
     .filter(Boolean)
     .join("\n")
@@ -22,7 +24,7 @@ export function textOf(parts: Part[]): string {
 export async function clientMessage(ctx: QueryCtx, m: Doc<"messages">) {
   const parts = await Promise.all(
     m.parts.map(async (p) => {
-      if (p.type === "image" && p.storageId && !p.uri) {
+      if ((p.type === "image" || p.type === "file") && p.storageId && !p.uri) {
         return { ...p, uri: (await ctx.storage.getUrl(p.storageId)) ?? undefined };
       }
       return p;
@@ -46,16 +48,38 @@ export async function threadMessages(ctx: QueryCtx, threadId: Id<"threads">, lim
   return (await q.order("desc").take(limit)).reverse();
 }
 
-/** Marks any in-flight reply in the thread as stopped; the running action notices on its next flush. */
-export async function stopStreaming(ctx: MutationCtx, threadId: Id<"threads">): Promise<number> {
+/** The progress reply of a Deep Research run still gathering or writing in this thread. */
+export async function activeResearchMessage(
+  ctx: QueryCtx,
+  threadId: Id<"threads">
+): Promise<Id<"messages"> | null> {
+  const runs = await ctx.db
+    .query("researchRuns")
+    .withIndex("by_thread", (q) => q.eq("threadId", threadId))
+    .order("desc")
+    .take(5);
+  const run = runs.find((r) => r.status === "running" || r.status === "synthesizing");
+  return run?.progressMessageId ?? null;
+}
+
+/**
+ * Marks any in-flight reply in the thread as stopped; the running action notices on its next flush.
+ * `keepResearch`: a new message leaves a running Deep Research alone; only an explicit Stop ends it.
+ */
+export async function stopStreaming(
+  ctx: MutationCtx,
+  threadId: Id<"threads">,
+  opts: { keepResearch?: boolean } = {}
+): Promise<number> {
   const recent = await ctx.db
     .query("messages")
     .withIndex("by_thread", (q) => q.eq("threadId", threadId))
     .order("desc")
     .take(20);
+  const keep = opts.keepResearch ? await activeResearchMessage(ctx, threadId) : null;
   let n = 0;
   for (const m of recent) {
-    if (m.status === "streaming") {
+    if (m.status === "streaming" && m._id !== keep) {
       await ctx.db.patch(m._id, { status: "stopped" });
       n++;
     }

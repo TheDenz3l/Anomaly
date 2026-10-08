@@ -25,6 +25,8 @@ import Animated, {
   withSpring,
 } from "react-native-reanimated";
 import { setChatVisible } from "@/lib/haptics";
+import * as Speech from "expo-speech";
+import { plainText } from "@/components/chat/SourcesBar";
 
 /** Distance from the bottom (px) beyond which we stop following new content and offer a jump button. */
 const FOLLOW_SLACK = 140;
@@ -192,6 +194,25 @@ export default function ChatScreen() {
       else scroller.current?.scrollTo({ y: 0, animated: false });
     });
   }, [threadId]);
+
+  // "Read replies aloud": a reply that finishes while this chat is open is spoken. A new send stops
+  // whatever is still being read.
+  const readAloud = useApp((s) => s.settings.readRepliesAloud);
+  const wasReplying = useRef(replying);
+  useEffect(() => {
+    const finished = wasReplying.current && !replying;
+    wasReplying.current = replying;
+    if (replying) {
+      void Speech.stop();
+      return;
+    }
+    if (!finished || !readAloud || !messages?.length) return;
+    const last = messages[messages.length - 1];
+    if (last.role !== "assistant" || last.status !== "done") return;
+    const text = plainText(last).trim();
+    if (text) Speech.speak(text.slice(0, 3800));
+  }, [replying, readAloud, messages]);
+  useEffect(() => () => void Speech.stop(), [threadId]);
 
   // A parked message nothing answers (its send failed) gives the blank space back.
   const lastKey = messages?.length ? (messages[count - 1].key ?? messages[count - 1].id) : null;

@@ -29,7 +29,21 @@ import type { Thread } from "@/lib/types";
 
 /** Window-space frame of the row that was long-pressed. */
 export type Anchor = { x: number; y: number; width: number; height: number };
-export type ThreadMenuTarget = { thread: Thread; anchor: Anchor };
+/**
+ * How the pressed row looks where it sits, so the lifted copy matches it exactly. Without one the
+ * row is drawn as in the side drawer's recents.
+ */
+export type RowLook = {
+  /** The History list's two-line row: title and time, then a preview. */
+  kind: "history";
+  detail: string;
+  time: string;
+  active: boolean;
+  /** The row's corners are the list card's rounded ones at the top and bottom of the card. */
+  first: boolean;
+  last: boolean;
+};
+export type ThreadMenuTarget = { thread: Thread; anchor: Anchor; look?: RowLook };
 
 type Item = {
   key: string;
@@ -50,6 +64,8 @@ const SEP_H = 13;
 const GAP = 8;
 const EDGE = 12;
 const DANGER = "#F0645D";
+/** Corner radius of the History list's cards (Page's Group: rounded-3xl). */
+const HISTORY_RADIUS = 24;
 
 export function threadIcon(t: Thread): IconName {
   if (t.mode === "research") return "telescope-outline";
@@ -141,7 +157,7 @@ export function ThreadMenu({
   }, [target, reduced, fade, blur, progress, shift]);
 
   if (!shown) return null;
-  const { thread, anchor: a } = shown;
+  const { thread, anchor: a, look } = shown;
   const renaming = title !== null;
   const nextTitle = title?.trim() ?? "";
 
@@ -242,31 +258,81 @@ export function ThreadMenu({
           transform: [{ translateY: shift }, { scale: reduced ? 1 : lift }],
         }}
       >
-        <View style={styles.row}>
-          <Icon name={threadIcon(thread)} size={20} color={colors.text} />
-          {renaming ? (
-            <TextInput
-              value={title}
-              onChangeText={setTitle}
-              autoFocus
-              selectTextOnFocus
-              returnKeyType="done"
-              onSubmitEditing={commitRename}
-              maxLength={120}
-              placeholder="Chat title"
-              placeholderTextColor={colors.textFaint}
-              accessibilityLabel="Chat title"
-              style={styles.input}
+        {look ? (
+          <View
+            style={[
+              styles.historyRow,
+              {
+                borderTopLeftRadius: look.first ? HISTORY_RADIUS : 0,
+                borderTopRightRadius: look.first ? HISTORY_RADIUS : 0,
+                borderBottomLeftRadius: look.last ? HISTORY_RADIUS : 0,
+                borderBottomRightRadius: look.last ? HISTORY_RADIUS : 0,
+              },
+            ]}
+          >
+            <Icon
+              name={threadIcon(thread)}
+              size={18}
+              color={look.active ? colors.primary : colors.textMuted}
             />
-          ) : (
-            <Text className="flex-1 text-[17px] leading-6" numberOfLines={1}>
-              {thread.title}
-            </Text>
-          )}
-          {thread.pinnedAt && !renaming ? (
-            <Icon name="pin" size={15} color={colors.textFaint} />
-          ) : null}
-        </View>
+            <View className="flex-1">
+              <View className="flex-row items-baseline gap-2">
+                {renaming ? (
+                  <TextInput
+                    value={title}
+                    onChangeText={setTitle}
+                    autoFocus
+                    selectTextOnFocus
+                    returnKeyType="done"
+                    onSubmitEditing={commitRename}
+                    maxLength={120}
+                    placeholder="Chat title"
+                    placeholderTextColor={colors.textFaint}
+                    accessibilityLabel="Chat title"
+                    style={[styles.input, { fontFamily: fonts.bold, fontSize: 16 }]}
+                  />
+                ) : (
+                  <Text weight="bold" className="flex-1 text-base" numberOfLines={1}>
+                    {thread.title}
+                  </Text>
+                )}
+                {thread.pinnedAt && !renaming ? (
+                  <Icon name="pin" size={12} color={colors.textFaint} />
+                ) : null}
+                <Text className="text-xs text-ink-faint">{look.time}</Text>
+              </View>
+              <Text muted className="mt-0.5 text-sm leading-5" numberOfLines={1}>
+                {look.detail}
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.row}>
+            <Icon name={threadIcon(thread)} size={20} color={colors.text} />
+            {renaming ? (
+              <TextInput
+                value={title}
+                onChangeText={setTitle}
+                autoFocus
+                selectTextOnFocus
+                returnKeyType="done"
+                onSubmitEditing={commitRename}
+                maxLength={120}
+                placeholder="Chat title"
+                placeholderTextColor={colors.textFaint}
+                accessibilityLabel="Chat title"
+                style={styles.input}
+              />
+            ) : (
+              <Text className="flex-1 text-[17px] leading-6" numberOfLines={1}>
+                {thread.title}
+              </Text>
+            )}
+            {thread.pinnedAt && !renaming ? (
+              <Icon name="pin" size={15} color={colors.textFaint} />
+            ) : null}
+          </View>
+        )}
       </Animated.View>
 
       <Animated.View
@@ -328,6 +394,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#1F1F23",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.08)",
+  },
+  /** Same box as a History row in its card: px-4 py-3.5 on the card colour, no border. */
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: colors.surface,
   },
   input: {
     flex: 1,

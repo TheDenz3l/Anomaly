@@ -186,10 +186,9 @@ function overpass(query: string, signal?: AbortSignal): Promise<any> {
       json(url, init, 20_000)
         .then((res) => {
           const remark = typeof res?.remark === "string" ? res.remark : "";
-          if (
-            !Array.isArray(res?.elements) ||
-            (/error|timed out/i.test(remark) && !res.elements.length)
-          )
+          // A query that ran out of time can still return some elements; a partial list would
+          // hide places, so it counts as a failure.
+          if (!Array.isArray(res?.elements) || /error|timed out/i.test(remark))
             throw new Error(`${new URL(url).hostname}: ${remark || "no elements"}`);
           return res;
         })
@@ -264,16 +263,24 @@ async function photonPlaces(
   if (!tag) throw new Error(`No Photon mapping for ${kind}`);
   const [, key, op, value] = tag;
   const values = op === "=" ? [value] : value.replace(/^\^\(|\)\$$/g, "").split("|");
-  const box = boxAround(center, radiusM);
+  // Without a name, reverse lookup by tag: the text search only returns places whose name
+  // contains the word ("Landmark Cinema" but not "AMC" or "Regal Atlantic Station").
   const params = new URLSearchParams({
-    q: name || POI_PHRASES[kind] || values[0],
     lat: String(center.lat),
     lon: String(center.lng),
     limit: "40",
-    bbox: `${box.w},${box.s},${box.e},${box.n}`,
   });
+  if (name) {
+    const box = boxAround(center, radiusM);
+    params.set("q", name);
+    params.set("bbox", `${box.w},${box.s},${box.e},${box.n}`);
+  } else params.set("radius", String(Math.ceil(radiusM / 1000)));
   for (const v of values) params.append("osm_tag", `${key}:${v}`);
-  const res = await json(`https://photon.komoot.io/api/?${params}`, { signal }, 8000);
+  const res = await json(
+    `https://photon.komoot.io/${name ? "api" : "reverse"}?${params}`,
+    { signal },
+    8000
+  );
   const nearest = ((res?.features ?? []) as any[])
     .map((f) => ({
       type: OSM_TYPES[f.properties?.osm_type] ?? "node",
@@ -356,7 +363,7 @@ export async function findPlaces(
   const limit = Math.min(opts.limit ?? 8, 20);
   const filter = POI_TAGS[kind] ?? `["amenity"="${kind.replace(/[^a-z_]/gi, "")}"]`;
   const nameFilter = opts.name ? `["name"~"${opts.name.replace(/["\\]/g, "")}",i]` : "";
-  const key = `poi:${kind}:${opts.name ?? ""}:${center.lat.toFixed(2)},${center.lng.toFixed(2)}:${radius}`;
+  const key = `poi:v2:${kind}:${opts.name ?? ""}:${center.lat.toFixed(2)},${center.lng.toFixed(2)}:${radius}`;
   const hit = await cache.get(key);
   let elements: any[];
   if (hit) elements = JSON.parse(hit.content);

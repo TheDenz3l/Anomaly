@@ -21,6 +21,8 @@ const PAD = { top: 16, right: 52, bottom: 24, left: 4 };
 
 type Series = { name: string; points: { x: number; y: number }[] };
 
+const NO_SERIES: Series = { name: "", points: [] };
+
 function compound(model: NonNullable<CatalogProps<"Chart">["model"]>, monthly: number): Series[] {
   const rm = model.annualRate / 12;
   const balance: Series = { name: "Balance", points: [] };
@@ -55,7 +57,7 @@ export function Chart({ props, emit, events, busy }: GenProps<"Chart">) {
     () => (model ? compound(model, monthly) : (props.series ?? [])),
     [model, monthly, props.series]
   );
-  const main = series[0];
+  const main = series[0] ?? NO_SERIES;
   const xs = main.points.map((p) => p.x);
   const maxY = Math.max(...series.flatMap((s) => s.points.map((p) => p.y))) * 1.08;
   const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
@@ -80,6 +82,16 @@ export function Chart({ props, emit, events, busy }: GenProps<"Chart">) {
       onPanResponderTerminate: () => setScrub(null),
     })
   );
+
+  if (!main.points.length) {
+    return (
+      <GenCard title={props.title} subtitle={props.subtitle} icon="trending-up-outline">
+        <Text muted className="text-sm">
+          No data to chart.
+        </Text>
+      </GenCard>
+    );
+  }
 
   const final = main.points[main.points.length - 1].y;
   const put = series[1]?.points[series[1].points.length - 1].y ?? 0;

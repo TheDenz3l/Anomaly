@@ -7,6 +7,7 @@ import {
   query,
   type QueryCtx,
 } from "./_generated/server";
+import { isSafePath } from "./ai/reasoning";
 import { registryProfile } from "./ai/registry";
 import { optionalUser, requireUser } from "./lib/auth";
 import { modelRef, parseModelRef } from "./lib/util";
@@ -100,6 +101,9 @@ export const setOverride = mutation({
     if (!provider) throw new ConvexError("Unknown provider.");
     if (reasoning && reasoning.style !== "none" && reasoning.levels.length === 0) {
       throw new ConvexError("Add at least one reasoning level, or set the style to none.");
+    }
+    if (reasoning?.field && !isSafePath(reasoning.field)) {
+      throw new ConvexError("That reasoning field name isn't allowed.");
     }
     const prior = await profileDoc(ctx, userId, parsed.providerId, parsed.modelId);
     const base = prior ? toProfile(prior) : registryProfile(provider.baseUrl, parsed.modelId);

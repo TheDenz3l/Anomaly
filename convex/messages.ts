@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { heuristicDecisions } from "./ai/decisions";
 import { optionalUser, ownMessage, ownThread, requireUser } from "./lib/auth";
 import { clientMessage, findComponent, stopStreaming, threadMessages } from "./lib/messages";
@@ -41,6 +41,8 @@ async function startReply(
       levelSent: "",
       reasoningTokens: 0,
     },
+    runId: uid("run"),
+    streamStartedAt: Date.now(),
   });
   await ctx.db.patch(thread._id, { updatedAt: Date.now() });
   await ctx.scheduler.runAfter(0, internal.chat.run, { messageId });
@@ -58,6 +60,21 @@ async function firstModelRef(ctx: MutationCtx, userId: Id<"users">): Promise<str
     if (m) return `${p.providerId}/${m.id}`;
   }
   return null;
+}
+
+/** Names a chat that opens with only an attachment after its first file. */
+async function firstFileName(
+  ctx: QueryCtx,
+  attachments: { storageId: Id<"_storage"> }[]
+): Promise<string | undefined> {
+  for (const a of attachments) {
+    const row = await ctx.db
+      .query("attachments")
+      .withIndex("by_storage", (q) => q.eq("storageId", a.storageId))
+      .first();
+    if (row?.kind === "file" && row.name) return row.name;
+  }
+  return undefined;
 }
 
 export const send = mutation({
@@ -85,10 +102,10 @@ export const send = mutation({
     const text = args.text.trim();
     const attachments = args.attachments ?? [];
     if (!text && attachments.length === 0)
-      throw new ConvexError("Type a message or attach a photo.");
+      throw new ConvexError("Type a message or attach a file.");
     if (text.length > 32_000)
       throw new ConvexError("That message is too long (32,000 characters max).");
-    if (attachments.length > 6) throw new ConvexError("Attach up to 6 photos per message.");
+    if (attachments.length > 6) throw new ConvexError("Attach up to 6 files per message.");
 
     let thread: Doc<"threads">;
     if (args.threadId) {
@@ -120,7 +137,7 @@ export const send = mutation({
       if (!modelRef) throw new ConvexError("Add a model provider in Settings first.");
       const id = await ctx.db.insert("threads", {
         userId,
-        title: heuristicDecisions.title(text || "Photo"),
+        title: heuristicDecisions.title(text || (await firstFileName(ctx, attachments)) || "Photo"),
         modelRef,
         mode: args.research ? "research" : "chat",
         reasoningLevel: args.reasoningLevel ?? args.draft?.reasoningLevel ?? "auto",
@@ -129,7 +146,7 @@ export const send = mutation({
       });
       thread = (await ctx.db.get(id))!;
     }
-    await stopStreaming(ctx, thread._id);
+    await stopStreaming(ctx, thread._id, { keepResearch: true });
 
     const parts: Part[] = [];
     const attachmentRows: Id<"attachments">[] = [];
@@ -141,6 +158,17 @@ export const send = mutation({
       if (!row || row.userId !== userId)
         throw new ConvexError("Attachment not found. Upload it again.");
       attachmentRows.push(row._id);
+      if (row.kind === "file") {
+        parts.push({
+          id: uid("file"),
+          type: "file",
+          storageId: a.storageId,
+          name: row.name ?? "File",
+          mime: row.mime,
+          size: row.size ?? 0,
+        });
+        continue;
+      }
       parts.push({
         id: uid("img"),
         type: "image",
@@ -150,6 +178,8 @@ export const send = mutation({
         height: a.height ?? row.height,
       });
     }
+    const firstFile = parts.find((p) => p.type === "file");
+    const label = text || (firstFile?.type === "file" ? firstFile.name : "Photo");
     if (text) parts.push({ id: uid("txt"), type: "text", text });
     const userMessageId = await ctx.db.insert("messages", {
       threadId: thread._id,
@@ -160,7 +190,7 @@ export const send = mutation({
       searchText: thread.incognito ? undefined : text,
     });
     for (const id of attachmentRows) await ctx.db.patch(id, { messageId: userMessageId });
-    await ctx.db.patch(thread._id, { preview: (text || "Photo").slice(0, 160) });
+    await ctx.db.patch(thread._id, { preview: label.slice(0, 160) });
     const messageId = await startReply(ctx, thread, userId);
     return { threadId: thread._id, userMessageId, messageId };
   },
@@ -254,7 +284,7 @@ export const emitUiEvent = mutation({
             status: "queued",
             plan: { ...(plan.plan ?? {}), approved: keep },
           });
-          await stopStreaming(ctx, thread._id);
+          await stopStreaming(ctx, thread._id, { keepResearch: true });
           const messageId = await ctx.db.insert("messages", {
             threadId: thread._id,
             userId,
@@ -267,6 +297,8 @@ export const emitUiEvent = mutation({
               levelSent: "",
               reasoningTokens: 0,
             },
+            runId: uid("run"),
+            streamStartedAt: Date.now(),
           });
           await ctx.scheduler.runAfter(0, internal.agents.executeApproved, {
             planRunId: plan._id,
@@ -279,7 +311,7 @@ export const emitUiEvent = mutation({
       }
     }
 
-    await stopStreaming(ctx, thread._id);
+    await stopStreaming(ctx, thread._id, { keepResearch: true });
     const messageId = await startReply(ctx, thread, userId);
     return { eventMessageId, messageId };
   },
@@ -365,6 +397,15 @@ export const regenerate = mutation({
     if (message.role !== "assistant") throw new ConvexError("Only replies can be regenerated.");
     if (message.status === "streaming")
       throw new ConvexError("Wait for the reply to finish, or stop it first.");
+    // Regenerating these would wipe the result they hold and run a plain reply in its place.
+    if (message.meta?.kind === "report")
+      throw new ConvexError(
+        "Research reports can't be regenerated. Start a new Deep Research to get a fresh report."
+      );
+    if (message.meta?.kind === "subagents")
+      throw new ConvexError(
+        "Sub-agent results can't be regenerated. Ask again to run the workers again."
+      );
     const thread = await ownThread(ctx, message.threadId, userId);
     const latest = await ctx.db
       .query("messages")
@@ -389,6 +430,8 @@ export const regenerate = mutation({
         levelSent: "",
         reasoningTokens: 0,
       },
+      runId: uid("run"),
+      streamStartedAt: Date.now(),
     });
     await ctx.scheduler.runAfter(0, internal.chat.run, { messageId });
     return { messageId };

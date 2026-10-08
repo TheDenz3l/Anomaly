@@ -72,10 +72,34 @@ export function reportParts(message: Message): Part[] {
     .filter((p) => p.type === "text" || (p.type === "component" && p.name === "Table"));
 }
 
+/** A Table card as a Markdown table, with its title and caption around it. */
+export function tableMarkdown(props: unknown): string {
+  const p = (props ?? {}) as Partial<CatalogProps<"Table">>;
+  const cols = Array.isArray(p.columns) ? p.columns : [];
+  if (!cols.length) return "";
+  const cell = (v: unknown) =>
+    String(v ?? "")
+      .replace(/\|/g, "\\|")
+      .replace(/\s*\n\s*/g, " ");
+  const rows = Array.isArray(p.rows) ? p.rows : [];
+  const table = [
+    `| ${cols.map((c) => cell(c.label)).join(" | ")} |`,
+    `| ${cols.map((c) => (c.numeric ? "---:" : "---")).join(" | ")} |`,
+    ...rows.map((r) => `| ${cols.map((c) => cell(r?.[c.key])).join(" | ")} |`),
+  ].join("\n");
+  return [p.title ? `**${p.title}**` : "", table, p.caption ?? ""].filter(Boolean).join("\n\n");
+}
+
 /** A report's body as Markdown, citations and all. */
 export function reportText(message: Message): string {
   return reportParts(message)
-    .map((p) => (p.type === "text" ? p.text : ""))
+    .map((p) =>
+      p.type === "text"
+        ? p.text
+        : p.type === "component"
+          ? tableMarkdown(p.props) || p.fallbackText
+          : ""
+    )
     .filter(Boolean)
     .join("\n\n");
 }

@@ -3,6 +3,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { Linking, Platform } from "react-native";
 import { api, convex } from "@/lib/convex";
 import { colors } from "@/lib/theme";
+import type { Part } from "@/lib/types";
 
 /**
  * Links in message text. The composer writes them as Markdown, `[Page title](url)`, so the model
@@ -15,11 +16,17 @@ export type LinkSegment =
 const TOKEN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>"'`]+/g;
 const MARKDOWN_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
 
+/** Links the app will open: web pages and email. Model-written text can hold any scheme. */
+export function isOpenableUrl(url: string): boolean {
+  return /^(?:https?:\/\/[^\s/]+|mailto:[^\s]+)/i.test(url) && !/[\s\u0000-\u001f]/.test(url);
+}
+
 /**
  * Opens a link without leaving the app: web pages slide up in a Safari sheet the user swipes away
- * to come back. Other schemes (mail, phone, maps) go to their own apps.
+ * to come back. Email goes to the mail app; anything else is ignored.
  */
 export async function openLink(url: string) {
+  if (!isOpenableUrl(url)) return;
   if (Platform.OS !== "web" && /^https?:\/\//i.test(url)) {
     try {
       await WebBrowser.openBrowserAsync(url, {
@@ -86,6 +93,24 @@ export function parseLinks(text: string, bare = true): LinkSegment[] {
 export function linkMarkup(title: string, url: string): string {
   const t = title.replace(/[[\]]/g, "").replace(/\s+/g, " ").trim() || domainOf(url);
   return `[${t}](${url.replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+}
+
+/**
+ * Image URLs a message vouches for itself: its photos, search results and sources. Any other image
+ * URL in reply text was written by the model (maybe steered by a page) and loads only on a tap.
+ */
+export function trustedImageUrls(parts: Part[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of parts) {
+    if (p.type === "image" && p.uri) out.add(p.uri);
+    if (p.type === "search" || p.type === "sources") {
+      for (const s of p.sources) {
+        out.add(s.url);
+        if (s.favicon) out.add(s.favicon);
+      }
+    }
+  }
+  return out;
 }
 
 /** Text with each Markdown link replaced by its URL, for copying. */

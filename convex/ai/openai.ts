@@ -1,9 +1,13 @@
+import { isCodex, responsesError, ResponsesParser, responsesUrl, toResponsesBody } from "./codex";
 import {
+  anthropicHost,
   MessagesParser,
   messagesUrl,
   prefersMessages,
   routeToMessages,
+  streamErrorStatus,
   toMessagesBody,
+  unrouteMessages,
   wantsMessages,
   flipThinking,
 } from "./anthropic";
@@ -86,32 +90,94 @@ export function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}${path}`;
 }
 
+/** A URL fit for messages: scheme, host and path, never credentials or the query string. */
+export function displayUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "the provider";
+  }
+}
+
+/** Runtime error messages can quote the URL they failed on, key in the query and all. */
+const scrub = (msg: string) => msg.replace(/https?:\/\/[^\s"'<>)]+/g, (u) => displayUrl(u));
+
 export function authHeaders(ep: Endpoint, json = true): Record<string, string> {
   const h: Record<string, string> = {};
   if (json) h["Content-Type"] = "application/json";
-  if (ep.apiKey) h.Authorization = `Bearer ${ep.apiKey}`;
+  if (ep.apiKey) {
+    // Anthropic's own API takes its key in x-api-key; a bearer token there means OAuth.
+    if (anthropicHost(ep.baseUrl)) {
+      h["x-api-key"] = ep.apiKey;
+      h["anthropic-version"] = "2023-06-01";
+    } else h.Authorization = `Bearer ${ep.apiKey}`;
+  }
   for (const { key, value } of ep.headers ?? []) if (key.trim()) h[key.trim()] = value;
   return h;
 }
 
+const MAX_REDIRECTS = 3;
+
+/**
+ * fetch for provider requests, which carry the key and custom headers: redirects are followed
+ * only within the same origin, so those never reach another host.
+ */
+export async function providerFetch(url: string, init: RequestInit): Promise<Response> {
+  let target = url;
+  let req: RequestInit = { ...init, redirect: "manual" };
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(target, req);
+    if (res.type === "opaqueredirect") {
+      throw new LlmError(
+        `${displayUrl(url)} redirected the request elsewhere. Use the address it redirects to as the base URL.`,
+        0,
+        "",
+        "unknown"
+      );
+    }
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (!location) return res;
+    void res.body?.cancel().catch(() => {});
+    const next = new URL(location, target);
+    if (next.origin !== new URL(target).origin) {
+      throw new LlmError(
+        `${displayUrl(target)} redirected to ${next.host}, and keys are only sent to the host you saved. If you trust it, use ${displayUrl(next.toString())} as the base URL.`,
+        res.status,
+        "",
+        "unknown"
+      );
+    }
+    if (hop >= MAX_REDIRECTS) {
+      throw new LlmError(
+        `${displayUrl(url)} redirected too many times.`,
+        res.status,
+        "",
+        "unknown"
+      );
+    }
+    if (res.status === 303) req = { ...req, method: "GET", body: undefined };
+    target = next.toString();
+  }
+}
+
+const OVERFLOW =
+  /context.?length|maximum context|context window|too many tokens|prompt is too long|reduce the length|input is too long/;
+/** Out of credit: OpenAI answers it with a 429, but waiting won't help. */
+const OUT_OF_CREDIT =
+  /insufficient_quota|exceeded your current quota|billing|insufficient (?:balance|credits?|funds)|credit balance is too low|payment required/;
+
 export function classifyError(status: number, body: string): ErrorKind {
   const b = body.toLowerCase();
-  if (
-    /context.?length|maximum context|context window|too many tokens|prompt is too long|reduce the length|input is too long/.test(
-      b
-    )
-  )
-    return "context_overflow";
-  if (
-    status === 401 ||
-    status === 403 ||
-    /invalid api key|incorrect api key|unauthori[sz]ed/.test(b)
-  )
-    return "auth";
-  if (status === 429 || /rate.?limit|too many requests|quota/.test(b)) return "rate_limit";
+  if (status === 401 || status === 403) return "auth";
+  if (status >= 500) return "server";
+  if (status === 402 || OUT_OF_CREDIT.test(b)) return "auth";
+  if (status === 429) return "rate_limit";
+  if (OVERFLOW.test(b)) return "context_overflow";
+  if (/invalid api key|incorrect api key|unauthori[sz]ed/.test(b)) return "auth";
+  if (/rate.?limit|too many requests|quota/.test(b)) return "rate_limit";
   if (status === 404) return "not_found";
   if (status === 400 || status === 422) return "bad_param";
-  if (status >= 500) return "server";
   return "unknown";
 }
 
@@ -141,27 +207,34 @@ export async function requestJson(
   path: string,
   init: { method?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<any> {
+  if (init.signal?.aborted) throw new LlmError("The request was cancelled.", 0, "", "network");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 30_000);
-  init.signal?.addEventListener("abort", () => controller.abort());
+  const onAbort = () => controller.abort();
+  init.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     let res: Response;
+    let text: string;
     try {
-      res = await fetch(joinUrl(ep.baseUrl, path), {
+      res = await providerFetch(joinUrl(ep.baseUrl, path), {
         method: init.method ?? (init.body === undefined ? "GET" : "POST"),
         headers: authHeaders(ep, init.body !== undefined),
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
         signal: controller.signal,
       });
+      // Read under the same timer: a provider can stall while sending its answer, error or not.
+      text = await res.text();
     } catch (e) {
+      if (e instanceof LlmError) throw e;
+      if (controller.signal.aborted && !init.signal?.aborted)
+        throw new LlmError(`${displayUrl(ep.baseUrl)} didn't respond in time.`, 0, "", "network");
       throw new LlmError(
-        `Could not reach ${ep.baseUrl}: ${(e as Error).message}`,
+        `Could not reach ${displayUrl(ep.baseUrl)}: ${scrub((e as Error).message)}`,
         0,
         "",
         "network"
       );
     }
-    const text = await res.text();
     if (!res.ok) {
       throw new LlmError(
         `${res.status} from provider: ${providerMessage(text)}`,
@@ -178,6 +251,7 @@ export async function requestJson(
     }
   } finally {
     clearTimeout(timer);
+    init.signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -283,13 +357,21 @@ function* parseChunk(chunk: any, think: ThinkSplitter): Generator<StreamEvent> {
   if (chunk?.usage) yield { type: "usage", usage: parseUsage(chunk.usage) };
 }
 
-/** Streams one chat completion. Throws LlmError before the first event on HTTP failure. */
+/** A 400 from the Messages API that is about the thinking settings, not the request as a whole. */
+const THINKING_ERROR = /thinking|adaptive|budget_tokens|effort/i;
+
+/**
+ * Streams one chat completion. Throws LlmError before the first event on HTTP failure.
+ * `rerouted` marks the one retry on the other API, so a route can't bounce back and forth.
+ */
 export async function* streamChat(
   ep: Endpoint,
   body: Record<string, unknown>,
   signal?: AbortSignal,
-  idleMs = 180_000
+  idleMs = 180_000,
+  rerouted = false
 ): AsyncGenerator<StreamEvent> {
+  if (signal?.aborted) return;
   // Abort if the provider goes silent (reasoning models may think quietly, so the window is generous).
   const local = new AbortController();
   let stalled = false;
@@ -302,119 +384,195 @@ export async function* streamChat(
     }, idleMs);
   };
   const onOuter = () => local.abort();
-  signal?.addEventListener("abort", onOuter);
-  bump();
-  // Some gateways serve certain models only over the Anthropic Messages API.
-  const messages = prefersMessages(ep.baseUrl, body.model);
-  let res: Response;
+  signal?.addEventListener("abort", onOuter, { once: true });
+  // A ChatGPT subscription is served over the Responses API. Some gateways serve certain models
+  // only over the Anthropic Messages API, and Anthropic's own API is best spoken natively.
+  const codex = isCodex(ep.baseUrl);
+  const messages = !codex && (prefersMessages(ep.baseUrl, body.model) || anthropicHost(ep.baseUrl));
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let again = false;
   try {
-    res = await fetch(
-      messages ? messagesUrl(ep.baseUrl) : joinUrl(ep.baseUrl, "/chat/completions"),
-      {
-        method: "POST",
-        headers: messages
-          ? {
-              "anthropic-version": "2023-06-01",
-              ...(ep.apiKey ? { "x-api-key": ep.apiKey } : {}),
-              ...authHeaders(ep),
-              Accept: "text/event-stream",
+    bump();
+    let res: Response;
+    try {
+      res = await providerFetch(
+        codex
+          ? responsesUrl(ep.baseUrl)
+          : messages
+            ? messagesUrl(ep.baseUrl)
+            : joinUrl(ep.baseUrl, "/chat/completions"),
+        {
+          method: "POST",
+          headers: messages
+            ? {
+                "anthropic-version": "2023-06-01",
+                ...(ep.apiKey ? { "x-api-key": ep.apiKey } : {}),
+                ...authHeaders(ep),
+                Accept: "text/event-stream",
+              }
+            : { ...authHeaders(ep), Accept: "text/event-stream" },
+          body: JSON.stringify(
+            codex
+              ? toResponsesBody(body)
+              : messages
+                ? toMessagesBody(body)
+                : { ...body, stream: true }
+          ),
+          signal: local.signal,
+        }
+      );
+    } catch (e) {
+      if (signal?.aborted) return;
+      if (e instanceof LlmError) throw e;
+      if (stalled) throw new LlmError("The provider didn't respond in time.", 0, "", "network");
+      throw new LlmError(
+        `Could not reach ${displayUrl(ep.baseUrl)}: ${scrub((e as Error).message)}`,
+        0,
+        "",
+        "network"
+      );
+    }
+    if (!res.ok) {
+      // Still under the idle timer and the caller's signal: a provider can stall mid-error too.
+      let text = "";
+      try {
+        text = await res.text();
+      } catch {
+        if (signal?.aborted) return;
+        if (stalled) throw new LlmError("The provider didn't respond in time.", 0, "", "network");
+      }
+      // Claude models differ in which thinking style they accept; a rejected one gets the other.
+      const thinks = "thinking" in body || "reasoning" in body || "reasoning_effort" in body;
+      if (
+        !messages &&
+        (res.status === 400 || res.status === 404) &&
+        wantsMessages(text) &&
+        routeToMessages(ep.baseUrl, body.model)
+      ) {
+        again = true;
+      } else if (messages && res.status === 404) {
+        // The Messages endpoint isn't there after all: back to chat completions.
+        unrouteMessages(ep.baseUrl, body.model);
+        if (!rerouted) again = true;
+      } else if (
+        messages &&
+        res.status === 400 &&
+        thinks &&
+        THINKING_ERROR.test(text) &&
+        flipThinking(body.model)
+      ) {
+        again = true;
+      }
+      if (!again) {
+        throw new LlmError(
+          `${res.status} from provider: ${providerMessage(text)}`,
+          res.status,
+          text,
+          classifyError(res.status, text),
+          retryAfter(res)
+        );
+      }
+    } else {
+      const think = new ThinkSplitter();
+      const parser = codex ? new ResponsesParser() : messages ? new MessagesParser() : null;
+      const ctype = res.headers.get("content-type") ?? "";
+      if (!res.body || ctype.includes("application/json")) {
+        const json = await res.json();
+        clearTimeout(idle);
+        if (parser) yield* parser.replay(json);
+        else yield* parseChunk(json, think);
+        yield* think.flush();
+      } else {
+        reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let doneMarker = false;
+        let finished = false;
+        const handle = function* (raw: string): Generator<StreamEvent> {
+          const line = raw.trim();
+          if (!line.startsWith("data:")) return;
+          const data = line.slice(5).trim();
+          if (data === "[DONE]") {
+            doneMarker = true;
+            return;
+          }
+          let chunk: any;
+          try {
+            chunk = JSON.parse(data);
+          } catch {
+            return;
+          }
+          if (chunk?.error) {
+            const msg =
+              typeof chunk.error === "string"
+                ? chunk.error
+                : String(chunk.error.message ?? "Provider error");
+            const status = streamErrorStatus(chunk.error);
+            throw new LlmError(msg, status, data, classifyError(status, data));
+          }
+          if (codex) {
+            const failed = responsesError(chunk);
+            if (failed)
+              throw new LlmError(
+                failed.message,
+                failed.status,
+                data,
+                classifyError(failed.status, data)
+              );
+          }
+          if (parser) {
+            if (
+              chunk?.type === "message_stop" ||
+              chunk?.type === "response.completed" ||
+              chunk?.type === "response.incomplete"
+            )
+              finished = true;
+            yield* parser.push(chunk);
+          } else {
+            for (const ev of parseChunk(chunk, think)) {
+              if (ev.type === "finish") finished = true;
+              yield ev;
             }
-          : { ...authHeaders(ep), Accept: "text/event-stream" },
-        body: JSON.stringify(messages ? toMessagesBody(body) : { ...body, stream: true }),
-        signal: local.signal,
-      }
-    );
-  } catch (e) {
-    clearTimeout(idle);
-    signal?.removeEventListener("abort", onOuter);
-    if (signal?.aborted) return;
-    if (stalled) throw new LlmError("The provider didn't respond in time.", 0, "", "network");
-    throw new LlmError(`Could not reach ${ep.baseUrl}: ${(e as Error).message}`, 0, "", "network");
-  }
-  if (!res.ok) {
-    clearTimeout(idle);
-    signal?.removeEventListener("abort", onOuter);
-    const text = await res.text().catch(() => "");
-    if (!messages && (res.status === 400 || res.status === 404) && wantsMessages(text)) {
-      routeToMessages(ep.baseUrl, body.model);
-      yield* streamChat(ep, body, signal, idleMs);
-      return;
-    }
-    // Claude models differ in which thinking style they accept; a rejected one gets the other.
-    const thinks = "thinking" in body || "reasoning" in body || "reasoning_effort" in body;
-    if (messages && res.status === 400 && thinks && flipThinking(body.model)) {
-      yield* streamChat(ep, body, signal, idleMs);
-      return;
-    }
-    throw new LlmError(
-      `${res.status} from provider: ${providerMessage(text)}`,
-      res.status,
-      text,
-      classifyError(res.status, text),
-      retryAfter(res)
-    );
-  }
-  const think = new ThinkSplitter();
-  const parser = messages ? new MessagesParser() : null;
-  const ctype = res.headers.get("content-type") ?? "";
-  if (!res.body || ctype.includes("application/json")) {
-    const json = await res.json().finally(() => {
-      clearTimeout(idle);
-      signal?.removeEventListener("abort", onOuter);
-    });
-    if (parser) yield* parser.replay(json);
-    else yield* parseChunk(json, think);
-    yield* think.flush();
-    return;
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bump();
-      buf += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") {
-          yield* think.flush();
-          return;
+          }
+        };
+        read: while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bump();
+          buf += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, nl);
+            buf = buf.slice(nl + 1);
+            yield* handle(line);
+            if (doneMarker) break read;
+          }
         }
-        let chunk: any;
-        try {
-          chunk = JSON.parse(data);
-        } catch {
-          continue;
+        // The last event may arrive without a newline after it.
+        if (!doneMarker) {
+          buf += decoder.decode();
+          if (buf.trim()) yield* handle(buf);
         }
-        if (chunk?.error) {
-          const msg =
-            typeof chunk.error === "string"
-              ? chunk.error
-              : (chunk.error.message ?? "Provider error");
-          const status = Number(chunk.error.code) || 500;
-          throw new LlmError(msg, status, data, classifyError(status, data));
-        }
-        if (parser) yield* parser.push(chunk);
-        else yield* parseChunk(chunk, think);
+        if (!doneMarker && !finished)
+          throw new LlmError("The provider stopped mid-reply.", 0, "", "network");
+        if (parser) yield* parser.end();
+        yield* think.flush();
       }
     }
   } catch (e) {
     if (signal?.aborted) return;
+    if (e instanceof LlmError) throw e;
     if (stalled) throw new LlmError("The provider stopped responding mid-reply.", 0, "", "network");
     throw e;
   } finally {
     clearTimeout(idle);
     signal?.removeEventListener("abort", onOuter);
-    reader.releaseLock?.();
+    // Releasing the lock leaves the connection open; cancel it on every way out. Aborting as well
+    // would close the body a second time, which the runtime reports as an uncaught error.
+    if (reader) reader.cancel().catch(() => {});
+    else if (!local.signal.aborted) local.abort();
   }
-  if (parser) yield* parser.end();
-  yield* think.flush();
+  if (again) yield* streamChat(ep, body, signal, idleMs, true);
 }
 
 export type Completion = {

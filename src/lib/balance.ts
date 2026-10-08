@@ -2,12 +2,14 @@ import type { Provider } from "@/lib/types";
 
 /** Money with cents, so a balance draining reply by reply visibly moves. */
 export function formatAmount(n: number, currency = "USD"): string {
+  // Large figures drop the cents; minimum and maximum must agree or Intl throws.
+  const digits = Math.abs(n) >= 10_000 ? 0 : 2;
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: Math.abs(n) >= 10_000 ? 0 : 2,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
     }).format(n);
   } catch {
     // A code Intl doesn't know (a gateway's own credits): the number with the code after it.
@@ -43,8 +45,26 @@ export function balanceFraction(p: Provider): number | null {
   return Math.min(1, Math.max(0, b.remaining / b.total));
 }
 
+/** "Resets in 2 h 10 min", or the day and time when it's more than a day away. */
+export function resetLabel(at: number, now = Date.now()): string {
+  const ms = at - now;
+  if (ms <= 60_000) return "Resets in a moment";
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `Resets in ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `Resets in ${h} h${min % 60 ? ` ${min % 60} min` : ""}`;
+  const d = new Date(at);
+  const day = d.toLocaleDateString("en-US", { weekday: "short" });
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `Resets ${day} ${time}`;
+}
+
 /** "$12.48 left" for a provider row, or what's been used when there's no limit; null when unknown. */
 export function balanceLine(p: Provider): string | null {
+  if (p.subscription) {
+    const w = [...(p.limits?.windows ?? [])].sort((a, b) => b.usedPercent - a.usedPercent)[0];
+    return w ? `${Math.round(w.usedPercent)}% of ${w.label.toLowerCase()} used` : null;
+  }
   const b = p.balance;
   if (!b || b.status === "unsupported") return null;
   if (b.remaining !== undefined) return `${formatAmount(b.remaining, b.currency)} left`;

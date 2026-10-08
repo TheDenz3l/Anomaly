@@ -62,11 +62,23 @@ export function routingLevel(profile: CapabilityProfile, requested: string): str
   return ABOVE_LOW.has(requested) ? "low" : undefined;
 }
 
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * True when a dotted field path only names plain fields. Paths come from manual overrides and
+ * remote registry rules, and one through __proto__ would write onto every object in the process.
+ */
+export function isSafePath(path: string): boolean {
+  return path.split(".").every((k) => !UNSAFE_KEYS.has(k));
+}
+
 export function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+  if (!isSafePath(path)) return;
   const keys = path.split(".");
   let cur: Record<string, unknown> = obj;
   for (const k of keys.slice(0, -1)) {
-    if (typeof cur[k] !== "object" || cur[k] === null) cur[k] = {};
+    const next = Object.hasOwn(cur, k) ? cur[k] : undefined;
+    if (typeof next !== "object" || next === null) cur[k] = {};
     cur = cur[k] as Record<string, unknown>;
   }
   cur[keys[keys.length - 1]] = value;
@@ -100,7 +112,10 @@ export function buildRequest(opts: {
   let maxTokens = opts.maxTokens;
 
   const { sent, budget } = resolveLevel(profile, opts.level, opts.difficulty);
-  const field = profile.reasoning.field;
+  const field =
+    profile.reasoning.field && isSafePath(profile.reasoning.field)
+      ? profile.reasoning.field
+      : undefined;
   const reasoningKeys: string[] = [];
   let systemSuffix: string | undefined;
   const mark = (path: string) => reasoningKeys.push(path.split(".")[0]);
