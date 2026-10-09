@@ -1,14 +1,9 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
-import {
-  componentTools,
-  MODEL_COMPONENTS,
-  partialProps,
-  validateToolArgs,
-  promptedCatalog,
-} from "./ai/catalog";
+import { MODEL_COMPONENTS } from "./ai/catalog";
+import { OpenUICard, openuiCatalog } from "./ai/openui";
 import { jevDecide, type JevQuestion } from "./ai/jev";
-import { streamChat, ToolCallAccumulator, authHeaders } from "./ai/openai";
+import { streamChat, authHeaders } from "./ai/openai";
 import { systemPrompt } from "./engine/prompt";
 import { endpointFor } from "./lib/endpoint";
 import { FenceParser } from "./engine/loop";
@@ -17,13 +12,15 @@ import { internal } from "./_generated/api";
 import { runTurn } from "./engine/turn";
 import { uid } from "./lib/util";
 import { type Id } from "./_generated/dataModel";
+import type { Part } from "./lib/validators";
 import { messagesUrl } from "./ai/anthropic";
 
 /**
  * Generative-UI study, run from the CLI against a user's own providers:
  *   npx convex run evals:uiStudy '{"userId":"…","providerId":"7api","models":["gpt-6.1-sol"],"prompts":["…"]}'
  * `jev` asks Jev the candidate routing questions; `models` sends each prompt once to each model with
- * the real system prompt and card tools and reports what it did. Returns summaries only.
+ * the real system prompt and cards on offer, and reports the card it wrote: the components used,
+ * what the parser dropped, and timings. Returns summaries only.
  */
 
 const WEB_SEARCH = {
@@ -44,8 +41,6 @@ export const uiStudy = internalAction({
     jev: v.optional(v.any()),
     directive: v.optional(v.record(v.string(), v.string())),
     concurrency: v.optional(v.number()),
-    /** Cards written as ```component fences in the text stream instead of tool calls. */
-    inline: v.optional(v.boolean()),
     /** Run the app's own per-turn router (Jev with heuristic fallback) and report the presentation. */
     router: v.optional(v.boolean()),
     /** Merged into every request body (reasoning settings, tool_choice…) to reproduce endpoint errors. */
@@ -116,22 +111,23 @@ export const uiStudy = internalAction({
             customInstructions: "",
             memories: [],
             incognito: false,
-            components: !a.inline,
-            promptedCatalog: a.inline ? promptedCatalog(["Blocks"]) : undefined,
+            cards: openuiCatalog(),
             web: "app",
             locationTool: false,
             subagents: "off",
             memoryTool: false,
             extra,
           });
-          const calls = new ToolCallAccumulator();
           const fence = new FenceParser();
-          const fenced: string[] = [];
+          const card = new OpenUICard();
           const start = Date.now();
           let firstEvent = 0;
-          let firstBlock = 0;
+          let firstText = 0;
+          let firstCard = 0;
           let textLen = 0;
+          let cardBody = "";
           let error = "";
+          const tools: string[] = [];
           try {
             for await (const ev of streamChat(ep, {
               model,
@@ -139,60 +135,48 @@ export const uiStudy = internalAction({
                 { role: "system", content: system },
                 { role: "user", content: p },
               ],
-              ...(a.inline ? {} : { tools: [...componentTools(MODEL_COMPONENTS), WEB_SEARCH] }),
+              tools: [WEB_SEARCH],
               max_tokens: 8000,
               ...(a.body ?? {}),
             })) {
               firstEvent ||= Date.now() - start;
-              if (ev.type === "text") {
-                textLen += ev.delta.length;
-                for (const fe of fence.push(ev.delta)) {
-                  if (
-                    fe.type === "partial" &&
-                    !firstBlock &&
-                    partialProps("Blocks", fe.body, "props")
-                  )
-                    firstBlock = Date.now() - start;
-                  if (fe.type === "end") fenced.push(fe.body);
-                }
+              if (ev.type === "tool_call" && ev.name) tools.push(ev.name);
+              if (ev.type !== "text") continue;
+              textLen += ev.delta.length;
+              for (const fe of fence.push(ev.delta)) {
+                if (fe.type === "text" && fe.text.trim()) firstText ||= Date.now() - start;
+                if (
+                  fe.type === "partial" &&
+                  !firstCard &&
+                  /^\s*\w+\s*=/m.test(card.update(fe.body))
+                )
+                  firstCard = Date.now() - start;
+                if (fe.type === "end") cardBody ||= fe.body;
               }
-              if (ev.type !== "tool_call") continue;
-              const { index } = calls.push(ev);
-              const c = calls.get(index);
-              if (!firstBlock && c?.name === "ui_Blocks" && partialProps("Blocks", c.args))
-                firstBlock = Date.now() - start;
             }
           } catch (e) {
             error = (e as Error).message.slice(0, 400);
           }
-          for (const fe of fence.flush()) if (fe.type === "end") fenced.push(fe.body);
-          const tc = calls.list();
-          const names = tc.map((c) => c.function.name);
-          const inlineArgs = fenced.length
-            ? JSON.stringify({ ...(JSON.parse(fenced[0]).props ?? {}), fallbackText: "x" })
-            : null;
-          const blocks =
-            tc.find((c) => c.function.name === "ui_Blocks") ??
-            (inlineArgs ? { function: { name: "inline", arguments: inlineArgs } } : undefined);
+          for (const fe of fence.flush()) if (fe.type === "end") cardBody ||= fe.body;
           let shape = "";
-          if (blocks) {
-            try {
-              const r = validateToolArgs("Blocks", JSON.parse(blocks.function.arguments));
-              shape = r.ok
-                ? (r.props as { blocks: { type: string }[] }).blocks.map((b) => b.type).join(",")
-                : `INVALID ${r.error}`;
-            } catch {
-              shape = "INVALID json";
-            }
+          if (cardBody) {
+            const r = card.finish(cardBody);
+            const used = [
+              ...new Set([...card.source.matchAll(/\b([A-Z][A-Za-z]+)\(/g)].map((m) => m[1])),
+            ];
+            shape = r.ok
+              ? `OpenUI[${used.join(",")}] ${card.source.length}ch${r.issues.length ? ` dropped:${r.issues.length} ${r.issues[0].slice(0, 120)}` : ""}`
+              : `OpenUI INVALID ${r.error}`;
           }
           results.push({
             model,
             p: p.slice(0, 40),
             ms: Date.now() - start,
             first: firstEvent,
-            firstBlock,
+            firstText,
+            firstCard,
             text: textLen,
-            tools: [...names, ...(fenced.length ? ["inline"] : [])].join(","),
+            tools: tools.join(","),
             shape,
             error,
           });
@@ -299,16 +283,67 @@ export const rawMessages = internalAction({
 });
 
 /**
+ * Copies a finished eval reply into a normal chat for another account (a dev device's anonymous
+ * user), so the real cards can be opened and tried in the app. Text and card parts only.
+ */
+export const scenarioShare = internalMutation({
+  args: { messageId: v.id("messages"), userId: v.id("users"), text: v.string() },
+  handler: async (ctx, a) => {
+    const message = await ctx.db.get(a.messageId);
+    if (!message) return null;
+    const parts = message.parts.filter((p) => p.type === "text" || p.type === "component");
+    const threadId = await ctx.db.insert("threads", {
+      userId: a.userId,
+      title: `[eval] ${a.text.slice(0, 40)}`,
+      modelRef: message.meta?.modelRef ?? "eval",
+      mode: "chat",
+      reasoningLevel: "low",
+      incognito: false,
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("messages", {
+      threadId,
+      userId: a.userId,
+      role: "user",
+      parts: [{ id: uid("txt"), type: "text", text: a.text }],
+      status: "done",
+    });
+    await ctx.db.insert("messages", {
+      threadId,
+      userId: a.userId,
+      role: "assistant",
+      parts,
+      status: "done",
+      meta: message.meta,
+    });
+    return threadId;
+  },
+});
+
+/**
  * Runs real turns (router, search, tools, cards) one after another in throwaway incognito chats and
  * reports what the user would have seen; each chat is deleted afterwards. Decisions are read back
  * from the log, so only one e2e run per user at a time.
  */
+/** The photo and screenshot URLs a reply's cards showed. */
+function cardPhotos(parts: Part[]): string[] {
+  return parts.flatMap((p) =>
+    p.type === "component" && p.name === "OpenUI"
+      ? ((p.props as { photos?: { url: string | null }[] } | null)?.photos ?? [])
+          .map((x) => x.url)
+          .filter((u): u is string => Boolean(u))
+      : []
+  );
+}
+
 export const e2e = internalAction({
   args: {
     userId: v.id("users"),
     modelRef: v.string(),
     prompts: v.array(v.string()),
     reasoningLevel: v.optional(v.string()),
+    /** Also copy each reply into a normal chat for this account, to open it in the app. */
+    shareWith: v.optional(v.id("users")),
   },
   handler: async (ctx, a) => {
     const out: unknown[] = [];
@@ -319,6 +354,8 @@ export const e2e = internalAction({
       const since = Date.now();
       let threadId: Id<"threads"> | undefined;
       let messageId: Id<"messages"> | undefined;
+      // Photos the earlier turns' cards showed, to check the last turn doesn't show them again.
+      const earlier = new Set<string>();
       for (const t of turns) {
         const opened = await ctx.runMutation(internal.evals.scenarioOpen, {
           userId: a.userId,
@@ -329,13 +366,23 @@ export const e2e = internalAction({
         });
         threadId = opened.threadId;
         messageId = opened.messageId;
-        if (t !== text) await runTurn(ctx, messageId);
+        if (t !== text) {
+          await runTurn(ctx, messageId);
+          const prior = await ctx.runQuery(internal.evals.scenarioRead, { messageId });
+          for (const url of cardPhotos(prior.message?.parts ?? [])) earlier.add(url);
+        }
       }
       try {
         await runTurn(ctx, messageId!);
         const { message, decisions } = await ctx.runQuery(internal.evals.scenarioRead, {
           messageId: messageId!,
         });
+        if (a.shareWith)
+          await ctx.runMutation(internal.evals.scenarioShare, {
+            messageId: messageId!,
+            userId: a.shareWith,
+            text,
+          });
         const dec = Object.fromEntries(decisions.map((d) => [d.kind, d]));
         const pres = dec.presentation?.output as
           { kind: string; visual: number; tool: number } | undefined;
@@ -344,8 +391,19 @@ export const e2e = internalAction({
         const parts = (message?.parts ?? []).map((p) => {
           if (p.type === "text") return `text${p.text.length}`;
           if (p.type !== "component") return p.type;
-          const blocks = (p.props as { blocks?: { type: string }[] } | null)?.blocks;
-          return `${p.name}:${p.status}${blocks ? `[${blocks.map((b) => b.type).join(",")}]` : ""}${p.error ? ` ERR ${p.error.slice(0, 60)}` : ""}`;
+          if (p.name === "OpenUI") {
+            // The components the program uses, in the order it first uses them.
+            const source = String((p.props as { source?: unknown } | null)?.source ?? "");
+            const used = [
+              ...new Set([...source.matchAll(/\b([A-Z][A-Za-z]+)\(/g)].map((m) => m[1])),
+            ];
+            return `OpenUI:${p.status}[${used.join(",")}] ${source.length}ch${p.error ? ` ERR ${p.error.slice(0, 60)}` : ""}`;
+          }
+          const blocks = (p.props as { blocks?: { type: string; show?: string }[] } | null)?.blocks;
+          // ? marks a block with a show condition, {} one with live values in its text.
+          const shape = (b: { type: string; show?: string }) =>
+            `${b.type}${b.show ? "?" : ""}${/\{[a-z_$][^{}]*\}/i.test(JSON.stringify({ ...b, show: undefined, rows: undefined })) ? "{}" : ""}`;
+          return `${p.name}:${p.status}${blocks ? `[${blocks.map(shape).join(",")}]` : ""}${p.error ? ` ERR ${p.error.slice(0, 60)}` : ""}`;
         });
         out.push({
           p: script.slice(0, 48),
@@ -356,6 +414,11 @@ export const e2e = internalAction({
           search: dec.search ? JSON.stringify(dec.search.output) : "-",
           status: message?.status,
           parts: parts.filter((x) => x !== "thinking" && x !== "sources").join(" "),
+          photos: (() => {
+            const shown = cardPhotos(message?.parts ?? []);
+            const repeated = shown.filter((u) => earlier.has(u)).length;
+            return `${shown.length} shown${turns.length > 1 ? `, ${repeated} repeated from earlier turns` : ""}`;
+          })(),
           error: message?.error?.slice(0, 120),
         });
       } finally {

@@ -524,7 +524,7 @@ export function findPlacesTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
       "find_places",
-      `Find nearby places from OpenStreetMap, sorted by distance. Show 2+ results with ui_MapCard (use the returned ids, lat/lng). Kinds: ${POI_KINDS.join(", ")}.`,
+      `Find nearby places from OpenStreetMap, sorted by distance. Show 2+ results in a card on a Map, one Place pin per result (its lat/lng). Kinds: ${POI_KINDS.join(", ")}.`,
       {
         kind: { type: "string", description: "Place kind, e.g. cinema, restaurant, pharmacy" },
         near: { type: "string", description: "Place name; omit to use the user's location" },
@@ -1042,7 +1042,7 @@ export function showtimesTool(env: ToolEnv): LoopTool {
       if (env.render) {
         (env.background ??= []).push(times);
         return {
-          content: `Already on screen: MovieShowtimes with ${movies.length} movies now playing${near}. Don't render ui_MovieShowtimes or ui_MapCard yourself. Movies: ${titles.join(", ")}.${lookup} ${
+          content: `Already on screen: MovieShowtimes with ${movies.length} movies now playing${near}. Don't draw the movies or theatres again in a card. Movies: ${titles.join(", ")}.${lookup} ${
             sites.length
               ? "Times are being read from the cinemas' websites and fill into the card on their own; don't list times or say they're missing."
               : "No cinema nearby lists a website, so there are no times; suggest checking the theatre directly."

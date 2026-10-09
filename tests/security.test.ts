@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { validateToolArgs } from "../convex/ai/catalog";
+import { isOpenUITool } from "../convex/ai/openuiTools";
 import { buildRequest, setPath } from "../convex/ai/reasoning";
 import { wrapUntrusted } from "../convex/engine/prompt";
 import { savedPdfPath } from "../convex/web/access";
@@ -195,8 +195,10 @@ describe("component validation", () => {
     );
   });
 
-  it("keeps system cards out of the model's reach", () => {
-    expect(validateToolArgs("MemoryConfirm", { text: "x" }).ok).toBe(false);
-    expect(validateToolArgs("constructor", {}).ok).toBe(false);
+  it("lets cards call only the listed live-data tools", () => {
+    expect(isOpenUITool("weather")).toBe(true);
+    expect(isOpenUITool("constructor")).toBe(false);
+    expect(isOpenUITool("__proto__")).toBe(false);
+    expect(isOpenUITool("web_search")).toBe(false);
   });
 });

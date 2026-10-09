@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { View } from "react-native";
 import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from "react-native-svg";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { ActionButton, GenCard, type GenProps } from "@/genui/kit";
 import { colors, fonts } from "@/lib/theme";
+import { Linking, Platform, View } from "react-native";
 
 const H = 210;
 
@@ -191,14 +191,24 @@ export function MapCard({ props, emit, busy }: GenProps<"MapCard">) {
           variant="secondary"
           label="Directions"
           disabled={busy}
-          onPress={() =>
+          onPress={() => {
+            // Opens right away in Maps; the event only tells the next reply what the user did.
+            void Linking.openURL(directionsUrl(place)).catch(() => undefined);
             emit("directions", `Directions to ${place.name}`, {
               place: place.name,
               minutes: Math.max(1, Math.round((place.distanceKm ?? 1) * 12)),
-            })
-          }
+            });
+          }}
         />
       </View>
     </GenCard>
   );
+}
+
+/** Walking directions to a place: Apple Maps on iPhone, Google Maps elsewhere. */
+function directionsUrl(p: { lat: number; lng: number; name: string }): string {
+  const to = `${p.lat},${p.lng}`;
+  return Platform.OS === "ios"
+    ? `https://maps.apple.com/?daddr=${to}&q=${encodeURIComponent(p.name)}&dirflg=w`
+    : `https://www.google.com/maps/dir/?api=1&destination=${to}&travelmode=walking`;
 }

@@ -1,11 +1,4 @@
 import {
-  componentFromTool,
-  componentTools,
-  validateToolArgs,
-  type ModelComponent,
-  partialProps,
-} from "../ai/catalog";
-import {
   LlmError,
   streamChat,
   ToolCallAccumulator,
@@ -15,12 +8,13 @@ import {
   type ToolDef,
 } from "../ai/openai";
 import { buildRequest, type Difficulty } from "../ai/reasoning";
-import { parseLooseJson, sanitizeValue, sleep, truncate, uid } from "../lib/util";
-import type { Part } from "../lib/validators";
+import { parseLooseJson, sleep, truncate, uid } from "../lib/util";
 import { makeSource, type SourceCollector } from "../web/sources";
 import { learn, note, type Engine } from "./context";
 import type { Sink } from "./writer";
-import { parsePartialJson } from "../lib/partialJson";
+import { OPENUI_ANSWER_NOTE, OpenUICard } from "../ai/openui";
+import type { PhotoFinder } from "../web/photos";
+import { OPENUI_FENCE, type PhotoPick } from "../../src/genui/openui/library";
 
 /**
  * The agent loop: stream → render text/thinking/cards live → run tools → feed results back,
@@ -41,9 +35,19 @@ export type LoopOptions = {
   sink: Sink;
   messages: ChatMessage[];
   tools: LoopTool[];
-  components: readonly ModelComponent[];
-  /** No native tool calling: components arrive as ```component fences in text. */
+  /** No native tool calling: no tools are sent (cards still work, they're written in the text). */
   prompted?: boolean;
+  /**
+   * Cards are on offer this reply: the model writes them into its text as ```openui blocks, which
+   * the app draws as they stream, so a card costs no extra round trip.
+   */
+  cards?: boolean;
+  /** The last card in this chat, which an ```openui-edit block changes, and the photos it showed. */
+  cardBase?: { source: string; photos?: PhotoPick[] };
+  /** Finds photos for the phrases a card names. */
+  findPhotos?: PhotoFinder;
+  /** Photos the chat has already shown: a card picks others. */
+  seenPhotos?: Set<string>;
   level: string;
   difficulty: Difficulty;
   maxSteps?: number;
@@ -61,8 +65,6 @@ export type LoopOptions = {
   webRoundsDone?: number;
   /** Level for a first step that's expected to pick a search, not write the answer. */
   routeLevel?: string;
-  /** Cards still offered once the web rounds are spent (never ChoiceChips). Unset: all of them. */
-  answerCards?: readonly ModelComponent[];
 };
 
 export type StepTiming = {
@@ -88,6 +90,8 @@ export type LoopResult = {
   costUsd?: number;
   reasoningSeen: boolean;
   componentsShown: string[];
+  /** What the parser left out of cards (statements that didn't fit the library), for the log. */
+  cardRepairs: string[];
   usedTools: string[];
   timings: StepTiming[];
   /** When the first answer text arrived. */
@@ -96,8 +100,10 @@ export type LoopResult = {
 
 const TOOL_RESULT_MAX = 12_000;
 
-/** How often a streaming card re-renders from its partial arguments. */
+/** How often a streaming card re-renders from its partial program. */
 const PAINT_MS = 120;
+/** How long a finished reply waits for its cards' last photos before it's saved without them. */
+const PHOTO_WAIT_MS = 8000;
 
 const WEB_TOOLS = new Set(["web_search", "read_url"]);
 
@@ -107,20 +113,13 @@ const TOOL_CARDS: Record<string, string> = {
   get_weather: "Weather",
 };
 
-/** Every card such a tool puts on screen; the model drawing one of these again would be a duplicate. */
-const TOOL_RENDERS: Record<string, string[]> = {
-  find_showtimes: ["MovieShowtimes", "MapCard"],
-  get_weather: ["Weather"],
-};
-
-/* ------------------------------------------------------------------ prompted-JSON fallback */
+/* ------------------------------------------------------------------ cards in the text stream */
 
 type FenceEvent =
   | { type: "text"; text: string }
   | { type: "start" }
   | { type: "partial"; body: string }
   | { type: "end"; body: string };
-const OPEN = "```component";
 const CLOSE = "```";
 
 export class FenceParser {
@@ -128,21 +127,24 @@ export class FenceParser {
   private block = "";
   private inBlock = false;
 
+  /** `open` is the fence that starts a card. */
+  constructor(private readonly open = OPENUI_FENCE) {}
+
   *push(delta: string): Generator<FenceEvent> {
     this.buf += delta;
     while (this.buf) {
       if (!this.inBlock) {
-        const i = this.buf.indexOf(OPEN);
+        const i = this.buf.indexOf(this.open);
         if (i >= 0) {
           if (i > 0) yield { type: "text", text: this.buf.slice(0, i) };
-          this.buf = this.buf.slice(i + OPEN.length);
+          this.buf = this.buf.slice(i + this.open.length);
           this.inBlock = true;
           yield { type: "start" };
           continue;
         }
         let keep = 0;
-        for (let k = Math.min(OPEN.length - 1, this.buf.length); k > 0; k--) {
-          if (OPEN.startsWith(this.buf.slice(-k))) {
+        for (let k = Math.min(this.open.length - 1, this.buf.length); k > 0; k--) {
+          if (this.open.startsWith(this.buf.slice(-k))) {
             keep = k;
             break;
           }
@@ -270,7 +272,6 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
   const signal = o.signal ?? new AbortController();
   const maxSteps = o.maxSteps ?? 8;
   const toolsOk = engine.profile.features.tools && !o.prompted;
-  const componentDefs = toolsOk ? componentTools(o.components) : [];
   const byName = new Map(o.tools.map((t) => [t.def.function.name, t]));
   const messages = [...o.messages];
   const result: LoopResult = {
@@ -284,40 +285,25 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     reasoningReported: false,
     reasoningSeen: false,
     componentsShown: [],
+    cardRepairs: [],
     usedTools: [],
     timings: [],
   };
   let webDone = o.webRoundsDone ?? 0;
-  /** A step after the web rounds that only drew cards: the next one has to write the answer. */
-  let drewAfterWeb = false;
-  const repairs = new Map<string, number>();
-  const invalidPartByName = new Map<string, string>();
   let finalNext = false;
   let nativeSearch = Boolean(o.nativeSearch);
-  /** Cards a data tool already drew this turn. */
-  const drawnByTools = new Set<string>();
+  /** Cards whose photos are still being found; the reply waits for them before it's saved. */
+  const photosPending: Promise<void>[] = [];
 
   for (let step = 0; step < maxSteps; step++) {
     result.steps = step + 1;
     const lastStep = finalNext || step === maxSteps - 1;
     // Once the web rounds are spent, app tools leave the list so the model answers from what it
     // found instead of paying another round trip. Data tools go too: denied a search, models reach
-    // for whatever is left (a location request or a weather card on a news question). Cards stay.
+    // for whatever is left (a location request or a weather card on a news question).
     const webOpen = o.webRounds === undefined || webDone < o.webRounds;
     const offered = webOpen ? o.tools : [];
-    // Every card step is another round trip before the answer text. After searching the model gets
-    // one, without chips (the turn adds follow-up chips after the reply anyway); then it writes.
-    const cards = webOpen
-      ? componentDefs
-      : drewAfterWeb
-        ? []
-        : componentDefs.filter((d) => {
-            const c = componentFromTool(d.function.name);
-            return (
-              c !== "ChoiceChips" && (!o.answerCards || (c !== null && o.answerCards.includes(c)))
-            );
-          });
-    const defs = toolsOk && !lastStep ? [...cards, ...offered.map((t) => t.def)] : [];
+    const defs = toolsOk && !lastStep ? offered.map((t) => t.def) : [];
     const offeredNames = new Set(defs.map((d) => d.function.name));
     // A first step that's only going to write a search query doesn't need the full thinking budget.
     const routing =
@@ -350,79 +336,76 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     }
 
     const calls = new ToolCallAccumulator();
-    const partByIndex = new Map<number, string>();
-    const painted = new Map<string, { at: number; len: number }>();
-    /** Renders what has streamed of a card's arguments so far, at most every PAINT_MS per card. */
-    const paint = (partId: string, name: string, raw: string, within?: string) => {
-      const prev = painted.get(partId);
-      const now = Date.now();
-      if (prev && (raw.length === prev.len || now - prev.at < PAINT_MS)) return;
-      painted.set(partId, { at: now, len: raw.length });
-      const props = partialProps(name, raw, within);
-      sink.update(partId, (p) =>
-        p.type === "component" && p.status === "streaming"
-          ? { ...p, name, props: props ? sanitizeValue(props) : p.props }
-          : p
-      );
-    };
-    const fence = o.prompted ? new FenceParser() : null;
-    let fencePart: string | null = null;
+    const painted = new Map<string, number>();
+    const fence = new FenceParser();
+    let open: { id: string; card: OpenUICard } | null = null;
     let stepText = "";
     const timing: StepTiming = { level: built.levelSent, tools: 0 };
     result.timings.push(timing);
     const sentAt = Date.now();
 
-    const handleFence = (ev: FenceEvent) => {
-      if (ev.type === "text") {
-        sink.text(ev.text);
-        stepText += ev.text;
-      } else if (ev.type === "partial") {
-        const head = parsePartialJson(ev.body) as { name?: unknown } | undefined;
-        if (fencePart && typeof head?.name === "string")
-          paint(fencePart, head.name, ev.body, "props");
-      } else if (ev.type === "start") {
-        fencePart = sink.add({
-          id: uid("cmp"),
+    /**
+     * An OpenUI block: the program so far goes to the app, which draws it as it grows, with photos
+     * for the phrases it names arriving as they're found.
+     */
+    const handleCard = (ev: Exclude<FenceEvent, { type: "text" }>) => {
+      if (ev.type === "start") {
+        const id = uid("cmp");
+        const card: OpenUICard = new OpenUICard({
+          base: o.cardBase,
+          findPhotos: o.findPhotos,
+          seen: o.seenPhotos,
+          onPhotos: () => setProps(id, { photos: card.photos() }),
+        });
+        open = { id, card };
+        sink.add({
+          id,
           type: "component",
-          name: "",
+          name: "OpenUI",
           props: {},
           status: "streaming",
           fallbackText: "",
         });
-      } else if (fencePart) {
-        const id = fencePart;
-        fencePart = null;
-        let parsed: any = null;
-        try {
-          parsed = parseLooseJson(ev.body);
-        } catch {
-          parsed = null;
-        }
-        const name = typeof parsed?.name === "string" ? parsed.name : "";
-        const v = validateToolArgs(name, {
-          ...(parsed?.props ?? {}),
-          fallbackText: parsed?.fallbackText,
-        });
-        sink.update(id, (p) =>
-          v.ok
-            ? {
-                ...(p as Extract<Part, { type: "component" }>),
-                name,
-                props: sanitizeValue(v.props),
-                status: "ready",
-                fallbackText: v.fallbackText,
-              }
-            : {
-                ...(p as Extract<Part, { type: "component" }>),
-                name: name || "Unknown",
-                status: "invalid",
-                error: v.error,
-                fallbackText: v.fallbackText,
-              }
-        );
-        if (v.ok) result.componentsShown.push(name);
-        stepText += `[card ${name}]`;
+        return;
       }
+      if (!open) return;
+      const { id, card } = open;
+      if (ev.type === "partial") {
+        const now = Date.now();
+        if (now - (painted.get(id) ?? 0) < PAINT_MS) return;
+        painted.set(id, now);
+        setProps(id, { source: card.update(ev.body) });
+        return;
+      }
+      open = null;
+      const read = card.finish(ev.body);
+      sink.update(id, (p) =>
+        p.type !== "component"
+          ? p
+          : read.ok
+            ? {
+                ...p,
+                props: { source: read.source, photos: card.photos() },
+                status: "ready",
+                fallbackText: read.fallbackText,
+              }
+            : { ...p, status: "invalid", error: read.error, fallbackText: "" }
+      );
+      if (read.ok) {
+        result.componentsShown.push("OpenUI");
+        result.cardRepairs.push(...read.issues);
+        photosPending.push(
+          card.settled().then(() => setProps(id, { photos: card.photos(), photosDone: true }))
+        );
+      } else console.log(`[cards] openui invalid: ${read.error.slice(0, 200)}`);
+      stepText += "[card OpenUI]";
+    };
+
+    const handleFence = (ev: FenceEvent) => {
+      if (ev.type === "text") {
+        sink.text(ev.text);
+        stepText += ev.text;
+      } else handleCard(ev);
     };
 
     const consume = async (body: Record<string, unknown>, onFirst: () => void) => {
@@ -439,49 +422,17 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
               timing.textMs = Date.now() - sentAt;
               result.firstTextAt ??= Date.now();
             }
-            if (fence) for (const fe of fence.push(ev.delta)) handleFence(fe);
-            else {
-              sink.text(ev.delta);
-              stepText += ev.delta;
-            }
+            for (const fe of fence.push(ev.delta)) handleFence(fe);
             break;
           case "reasoning":
             result.reasoningSeen = true;
             if (o.showThinking) sink.thinking(ev.delta);
             break;
           case "tool_call": {
-            const { index, isNew } = calls.push(ev);
-            const call = calls.get(index);
-            const comp = call?.name ? componentFromTool(call.name) : null;
-            const card = call?.name ? TOOL_CARDS[call.name] : undefined;
+            const { index } = calls.push(ev);
+            const name = calls.get(index)?.name;
+            const card = name ? TOOL_CARDS[name] : undefined;
             if (card) sink.preload?.(card);
-            if (comp && !partByIndex.has(index) && !drawnByTools.has(comp)) {
-              const reuse = invalidPartByName.get(comp);
-              if (reuse && sink.get(reuse)) {
-                sink.update(reuse, (p) => ({
-                  ...(p as Extract<Part, { type: "component" }>),
-                  props: {},
-                  status: "streaming",
-                  error: undefined,
-                }));
-                partByIndex.set(index, reuse);
-              } else {
-                partByIndex.set(
-                  index,
-                  sink.add({
-                    id: uid("cmp"),
-                    type: "component",
-                    name: comp,
-                    props: {},
-                    status: "streaming",
-                    fallbackText: "",
-                  })
-                );
-              }
-            }
-            const live = partByIndex.get(index);
-            if (comp && live && call) paint(live, comp, call.args);
-            void isNew;
             break;
           }
           case "citations":
@@ -504,7 +455,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
           break;
         }
       }
-      if (fence) for (const fe of fence.flush()) handleFence(fe);
+      for (const fe of fence.flush()) handleFence(fe);
     };
 
     let attempt = 0;
@@ -566,9 +517,6 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
 
     let stopAfter = false;
     let foundOnWeb = false;
-    let answered = false;
-    // Cards a data tool in this same step is about to draw count as drawn already.
-    const drawingNow = new Set(toolCalls.flatMap((c) => TOOL_RENDERS[c.function.name] ?? []));
     const toolsAt = Date.now();
     const outputs = await Promise.all(
       toolCalls.map(async (call, i): Promise<string> => {
@@ -580,52 +528,6 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
         } catch {
           args = null;
         }
-        const comp = componentFromTool(name);
-        if (comp && (drawnByTools.has(comp) || drawingNow.has(comp) || !offeredNames.has(name))) {
-          const stray = partByIndex.get(entries[i].index);
-          if (stray) sink.remove(stray);
-          return offeredNames.has(name)
-            ? `${comp} is already on screen from a tool; don't render it again. Answer in a sentence or two.`
-            : `${comp} isn't available now. Answer in text.`;
-        }
-        if (comp) {
-          const partId =
-            partByIndex.get(entries[i].index) ??
-            sink.add({
-              id: uid("cmp"),
-              type: "component",
-              name: comp,
-              props: {},
-              status: "streaming",
-              fallbackText: "",
-            });
-          const v = validateToolArgs(comp, args);
-          if (v.ok) {
-            sink.update(partId, (p) => ({
-              ...(p as Extract<Part, { type: "component" }>),
-              props: sanitizeValue(v.props),
-              status: "ready",
-              fallbackText: v.fallbackText,
-              error: undefined,
-            }));
-            invalidPartByName.delete(comp);
-            result.componentsShown.push(comp);
-            if (comp === "Blocks") answered = true;
-            return `Shown to the user as card ${partId}. Don't repeat its contents as text; add at most a sentence or two.`;
-          }
-          const used = repairs.get(comp) ?? 0;
-          repairs.set(comp, used + 1);
-          sink.update(partId, (p) => ({
-            ...(p as Extract<Part, { type: "component" }>),
-            status: "invalid",
-            error: v.error,
-            fallbackText: v.fallbackText,
-          }));
-          invalidPartByName.set(comp, partId);
-          return used < 2
-            ? `Invalid ${comp} props: ${v.error}. Call ${name} again with corrected arguments.`
-            : `Invalid ${comp} props again (${v.error}). Don't retry; answer in text instead.`;
-        }
         const tool = byName.get(name);
         try {
           if (!tool) return `Unknown tool ${name}.`;
@@ -634,7 +536,6 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
           if (args === null)
             return "Your arguments weren't valid JSON. Call the tool again with a JSON object.";
           const out = await tool.run(args, call.id);
-          for (const card of TOOL_RENDERS[name] ?? []) drawnByTools.add(card);
           if (out.final) finalNext = true;
           if (out.stop) stopAfter = true;
           if (out.web === "results") foundOnWeb = true;
@@ -649,7 +550,6 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     );
     timing.tools = toolCalls.length;
     timing.toolsMs = Date.now() - toolsAt;
-    if (!webOpen) drewAfterWeb = true;
     if (foundOnWeb) webDone++;
     // The last round: say so, or models answer with what they'd search next and stop there.
     const lastRound = foundOnWeb && o.webRounds !== undefined && webDone >= o.webRounds;
@@ -657,18 +557,29 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
       messages.push({
         role: "tool",
         tool_call_id: call.id,
-        content:
-          lastRound && WEB_TOOLS.has(call.function.name)
-            ? `${outputs[i]}\n\n${LAST_ROUND_NOTE}`
-            : outputs[i],
+        content: [
+          outputs[i],
+          lastRound && WEB_TOOLS.has(call.function.name) ? LAST_ROUND_NOTE : "",
+          // Cards aren't in the tool list to remind the model of them after a search.
+          o.cards && WEB_TOOLS.has(call.function.name) ? OPENUI_ANSWER_NOTE : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       })
     );
-    // A Blocks card is the answer itself: end here rather than pay a round trip for a closing line.
-    if (answered && toolCalls.every((c) => componentFromTool(c.function.name))) break;
     if (stopAfter || sink.stopped) {
       result.stopped = sink.stopped;
       break;
     }
   }
+  // Photos still on their way: the saved reply should carry them.
+  if (photosPending.length && !sink.stopped)
+    await Promise.race([Promise.allSettled(photosPending), sleep(PHOTO_WAIT_MS)]);
   return result;
+
+  function setProps(id: string, patch: Record<string, unknown>) {
+    sink.update(id, (p) =>
+      p.type === "component" ? { ...p, props: { ...(p.props as object), ...patch } } : p
+    );
+  }
 }

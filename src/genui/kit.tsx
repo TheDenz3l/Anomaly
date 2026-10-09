@@ -22,6 +22,8 @@ export type GenProps<N extends CatalogName> = {
   live: boolean;
   /** True while the card's own arguments are still streaming: props hold what has arrived so far. */
   building?: boolean;
+  /** Where the card lives, when it's live (in a chat or an artifact) rather than a preview. */
+  card?: { threadId: string; partId: string };
 };
 
 /** Inline component shell: `surface` card, 24px radius (PRD §2.4). */
@@ -198,6 +200,7 @@ const building: Record<string, string> = {
   Weather: "the forecast",
   ProductGrid: "product picks",
   Blocks: "your answer",
+  OpenUI: "your answer",
   SubagentPlan: "a plan",
   SubagentTimeline: "the workers",
   ResearchPlan: "a research plan",

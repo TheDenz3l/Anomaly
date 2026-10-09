@@ -66,6 +66,7 @@ export function ComponentRenderer({ part, threadId, messageStreaming }: Props) {
           events={events}
           busy={busy}
           live={messageStreaming}
+          card={{ threadId, partId: part.id }}
           emit={(action, label, payload) =>
             emitUiEvent(threadId, {
               componentId: part.id,
@@ -139,4 +140,4 @@ class CardBoundary extends ReactComponent<
  * Cards that take each new prop set in place while they stream. The rest remount once complete, so
  * state they derive from props when mounted (form values, slider positions) starts from the full set.
  */
-const GROWS_IN_PLACE = new Set(["Blocks"]);
+const GROWS_IN_PLACE = new Set(["Blocks", "OpenUI"]);

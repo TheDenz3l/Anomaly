@@ -216,3 +216,23 @@ export async function firecrawlScrape(key: string, url: string): Promise<Scraped
     contentType: meta.contentType?.split(";")[0] || "text/html",
   };
 }
+
+/**
+ * A screenshot of a page as it looks in a desktop browser, top of the page only. Firecrawl hosts
+ * the image for 24 hours, so callers keep their own copy.
+ */
+export async function firecrawlScreenshot(key: string, url: string): Promise<string> {
+  const r = await call<{ data?: { screenshot?: string | null } }>(
+    key,
+    "scrape",
+    {
+      url,
+      formats: [{ type: "screenshot", fullPage: false, viewport: { width: 1280, height: 800 } }],
+      maxAge: SCRAPE_MAX_AGE,
+    },
+    30_000
+  );
+  const shot = r.data?.screenshot;
+  if (!shot) throw new FirecrawlError("Firecrawl returned no screenshot", 0);
+  return shot;
+}

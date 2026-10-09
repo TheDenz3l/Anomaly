@@ -84,11 +84,23 @@ async function fileBlock(
   return `${head}\n${wrapUntrusted(`attached file: ${name}`, body)}${note}`;
 }
 
+/** A recent card's program, as much as follow-ups need to edit it. */
+const CARD_MAX_CHARS = 8000;
+
 function assistantText(m: Doc<"messages">, detailed: boolean): string {
   const out: string[] = [];
   for (const p of m.parts) {
     if (p.type === "text") out.push(p.text);
-    else if (p.type === "component") {
+    else if (p.type === "component" && p.name === "OpenUI") {
+      // A card is the answer itself. Recent ones come with their program, so a follow-up can change
+      // the last card with an ```openui-edit block; older ones with what they said.
+      const source = String((p.props as { source?: unknown } | null)?.source ?? "");
+      out.push(
+        p.status === "ready" && detailed && source
+          ? `[Showed card id=${p.id}:]\n\`\`\`openui\n${truncate(source, CARD_MAX_CHARS)}\n\`\`\``
+          : `[Showed card id=${p.id}${p.status === "invalid" ? " (failed to render)" : ""}: ${p.fallbackText}]`
+      );
+    } else if (p.type === "component") {
       // A Blocks card is the answer itself, so later turns always see what it said.
       const answer = p.name === "Blocks";
       const props =
@@ -222,8 +234,13 @@ export function shownImages(history: Doc<"messages">[]): Set<string> {
   const out = new Set<string>();
   for (const m of history) {
     if (m.role !== "assistant") continue;
-    for (const p of m.parts)
+    for (const p of m.parts) {
       if (p.type === "text") for (const match of p.text.matchAll(MD_IMAGE_URL)) out.add(match[1]);
+      // Photos and screenshots a card showed.
+      if (p.type === "component" && p.name === "OpenUI")
+        for (const photo of (p.props as { photos?: { url?: unknown }[] } | null)?.photos ?? [])
+          if (typeof photo?.url === "string") out.add(photo.url);
+    }
   }
   return out;
 }

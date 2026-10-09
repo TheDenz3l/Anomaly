@@ -362,4 +362,11 @@ export default defineSchema({
   })
     .index("by_user_kind", ["userId", "kind"])
     .index("by_user_ref", ["userId", "refId"]),
+
+  /** Fixed-window counters for things a user can call in a loop (cards' live data). */
+  rateLimits: defineTable({
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+  }).index("by_key", ["key"]),
 });

@@ -167,7 +167,6 @@ async function runWorker(
       },
     ],
     tools: toolsFor(task.role, env),
-    components: [],
     level:
       task.role === "verifier"
         ? (levels[Math.floor(levels.length / 2)] ?? "auto")

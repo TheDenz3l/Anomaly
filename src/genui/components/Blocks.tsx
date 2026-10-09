@@ -21,12 +21,12 @@ import type { Accent, Block } from "@/genui/schemas";
 import { openLink } from "@/lib/links";
 import { fadeIn } from "@/lib/motion";
 import { colors, fonts } from "@/lib/theme";
-import { planRows, runPlan } from "@/genui/compute";
+import { evaluate, fillLive, isShown, planBlocks, type BlockPlan } from "@/genui/compute";
 
 type Of<T extends Block["type"]> = Extract<Block, { type: T }>;
 
 /** The accent palette: each named for the subjects it suits, tuned to read on the dark card. */
-const ACCENT_COLORS: Record<Accent, string> = {
+export const ACCENT_COLORS: Record<Accent, string> = {
   sand: "#D8B271",
   ocean: "#5AA9D6",
   forest: "#6CC28A",
@@ -35,10 +35,10 @@ const ACCENT_COLORS: Record<Accent, string> = {
   rose: "#E58BA8",
   steel: "#9DAAB8",
 };
-const AccentContext = createContext<string>(colors.primaryStrong);
+export const AccentContext = createContext<string>(colors.primaryStrong);
 const useAccent = () => useContext(AccentContext);
 /** The accent at a given opacity, for fills behind text. */
-const tint = (hex: string, alpha: number) =>
+export const tint = (hex: string, alpha: number) =>
   hex.startsWith("#") && hex.length === 7
     ? `${hex}${Math.round(alpha * 255)
         .toString(16)
@@ -49,29 +49,40 @@ type Row = Of<"computed">["rows"][number];
 
 /**
  * An answer built from blocks, rendered in the order the model writes them. While the call streams
- * each block fades in as it completes and text blocks are written live. Inputs and computed rows
- * recalculate on the phone, so a scaler or splitter works without another model call.
+ * each block fades in as it completes and text blocks are written live. Inputs, computed rows,
+ * show conditions and live values in braces all recalculate on the phone, so a scaler, splitter or
+ * "pick your plan" answer works without another model call.
  */
 export function Blocks({ props, building = false }: GenProps<"Blocks">) {
   const { blocks } = props;
   const [values, setValues] = useState<Values>({});
   const setValue = (id: string, v: number) => setValues((s) => ({ ...s, [id]: v }));
 
-  const plan = useMemo(() => planRows(blocks), [blocks]);
+  const plan = useMemo(() => planBlocks(blocks), [blocks]);
   const computed = useMemo(() => {
-    const scope: Values = {};
-    for (const b of blocks) if (b.type === "input") scope[b.id] = values[b.id] ?? b.value;
-    const out = "error" in plan ? new Map<string, number>() : runPlan(plan, scope);
-    return { scope, out };
+    const inputs: Values = {};
+    for (const b of blocks) if (b.type === "input") inputs[b.id] = values[b.id] ?? b.value;
+    const run = "error" in plan ? null : evaluate(plan, inputs);
+    return { inputs, out: run?.rows ?? new Map<string, number>(), scope: run?.scope ?? {} };
   }, [blocks, plan, values]);
+  const live = useMemo(
+    () => ("error" in plan ? NO_LIVE : liveFiller(blocks, plan, computed.scope)),
+    [blocks, plan, computed.scope]
+  );
+
+  // Blocks whose show condition doesn't hold stay out until an input makes it hold.
+  const shownAt = blocks
+    .map((_, i) => i)
+    .filter((i) => "error" in plan || isShown(plan, i, computed.scope));
 
   // Consecutive inputs share one panel, like the controls of a single tool.
   const groups: { at: number; items: number[] }[] = [];
-  blocks.forEach((b, i) => {
+  for (const i of shownAt) {
     const prev = groups[groups.length - 1];
+    const b = blocks[i];
     if (b.type === "input" && prev && blocks[prev.at].type === "input") prev.items.push(i);
     else groups.push({ at: i, items: [i] });
-  });
+  }
 
   const last = blocks[blocks.length - 1];
   const writingText = building && (last?.type === "text" || last?.type === "heading");
@@ -79,54 +90,107 @@ export function Blocks({ props, building = false }: GenProps<"Blocks">) {
 
   return (
     <AccentContext.Provider value={accent}>
-      <View className="gap-4">
-        {groups.map(({ at, items }) => {
-          const b = blocks[at];
-          const writing = building && items.includes(blocks.length - 1);
-          let body: ReactNode;
-          if (b.type === "input") {
-            body = (
-              <Panel>
-                {items.map((i, k) => (
-                  <View key={i} className={k > 0 ? "border-t border-hairline" : ""}>
-                    <InputRow
-                      block={blocks[i] as Of<"input">}
-                      value={computed.scope[(blocks[i] as Of<"input">).id]}
-                      onChange={setValue}
-                    />
-                  </View>
-                ))}
-              </Panel>
+      <LiveContext.Provider value={live}>
+        <View className="gap-4">
+          {groups.map(({ at, items }) => {
+            const b = blocks[at];
+            const writing = building && items.includes(blocks.length - 1);
+            let body: ReactNode;
+            if (b.type === "input") {
+              body = (
+                <Panel>
+                  {items.map((i, k) => (
+                    <View key={i} className={k > 0 ? "border-t border-hairline" : ""}>
+                      <InputRow
+                        block={blocks[i] as Of<"input">}
+                        value={computed.inputs[(blocks[i] as Of<"input">).id]}
+                        onChange={setValue}
+                      />
+                    </View>
+                  ))}
+                </Panel>
+              );
+            } else if (b.type === "computed") {
+              body = (
+                <Computed
+                  block={b}
+                  values={b.rows.map((_, ri) => computed.out.get(`${at}:${ri}`) ?? NaN)}
+                />
+              );
+            } else {
+              body = <Static block={b} first={at === shownAt[0]} writing={writing} />;
+            }
+            return (
+              // Fades in when it appears; leaves at once (an exit animation can be left on screen).
+              <Animated.View key={at} entering={building || b.show ? fadeIn : undefined}>
+                {body}
+              </Animated.View>
             );
-          } else if (b.type === "computed") {
-            body = (
-              <Computed
-                block={b}
-                values={b.rows.map((_, ri) => computed.out.get(`${at}:${ri}`) ?? NaN)}
-              />
-            );
-          } else {
-            body = <Static block={b} first={at === 0} writing={writing} />;
-          }
-          return (
-            <Animated.View key={at} entering={building ? fadeIn : undefined}>
-              {body}
-            </Animated.View>
-          );
-        })}
-        {building && !writingText ? <Skeleton className="h-4 w-2/3 rounded-md" /> : null}
-      </View>
+          })}
+          {building && !writingText ? <Skeleton className="h-4 w-2/3 rounded-md" /> : null}
+        </View>
+      </LiveContext.Provider>
     </AccentContext.Provider>
   );
 }
 
-function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
+/** Fills braces in block text with the card's live values; `writing` while the text streams. */
+type Live = (text: string, writing?: boolean) => string;
+const NO_LIVE: Live = (text) => text;
+const LiveContext = createContext<Live>(NO_LIVE);
+const useLive = () => useContext(LiveContext);
+
+/** A live value shown the way the card shows it elsewhere: a row in its format, an input as set. */
+function liveFiller(blocks: Block[], plan: BlockPlan, scope: Values): Live {
+  if (!plan.lives.size)
+    return (text, writing) => fillLive(text, plan, scope, (_, v) => plain(v), writing);
+  const display = new Map<string, (v: number) => string>();
+  for (const [name, id] of plan.inputs) {
+    const b = blocks.find((x): x is Of<"input"> => x.type === "input" && x.id === id);
+    if (b) display.set(name, (v) => inputText(b, v));
+  }
+  for (const row of plan.order) {
+    const [bi, ri] = row.key.split(":").map(Number);
+    const block = blocks[bi] as Of<"computed">;
+    const r = block.rows[ri];
+    for (const n of row.owns) display.set(n, (v) => format(v, r, block.currency ?? "USD"));
+  }
+  // An expression written out the same as a row's formula is that row, shown in its format.
+  const squash = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+  const byFormula = new Map<string, (v: number) => string>();
+  for (const b of blocks)
+    if (b.type === "computed")
+      for (const r of b.rows)
+        byFormula.set(squash(r.formula), (v) => format(v, r, b.currency ?? "USD"));
+  const show = (expr: string, v: number) =>
+    (display.get(expr.replace(/^\$/, "").toLowerCase()) ?? byFormula.get(squash(expr)) ?? plain)(v);
+  return (text, writing) => fillLive(text, plan, scope, show, writing);
+}
+
+function plain(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(v);
+}
+
+/** An input's value in words: the picked option, on or off, or the number with its unit. */
+function inputText(b: Of<"input">, v: number): string {
+  if (b.kind === "choice") {
+    const option = b.options?.find((o) => o.value === v);
+    if (option) return option.label;
+  }
+  if (b.kind === "toggle") return v ? "on" : "off";
+  // No unit: models write it after the braces themselves ("{months} months").
+  return shown(b, v);
+}
+
+export function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <View className={`overflow-hidden rounded-3xl bg-card px-4 ${className}`}>{children}</View>
   );
 }
 
-function Static({
+/** One display block, drawn as a Blocks answer draws it (OpenUI cards reuse these). */
+export function Static({
   block: b,
   first,
   writing,
@@ -135,31 +199,32 @@ function Static({
   first: boolean;
   writing: boolean;
 }) {
+  const live = useLive();
   switch (b.type) {
     case "heading":
       return (
         <View className={first ? "" : "mt-1"}>
           {b.image ? (
             <View className="mb-3">
-              <GenImage uri={b.image} alt={b.text} aspectRatio={16 / 9} radius={22} />
+              <GenImage uri={b.image} alt={live(b.text)} aspectRatio={16 / 9} radius={22} />
             </View>
           ) : null}
           {first ? (
-            <Display className="text-[20px] leading-7">{b.text}</Display>
+            <Display className="text-[20px] leading-7">{live(b.text, writing)}</Display>
           ) : (
             <Text weight="bold" className="text-[19px] leading-6">
-              {b.text}
+              {live(b.text, writing)}
             </Text>
           )}
           {b.subtitle ? (
             <Text muted className="mt-1 text-[15px] leading-[22px]">
-              {b.subtitle}
+              {live(b.subtitle)}
             </Text>
           ) : null}
         </View>
       );
     case "text":
-      return <Markdown text={b.text} streaming={writing} />;
+      return <Markdown text={live(b.text, writing)} streaming={writing} />;
     case "images":
       return <ImageGallery images={b.images} live={writing} />;
     case "stats":
@@ -172,17 +237,17 @@ function Static({
               <GenImage uri={b.image} alt={b.title} aspectRatio={16 / 9} radius={0} />
             </View>
           ) : null}
-          {b.title ? <PanelTitle text={b.title} /> : null}
+          {b.title ? <PanelTitle text={live(b.title)} /> : null}
           {b.items.map((f, k) => (
             <View
               key={k}
               className={`flex-row items-baseline gap-4 py-3 ${k > 0 || b.title ? "border-t border-hairline" : ""}`}
             >
               <Text muted className="text-[14px] leading-5" style={{ maxWidth: "45%" }}>
-                {f.label}
+                {live(f.label)}
               </Text>
               <Text weight="medium" className="flex-1 text-right text-[15px] leading-5">
-                {f.value}
+                {live(f.value)}
               </Text>
             </View>
           ))}
@@ -207,7 +272,7 @@ function Static({
   }
 }
 
-function PanelTitle({ text, right }: { text: string; right?: ReactNode }) {
+export function PanelTitle({ text, right }: { text: string; right?: ReactNode }) {
   return (
     <View className="flex-row items-center justify-between gap-3 pt-3.5 pb-2.5">
       <Text weight="bold" className="flex-1 text-[15px] leading-5">
@@ -224,8 +289,14 @@ function PanelTitle({ text, right }: { text: string; right?: ReactNode }) {
  */
 function Stats({ block: b }: { block: Of<"stats"> }) {
   const accent = useAccent();
-  if (b.items.length >= 3) {
-    const [hero, ...rest] = b.items;
+  const live = useLive();
+  const items = b.items.map((s) => ({
+    value: live(s.value),
+    label: live(s.label),
+    note: s.note ? live(s.note) : undefined,
+  }));
+  if (items.length >= 3) {
+    const [hero, ...rest] = items;
     return (
       <Panel className="py-4">
         <Text
@@ -280,7 +351,7 @@ function Stats({ block: b }: { block: Of<"stats"> }) {
   }
   return (
     <View className="flex-row gap-2.5">
-      {b.items.map((s, k) => (
+      {items.map((s, k) => (
         <View key={k} className="rounded-2xl bg-card px-3.5 py-3" style={{ flex: 1 }}>
           <Text
             weight="bold"
@@ -584,6 +655,7 @@ function Quote({ block: b }: { block: Of<"quote"> }) {
 }
 
 function Items({ block: b }: { block: Of<"items"> }) {
+  const live = useLive();
   return (
     <Panel>
       {b.title ? <PanelTitle text={b.title} /> : null}
@@ -595,17 +667,17 @@ function Items({ block: b }: { block: Of<"items"> }) {
             {it.image ? <GenImage uri={it.image} width={64} height={64} radius={14} /> : null}
             <View className="flex-1 gap-0.5">
               <Text weight="bold" className="text-[15px] leading-5">
-                {it.title}
+                {live(it.title)}
               </Text>
               {it.detail ? (
                 <Text muted className="text-[13.5px] leading-[19px]" numberOfLines={3}>
-                  {it.detail}
+                  {live(it.detail)}
                 </Text>
               ) : null}
             </View>
             {it.meta ? (
               <Text weight="medium" className="text-[13px] text-ink-muted" numberOfLines={1}>
-                {it.meta}
+                {live(it.meta)}
               </Text>
             ) : null}
             {it.url ? <Icon name="chevron-forward" size={16} color={colors.textFaint} /> : null}
@@ -743,7 +815,7 @@ function Callout({ block: b, writing }: { block: Of<"callout">; writing: boolean
         <Icon name={t.icon} size={18} color={t.color} />
       </View>
       <View className="flex-1">
-        <Markdown text={b.text} streaming={writing} />
+        <Markdown text={useLive()(b.text, writing)} streaming={writing} />
       </View>
     </View>
   );
@@ -960,6 +1032,7 @@ function format(v: number, row: Row, currency: string): string {
 
 function Computed({ block: b, values }: { block: Of<"computed">; values: number[] }) {
   const currency = b.currency ?? "USD";
+  const live = useLive();
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -1026,7 +1099,7 @@ function Computed({ block: b, values }: { block: Of<"computed">; values: number[
       )}
       {b.note ? (
         <Text className="border-t border-hairline py-3 text-[12.5px] leading-[18px] text-ink-faint">
-          {b.note}
+          {live(b.note)}
         </Text>
       ) : null}
     </Panel>

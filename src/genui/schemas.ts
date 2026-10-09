@@ -1,9 +1,13 @@
 import { z } from "zod";
-import { planRows } from "./compute";
+import { planBlocks, BlockIssue } from "./compute";
+import { salvage } from "./repair";
 
 /**
- * Component catalog (PRD §3.3). The model never emits code — it calls typed tools whose
- * arguments must parse against these schemas before the client renders anything.
+ * Component catalog (PRD §3.3): the native cards and the props each one draws from. Data tools and
+ * the engine draw some of them directly (Weather, MovieShowtimes, MapCard, ChoiceChips, plans);
+ * replies draw OpenUI cards (./openui), which reuse several of these inside them. Cards the model
+ * wrote as JSON before OpenUI (Blocks, Compare, Timeline…) stay here so old chats still render.
+ * Props that don't quite fit are repaired where they can be (./repair.ts).
  */
 
 const id = z.string().min(1);
@@ -494,32 +498,44 @@ export const QuoteBlock = z.object({
 export const ACCENTS = ["sand", "ocean", "forest", "citrus", "violet", "rose", "steel"] as const;
 export type Accent = (typeof ACCENTS)[number];
 
+/**
+ * Any block may carry a condition over the card's inputs and rows; it shows only while that holds,
+ * so a choice or toggle can reveal the blocks that apply (./compute.ts).
+ */
+const show = z
+  .string()
+  .optional()
+  .describe(
+    "A condition over input ids and row ids; the block shows only while it holds, like plan == 2 or guests > 8. Choice inputs compare by option value."
+  );
+
 export const BlockSchema = z.discriminatedUnion("type", [
-  HeadingBlock,
-  TextBlock,
-  ImagesBlock,
-  StatsBlock,
-  FactsBlock,
-  ItemsBlock,
-  StepsBlock,
-  CalloutBlock,
-  InputBlock,
-  ComputedBlock,
-  DividerBlock,
-  BarsBlock,
-  QuizBlock,
-  CardsBlock,
-  QuoteBlock,
+  HeadingBlock.extend({ show }),
+  TextBlock.extend({ show }),
+  ImagesBlock.extend({ show }),
+  StatsBlock.extend({ show }),
+  FactsBlock.extend({ show }),
+  ItemsBlock.extend({ show }),
+  StepsBlock.extend({ show }),
+  CalloutBlock.extend({ show }),
+  InputBlock.extend({ show }),
+  ComputedBlock.extend({ show }),
+  DividerBlock.extend({ show }),
+  BarsBlock.extend({ show }),
+  QuizBlock.extend({ show }),
+  CardsBlock.extend({ show }),
+  QuoteBlock.extend({ show }),
 ]);
 
 export type Block = z.infer<typeof BlockSchema>;
 
 /**
  * Checks what one block can't check alone: choice inputs have options, ids are unique, and every
- * formula parses and names only inputs and other rows, without loops (./compute.ts). Returns the
- * index of the first block that fails with the reason, or null when all pass.
+ * formula, show condition and live value parses and names only inputs and rows, without loops
+ * (./compute.ts). Returns the first block that fails, the part of it at fault when known, and why;
+ * null when all pass.
  */
-export function checkBlocks(blocks: Block[]): { index: number; error: string } | null {
+export function checkBlocks(blocks: Block[]): BlockIssue | null {
   for (const [index, b] of blocks.entries()) {
     if (b.type === "quiz" && b.answer >= b.choices.length)
       return {
@@ -535,7 +551,7 @@ export function checkBlocks(blocks: Block[]): { index: number; error: string } |
     if (ids.has(b.id.toLowerCase())) return { index, error: `id ${b.id} is used twice` };
     ids.add(b.id.toLowerCase());
   }
-  const plan = planRows(blocks);
+  const plan = planBlocks(blocks);
   return "error" in plan ? plan : null;
 }
 
@@ -547,8 +563,33 @@ export const BlocksSchema = z.object({
     .max(40)
     .superRefine((blocks, ctx) => {
       const bad = checkBlocks(blocks);
-      if (bad) ctx.addIssue({ code: "custom", path: [bad.index], message: bad.error });
+      if (bad)
+        ctx.addIssue({
+          code: "custom",
+          path: [bad.index, ...(bad.path ?? [])],
+          message: bad.error,
+        });
     }),
+});
+
+/** One value a user set on a card: a $variable, or a component's own field (`field`). */
+export const CardStateEntrySchema = z.object({
+  k: z.string(),
+  v: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  field: z.boolean().optional(),
+});
+export type CardStateEntry = z.infer<typeof CardStateEntrySchema>;
+
+/**
+ * A card the model wrote in OpenUI Lang, parsed and drawn by ./openui, with the photos the server
+ * found for the phrases it names.
+ */
+export const OpenUISchema = z.object({
+  source: z.string(),
+  photos: z.array(z.object({ q: z.string(), url: z.string().nullable() })).optional(),
+  photosDone: z.boolean().optional(),
+  /** What the user set on the card ($variables, fields), restored when it's shown again. */
+  state: z.array(CardStateEntrySchema).optional(),
 });
 
 export const catalogSchemas = {
@@ -571,6 +612,7 @@ export const catalogSchemas = {
   LocationRequest: LocationRequestSchema,
   MemoryConfirm: MemoryConfirmSchema,
   Blocks: BlocksSchema,
+  OpenUI: OpenUISchema,
 } as const;
 
 export type CatalogName = keyof typeof catalogSchemas;
@@ -582,21 +624,22 @@ const extraChecks: { [N in CatalogName]?: (props: CatalogProps<N>) => string | n
     p.model || p.series?.length ? null : "series: give a model or at least one series",
 };
 
+/**
+ * Checks a card's props against the catalog. Props that don't fit are repaired where they can be
+ * (./repair.ts): the parts that broke them are cut, clamped or left out and listed in `dropped`, so
+ * one bad field costs that field, not the card and a retry while the user waits.
+ */
 export function validateComponent(
   name: string,
   props: unknown
-): { ok: true; props: unknown } | { ok: false; error: string } {
+): { ok: true; props: unknown; dropped: string[] } | { ok: false; error: string } {
   if (!Object.prototype.hasOwnProperty.call(catalogSchemas, name))
     return { ok: false, error: `Unknown component "${name}"` };
   const schema = (catalogSchemas as Record<string, z.ZodType>)[name];
-  const result = schema.safeParse(props);
-  if (result.success) {
-    const problem = extraChecks[name as CatalogName]?.(result.data as never);
-    return problem ? { ok: false, error: problem } : { ok: true, props: result.data };
-  }
-  const first = result.error.issues[0];
-  return {
-    ok: false,
-    error: `${first?.path.join(".") || "props"}: ${first?.message ?? "invalid"}`,
-  };
+  const result = salvage(schema, props);
+  if (!result.ok) return result;
+  const problem = extraChecks[name as CatalogName]?.(result.data as never);
+  return problem
+    ? { ok: false, error: problem }
+    : { ok: true, props: result.data, dropped: result.dropped };
 }

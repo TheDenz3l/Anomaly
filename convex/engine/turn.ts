@@ -1,7 +1,8 @@
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
-import { MODEL_COMPONENTS, promptedCatalog, type ModelComponent } from "../ai/catalog";
+import { MODEL_COMPONENTS } from "../ai/catalog";
+import { hasFollowUps, OPENUI_ANSWER_NOTE, openuiCatalog, openuiDirective } from "../ai/openui";
 import {
   askedToRemember,
   band,
@@ -16,6 +17,8 @@ import { geocode } from "../data/geo";
 import { textOf } from "../lib/messages";
 import { uid } from "../lib/util";
 import type { GeoLocation, Part, ReplyMeta, Source } from "../lib/validators";
+import { photoFinder } from "../web/photos";
+import type { PhotoPick } from "../../src/genui/openui/library";
 import { SourceCollector } from "../web/sources";
 import { spawnTool, type SpawnEnv } from "./agents";
 import { modelEngine, note, type Engine } from "./context";
@@ -23,7 +26,7 @@ import { failTurn, finishTurn } from "./finish";
 import { conversationContext, lastInput, shownImages, toChatMessages } from "./history";
 import { runModelLoop, type LoopTool } from "./loop";
 import { recallMemories } from "./memory";
-import { systemPrompt, COMPOSE_DIRECTIVE } from "./prompt";
+import { systemPrompt } from "./prompt";
 import { researchTurn } from "./research";
 import {
   findPlacesTool,
@@ -45,12 +48,9 @@ import { type ChatMessage } from "../ai/openai";
 const RESEARCH_OFFER = "cmp_resoffer";
 
 /** No chips when the reply already waits on the user (a question card, plan, form or location). */
-/** Chance of a composed answer (visual + tool) at which Blocks is offered, and at which it's asked for. */
+/** Chance of a composed answer (visual + tool) at which cards are offered, and at which one is asked for. */
 const COMPOSE_OFFER = 0.3;
 const COMPOSE_ASK = 0.5;
-
-/** Cards that present one shape better than a composed answer could: options side by side, a series. */
-const EXACT_CARDS = new Set(["Compare", "Chart"]);
 
 /** Adds an app note to the latest user message, for this request only (never stored). */
 function withTurnNote(messages: ChatMessage[], note: string): ChatMessage[] {
@@ -65,17 +65,40 @@ function withTurnNote(messages: ChatMessage[], note: string): ChatMessage[] {
   return [...messages.slice(0, at), { role: "user", content }, ...messages.slice(at + 1)];
 }
 
+/** The last card shown in this chat, which an ```openui-edit block changes, with its photos. */
+function lastCard(
+  history: { role: string; parts: Part[] }[]
+): { source: string; photos?: PhotoPick[] } | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role !== "assistant") continue;
+    for (let j = history[i].parts.length - 1; j >= 0; j--) {
+      const p = history[i].parts[j];
+      const source = cardSource(p);
+      if (source && p.type === "component")
+        return { source, photos: (p.props as { photos?: PhotoPick[] } | null)?.photos };
+    }
+  }
+  return undefined;
+}
+
+/** The program of a card drawn in this reply, if it is one. */
+const cardSource = (p: Part): string | null =>
+  p.type === "component" && p.name === "OpenUI" && p.status === "ready"
+    ? String((p.props as { source?: unknown } | null)?.source ?? "")
+    : null;
+
 function wantsFollowUps(parts: Part[]): boolean {
   const answered = parts.some(
-    (p) =>
-      (p.type === "text" && p.text.trim()) ||
-      (p.type === "component" && p.name === "Blocks" && p.status === "ready")
+    (p) => (p.type === "text" && p.text.trim()) || cardSource(p) !== null
   );
   if (!answered) return false;
   const waiting = ["ChoiceChips", "LocationRequest", "SubagentPlan", "ResearchPlan", "Form"];
   return !parts.some((p) => {
     if (p.type !== "component") return false;
     if (waiting.includes(p.name)) return true;
+    // A card that ends with its own follow-up buttons already offers next steps.
+    const source = cardSource(p);
+    if (source !== null) return hasFollowUps(source);
     // A memory card still asking "remember this?" is already a question.
     return (
       p.name === "MemoryConfirm" &&
@@ -113,7 +136,11 @@ function followUpCandidates(intent: string, cards: string[], tools: string[]): s
 export async function runTurn(
   ctx: ActionCtx,
   messageId: Id<"messages">,
-  opts: { injected?: string; sources?: Source[]; kind?: ReplyMeta["kind"] } = {}
+  opts: {
+    injected?: string;
+    sources?: Source[];
+    kind?: ReplyMeta["kind"];
+  } = {}
 ): Promise<void> {
   const startedAt = Date.now();
   const data = await ctx.runQuery(internal.engine.data.turnContext, { messageId });
@@ -337,14 +364,10 @@ export async function runTurn(
       if (spawnOffered) tools.push(spawnTool(env, sink));
     }
 
-    // Component selection → probabilities shape the tool list and pre-load a skeleton.
+    // Cards are written into the reply as OpenUI blocks, which needs no tool calling; the router's
+    // card guess only hints at the shape of the answer and pre-loads data.
     const probs = td.components.choice;
-    const components =
-      canTools && wantsCards
-        ? MODEL_COMPONENTS.filter(
-            (c) => (c !== "Weather" && c !== "MovieShowtimes") || probs[c] !== undefined
-          )
-        : [];
+    const cards = wantsCards;
     // Showtimes are likely: look up movies and cinemas while the model thinks, so the tool call
     // finds them ready.
     if (canTools && wantsData && location && (probs.MovieShowtimes ?? 0) > THRESHOLDS.act)
@@ -371,6 +394,7 @@ export async function runTurn(
       preLog = `${Date.now() - pre.at}ms(waited ${Date.now() - waitFrom}ms,${found.web})`;
       if (found.web === "results") {
         extra.push("# Search results for this message (cite as [n])", found.content);
+        if (cards) extra.push(OPENUI_ANSWER_NOTE);
         webRoundsDone = 1;
       }
     } else if (!canTools && appWeb && searchMode !== "none" && text) {
@@ -406,18 +430,13 @@ export async function runTurn(
     // Asked for next to the user's message rather than at the end of a long system prompt, where
     // models (especially mid-conversation, with earlier cards in the history) tend to miss it.
     let presentAs: string | undefined;
-    if (canTools && compose >= COMPOSE_ASK) {
-      // A card built for this exact shape beats a composed one when the router is sure of it.
-      const [card, p] = Object.entries(td.components.choice).sort((x, y) => y[1] - x[1])[0] ?? [];
-      if (
-        card &&
-        p >= COMPOSE_ASK &&
-        EXACT_CARDS.has(card) &&
-        components.includes(card as ModelComponent)
-      )
-        presentAs = `Present this answer with the ui_${card} card, then add at most a sentence or two.`;
-      else if (components.includes("Blocks"))
-        presentAs = COMPOSE_DIRECTIVE[pres.choice.tool > pres.choice.visual ? "tool" : "visual"];
+    if (cards && compose >= COMPOSE_ASK) {
+      // A card built around one shape (a comparison, a series, a map) when the router is sure of it.
+      const [top, p] = Object.entries(td.components.choice).sort((x, y) => y[1] - x[1])[0] ?? [];
+      presentAs = openuiDirective(
+        pres.choice.tool > pres.choice.visual ? "tool" : "visual",
+        top && (p ?? 0) >= COMPOSE_ASK ? top : undefined
+      );
     }
     if (opts.injected) extra.push(opts.injected);
 
@@ -437,8 +456,7 @@ export async function runTurn(
       memories,
       location,
       incognito: thread.incognito,
-      components: components.length > 0,
-      promptedCatalog: !canTools && wantsCards ? promptedCatalog() : undefined,
+      cards: cards ? openuiCatalog() : undefined,
       web: !canTools
         ? extra.length && appWeb
           ? "app"
@@ -471,8 +489,11 @@ export async function runTurn(
         ...(presentAs ? withTurnNote(hist.messages, presentAs) : hist.messages),
       ],
       tools,
-      components,
-      prompted: !canTools && wantsCards,
+      prompted: !canTools,
+      cards,
+      cardBase: cards ? lastCard(history) : undefined,
+      findPhotos: cards ? photoFinder(ctx, engine.search) : undefined,
+      seenPhotos: env.seenImages,
       level: thread.reasoningLevel,
       difficulty: difficulty.choice,
       maxSteps: 8,
@@ -482,10 +503,6 @@ export async function runTurn(
       signal,
       webRounds,
       webRoundsDone,
-      // After searching, only cards that lay out what was found; photos answer for themselves.
-      answerCards: photos
-        ? []
-        : ["Table", "Timeline", "Compare", "ProductGrid", "MapCard", "Blocks"],
       // Only when a search is near certain: if the model answers from what it knows instead, that
       // first step is the answer, and it must be written at the level the user picked.
       routeLevel:
@@ -504,7 +521,7 @@ export async function runTurn(
       )
       .join(" | ");
     console.log(
-      `[turn] ${messageId} firstText=${result.firstTextAt ? `${result.firstTextAt - startedAt}ms` : "none"} setup=${t0 - startedAt}ms pre=${preLog} decide=${decidedAt - t0}ms recallWait=${recalledAt - decidedAt}ms model+tools=${loopDoneAt - recalledAt}ms cards=${Date.now() - loopDoneAt}ms steps=${result.steps} [${stepLog}] tools=${result.usedTools.join(",") || "none"}`
+      `[turn] ${messageId} firstText=${result.firstTextAt ? `${result.firstTextAt - startedAt}ms` : "none"} setup=${t0 - startedAt}ms pre=${preLog} decide=${decidedAt - t0}ms recallWait=${recalledAt - decidedAt}ms model+tools=${loopDoneAt - recalledAt}ms cards=${Date.now() - loopDoneAt}ms steps=${result.steps} [${stepLog}] tools=${result.usedTools.join(",") || "none"} cards=${result.componentsShown.join(",") || (cards ? "offered" : "off")}${result.cardRepairs.length ? ` dropped=${JSON.stringify(result.cardRepairs.slice(0, 6))}` : ""}`
     );
 
     // Memory write gate: act → auto-save, confirm → inline chip, fallback → skip.

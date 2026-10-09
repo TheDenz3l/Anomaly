@@ -205,7 +205,6 @@ export const synthesize = internalAction({
           },
         ],
         tools: [],
-        components: [],
         level: highest(engine),
         difficulty: "hard",
         maxSteps: 1,

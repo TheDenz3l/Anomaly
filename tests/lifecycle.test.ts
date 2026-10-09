@@ -259,6 +259,45 @@ describe("regenerate", () => {
   });
 });
 
+describe("card taps the phone already handled", () => {
+  it.each([
+    ["MapCard", "directions"],
+    ["Stepper", "complete"],
+  ] as const)("%s %s is kept in the chat but starts no reply", async (component, action) => {
+    const { t, userId, as } = await signedIn();
+    const threadId = await thread(t, userId);
+    await message(t, userId, threadId, {
+      status: "done",
+      parts: [
+        {
+          id: "cmp_m",
+          type: "component",
+          name: component,
+          props: {},
+          status: "ready",
+          fallbackText: "x",
+        },
+      ],
+    });
+    const res = await as.mutation(api.messages.emitUiEvent, {
+      threadId,
+      componentId: "cmp_m",
+      component,
+      action,
+      label: "Tapped",
+    });
+    expect(res.messageId).toBeNull();
+    const all = await t.run((ctx) =>
+      ctx.db
+        .query("messages")
+        .filter((q) => q.eq(q.field("threadId"), threadId))
+        .collect()
+    );
+    expect(all.filter((m) => m.role === "assistant")).toHaveLength(1);
+    expect(all.some((m) => m.parts.some((p) => p.type === "ui_event"))).toBe(true);
+  });
+});
+
 describe("research runs end", () => {
   it("synthesize fails the run when its reply is gone", async () => {
     const { t, userId } = await signedIn();

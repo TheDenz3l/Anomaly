@@ -26,10 +26,42 @@ export type Artifact =
   | (Base & { type: "report"; message: Message; sources: Source[] });
 
 type Kind<N extends CatalogName> = {
-  group: ArtifactGroup;
+  group: ArtifactGroup | ((p: CatalogProps<N>) => ArtifactGroup);
   kind: (p: CatalogProps<N>) => string;
   title: (p: CatalogProps<N>, thread: Thread) => string;
 };
+
+/**
+ * What an OpenUI card is, from the components its program uses, most telling first: something
+ * live or adjustable is an app, a comparison or series is data, anything else reads like a guide.
+ */
+const CARD_KINDS: [RegExp, string, ArtifactGroup][] = [
+  [/=\s*Query\(/, "Live app", "apps"],
+  [/\b(Slider|Choice|Toggle|Input)\(/, "Tool", "apps"],
+  [/\bProducts\(/, "Shopping", "apps"],
+  [/\bMap\(/, "Map", "apps"],
+  [/\bCompare\(/, "Comparison", "data"],
+  [/\bChart\(/, "Chart", "data"],
+  [/\bTable\(/, "Table", "data"],
+  [/\bScreenshot\(/, "Website", "reports"],
+  [/\b(Quiz|FlipCards)\(/, "Lesson", "reports"],
+];
+
+function cardKind(source: string): { kind: string; group: ArtifactGroup } {
+  const hit = CARD_KINDS.find(([re]) => re.test(source));
+  return hit ? { kind: hit[1], group: hit[2] } : { kind: "Guide", group: "reports" };
+}
+
+/** A card's own title: what its cover says. */
+function cardTitle(source: string): string | null {
+  const m = /\bHero\(\s*"((?:[^"\\]|\\.)*)"/.exec(source);
+  if (!m) return null;
+  try {
+    return JSON.parse(`"${m[1]}"`) as string;
+  } catch {
+    return m[1];
+  }
+}
 
 const kinds: { [N in CatalogName]?: Kind<N> } = {
   Chart: { group: "apps", kind: (p) => (p.model ? "Calculator" : "Chart"), title: (p) => p.title },
@@ -42,6 +74,11 @@ const kinds: { [N in CatalogName]?: Kind<N> } = {
   Table: { group: "data", kind: () => "Table", title: (p, t) => p.title ?? t.title },
   Compare: { group: "data", kind: () => "Comparison", title: (p, t) => p.title ?? t.title },
   Timeline: { group: "data", kind: () => "Timeline", title: (p, t) => p.title ?? t.title },
+  OpenUI: {
+    group: (p) => cardKind(p.source).group,
+    kind: (p) => cardKind(p.source).kind,
+    title: (p, t) => cardTitle(p.source) ?? t.title,
+  },
 };
 
 /** Merged, de-duplicated sources in the order they arrived: search steps first, then sub-agent and research results. */
@@ -139,7 +176,7 @@ export function collectArtifacts(
           messageId: m.id,
           title: k.title(props, thread),
           kind: k.kind(props),
-          group: k.group,
+          group: typeof k.group === "function" ? k.group(props) : k.group,
           createdAt: m.createdAt,
           part: p,
         });

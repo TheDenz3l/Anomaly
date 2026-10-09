@@ -10,6 +10,9 @@ import { sanitizeValue, uid } from "./lib/util";
 import { scheduleAutoProbe } from "./probes";
 import type { Part } from "./lib/validators";
 
+/** ui_events the card handles on the phone; they're kept in the chat but start no reply. */
+const SILENT_EVENTS = new Set(["MapCard:directions", "Stepper:complete"]);
+
 /** Chat API (PRD §3.1): every reply is an assistant message the engine streams into. */
 
 export const list = query({
@@ -196,6 +199,47 @@ export const send = mutation({
   },
 });
 
+/** Most values one card keeps, and the longest text value. */
+const CARD_STATE_MAX = 60;
+const CARD_TEXT_MAX = 2000;
+
+/**
+ * What the user set on an OpenUI card (its $variables and fields: a slider, a chip, a tab), saved
+ * on the card itself so it shows the same after a reload and on their other devices.
+ */
+export const saveCardState = mutation({
+  args: {
+    threadId: v.id("threads"),
+    componentId: v.string(),
+    state: v.array(
+      v.object({
+        k: v.string(),
+        v: v.union(v.string(), v.number(), v.boolean(), v.null()),
+        field: v.optional(v.boolean()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const thread = await ownThread(ctx, args.threadId, userId);
+    if (args.state.length > CARD_STATE_MAX) throw new ConvexError("Too much to save on one card.");
+    const found = await findComponent(ctx, thread._id, args.componentId);
+    if (!found || found.part.name !== "OpenUI" || found.part.status !== "ready") return;
+    const state = args.state.map((e) => ({
+      k: e.k.slice(0, 80),
+      v: typeof e.v === "string" ? e.v.slice(0, CARD_TEXT_MAX) : e.v,
+      ...(e.field ? { field: true } : {}),
+    }));
+    await ctx.db.patch(found.message._id, {
+      parts: found.message.parts.map((p) =>
+        p.type === "component" && p.id === args.componentId
+          ? { ...p, props: { ...(p.props as Record<string, unknown>), state } }
+          : p
+      ),
+    });
+  },
+});
+
 /** Structured result of a user interacting with an inline component (PRD §3.3 ui_event loop). */
 export const emitUiEvent = mutation({
   args: {
@@ -240,6 +284,10 @@ export const emitUiEvent = mutation({
       await handleMemoryEvent(ctx, userId, thread, found.part, args.action);
       return { eventMessageId, messageId: null };
     }
+    // Taps the phone already answered (directions opened in Maps, a guide marked done): recorded
+    // for the next reply's context, without waiting on a model turn now.
+    if (SILENT_EVENTS.has(`${args.component}:${args.action}`))
+      return { eventMessageId, messageId: null };
     if (args.action === "cancel_run") {
       const ids: string[] = Array.isArray(p.ids) ? p.ids.map(String) : [];
       for (const id of ids) {
