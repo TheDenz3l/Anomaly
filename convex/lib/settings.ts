@@ -53,7 +53,23 @@ export async function ensureSettings(
 
 /** What the client may see: no ciphertexts, no push token. */
 export function publicSettings(s: SettingsFields) {
-  const { searchKeyCipher, pushToken, ...rest } = s as SettingsFields & { _id?: unknown };
+  const { searchKeyCipher, pushToken, imageGen, ...rest } = s as SettingsFields & { _id?: unknown };
   delete (rest as { _id?: unknown })._id;
-  return { ...rest, hasSearchKey: Boolean(searchKeyCipher), pushEnabled: Boolean(pushToken) };
+  return {
+    ...rest,
+    hasSearchKey: Boolean(searchKeyCipher),
+    pushEnabled: Boolean(pushToken),
+    imageGen: imageGen
+      ? {
+          baseUrl: imageGen.baseUrl,
+          model: imageGen.model,
+          keyHint: imageGen.keyHint,
+          hasKey: Boolean(imageGen.keyCipher),
+          flavor: imageGen.flavor ?? null,
+          balance: imageGen.balance ?? null,
+          usage: imageGen.usage ?? null,
+          timing: imageGen.timing ?? null,
+        }
+      : null,
+  };
 }

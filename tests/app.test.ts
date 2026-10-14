@@ -9,6 +9,30 @@ vi.mock("react-native", () => ({
   AppState: { addEventListener: () => ({ remove() {} }) },
 }));
 vi.mock("expo-location", () => ({}));
+/** Native uploads go through expo-file-system's UploadTask; each one waits on `fs.next`. */
+const fs = vi.hoisted(() => ({
+  next: Promise.resolve({ status: 200, body: '{"storageId":"st1"}', headers: {} }) as Promise<{
+    status: number;
+    body: string;
+    headers: Record<string, string>;
+  }>,
+  tasks: [] as { uri: string; url: string; headers: Record<string, string> }[],
+}));
+vi.mock("expo-file-system", () => ({
+  File: class {
+    type = "";
+    constructor(public uri: string) {}
+  },
+  UploadTask: class {
+    constructor(file: { uri: string }, url: string, options: { headers: Record<string, string> }) {
+      fs.tasks.push({ uri: file.uri, url, headers: options.headers });
+    }
+    uploadAsync() {
+      return fs.next;
+    }
+    release() {}
+  },
+}));
 vi.mock("expo-web-browser", () => ({
   openBrowserAsync: vi.fn(async () => ({})),
   WebBrowserPresentationStyle: { PAGE_SHEET: "pageSheet" },
@@ -85,15 +109,9 @@ beforeEach(() => {
 
 describe("store.send", () => {
   it("sends the draft as it was when Send was pressed", async () => {
-    const photo = deferred<Response>();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) =>
-        url === "file://a.jpg"
-          ? photo.promise
-          : Promise.resolve({ ok: true, json: async () => ({ storageId: "st1" }) })
-      )
-    );
+    const upload = deferred<{ status: number; body: string; headers: Record<string, string> }>();
+    fs.next = upload.promise;
+    fs.tasks = [];
     mutation.mockImplementation(async (name: string) =>
       name === "attachments.generateUploadUrl"
         ? "https://upload"
@@ -106,9 +124,20 @@ describe("store.send", () => {
     // New chat while the photo uploads resets the draft to a normal chat.
     useApp.getState().newChat();
     expect(useApp.getState().draft.incognito).toBe(false);
-    photo.resolve({ blob: async () => ({ type: "image/jpeg" }) } as unknown as Response);
+    await vi.waitFor(() => expect(fs.tasks).toHaveLength(1));
+    // A local file has no type of its own: the upload names one, or storage refuses it.
+    expect(fs.tasks[0]).toMatchObject({
+      uri: "file://a.jpg",
+      url: "https://upload",
+      headers: { "Content-Type": "image/jpeg" },
+    });
+    upload.resolve({ status: 200, body: JSON.stringify({ storageId: "st1" }), headers: {} });
     await vi.waitFor(() => expect(calls("messages.send")).toHaveLength(1));
     expect(calls("messages.send")[0][1].draft.incognito).toBe(true);
+    expect(calls("attachments.register")[0][1]).toMatchObject({
+      storageId: "st1",
+      mime: "image/jpeg",
+    });
   });
 
   it("hands text and photos back and drops the optimistic chat when the server refuses", async () => {
@@ -123,6 +152,36 @@ describe("store.send", () => {
     expect(s.activeThreadId).toBeNull();
     expect(s.streaming).toBeNull();
     expect(s.toast?.tone).toBe("danger");
+  });
+
+  it("keeps showing a sent photo from the device when the server copy arrives", async () => {
+    fs.next = Promise.resolve({ status: 200, body: '{"storageId":"st1"}', headers: {} });
+    useApp.setState({ threads: { t1: thread("t1") }, messages: { t1: [] }, activeThreadId: "t1" });
+    mutation.mockImplementation(async (name: string) =>
+      name === "attachments.generateUploadUrl"
+        ? "https://upload"
+        : name === "messages.send"
+          ? { threadId: "t1", userMessageId: "u1", messageId: "r1" }
+          : null
+    );
+    useApp.getState().send("look", [{ uri: "file://a.jpg", width: 4, height: 3 }]);
+    await vi.waitFor(() => expect(calls("messages.send")).toHaveLength(1));
+    const server = (uri: string) => [
+      msg("u1", "t1", {
+        role: "user",
+        parts: [
+          { id: "img_1", type: "image", uri, width: 4, height: 3 },
+          { id: "txt_1", type: "text", text: "look" },
+        ],
+      }),
+      msg("r1", "t1", { status: "streaming", parts: [] }),
+    ];
+    useApp.getState().hydrateMessages("t1", server("https://storage/st1"));
+    const first = useApp.getState().messages.t1[0];
+    expect(first.parts[0]).toMatchObject({ type: "image", uri: "file://a.jpg" });
+    // Later updates of the thread keep the same row object, so the photo doesn't redraw.
+    useApp.getState().hydrateMessages("t1", server("https://storage/st1"));
+    expect(useApp.getState().messages.t1[0]).toBe(first);
   });
 
   it("removes both optimistic messages from an existing chat on failure", async () => {

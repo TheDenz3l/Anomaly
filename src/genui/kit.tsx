@@ -207,6 +207,7 @@ const building: Record<string, string> = {
   ResearchProgress: "the research run",
   LocationRequest: "a location request",
   MemoryConfirm: "a memory",
+  ImageGeneration: "your image",
 };
 
 /** Skeleton shown while a tool call's arguments are still streaming. Shape hints at what's coming. */

@@ -9,10 +9,13 @@ import {
 } from "../convex/ai/openui";
 import { OPENUI_TOOLS } from "../convex/ai/openuiTools";
 import { registryProfile } from "../convex/ai/registry";
+import { systemPrompt } from "../convex/engine/prompt";
+import { namesCity } from "../convex/engine/tools";
 import type { Engine } from "../convex/engine/context";
 import { runModelLoop } from "../convex/engine/loop";
 import type { Sink } from "../convex/engine/writer";
 import type { Part } from "../convex/lib/validators";
+import { articleFits } from "../convex/web/photos";
 import { SourceCollector } from "../convex/web/sources";
 import { openuiLibrary, openuiSource } from "../src/genui/openui/library";
 import { collectArtifacts } from "../src/lib/artifacts";
@@ -32,7 +35,31 @@ describe("the card prompt", () => {
     expect(p).toContain("$binding");
     expect(p).toContain("weather({location: string})");
     expect(p).toContain("```openui-edit");
-    expect(promptExamples()).toHaveLength(3);
+    // The trip example is a whole reply: Markdown sections around two blocks.
+    expect(promptExamples()).toHaveLength(5);
+    expect(p).toContain("List(items: Entry[], title?: string, numbered?: boolean)");
+    expect(p).toContain("Dates(start: $binding<string>, end: $binding<string>, label?: string)");
+  });
+
+  it("asks for complete, conversational answers with cards between the prose", () => {
+    const sys = systemPrompt({
+      now: 0,
+      customInstructions: "",
+      memories: [],
+      incognito: false,
+      cards: openuiCatalog(),
+      web: "app",
+      locationTool: true,
+      subagents: "off",
+      memoryTool: false,
+    });
+    expect(sys).toContain("Answer every part of the request");
+    expect(sys).toContain("up to 4 per reply");
+    expect(sys).toContain("A place the user names");
+    // The strategy doctrine keeps its bluntness for strategy only.
+    expect(sys).toContain("In strategic, negotiation, business or money scenarios");
+    expect(sys).not.toContain("One block per reply");
+    expect(sys).not.toContain("at most a sentence");
   });
 
   it("parses its own examples without dropping anything", () => {
@@ -64,6 +91,12 @@ describe("reading a card", () => {
   it("knows when a card brings its own follow-ups", () => {
     expect(hasFollowUps('root = Root([b])\nb = Buttons([Button("More")])')).toBe(true);
     expect(hasFollowUps('root = Root([c])\nc = Callout("x")')).toBe(false);
+    // A form at the end is the reply's next step.
+    expect(
+      hasFollowUps(
+        'root = Root([f])\nf = Form("Your trip", [d])\n$a = ""\n$b = ""\nd = Dates($a, $b)'
+      )
+    ).toBe(true);
   });
 
   it("draws top-level children one by one as the block streams", () => {
@@ -169,6 +202,19 @@ describe("photos for a card", () => {
     expect(card.photos()).toEqual([
       { q: "screenshot:https://linear.app", url: "https://storage/shot.png" },
     ]);
+  });
+
+  it("takes an encyclopedia photo only from an article about what the phrase names", () => {
+    expect(
+      articleFits("Lincoln Memorial Reflecting Pool", "9 11 Memorial New York reflecting pools")
+    ).toBe(false);
+    expect(articleFits("Cory Arcangel", "Arcangel performing live")).toBe(false);
+    expect(articleFits("Arcángel (singer)", "Arcangel reggaeton singer")).toBe(true);
+    expect(articleFits("Bethesda Terrace and Fountain", "Bethesda Terrace Central Park")).toBe(
+      true
+    );
+    expect(articleFits("The Chicks", "The Chicks country music group")).toBe(true);
+    expect(articleFits("DUMBO, Brooklyn", "DUMBO Brooklyn Manhattan Bridge")).toBe(true);
   });
 
   it("settles a phrase with nothing found as no photo", async () => {
@@ -357,6 +403,46 @@ describe("cards in the reply stream", () => {
     expect(body.tools ?? []).toEqual([]);
   });
 
+  it("draws several cards between Markdown sections, never repeating a photo across them", async () => {
+    const places =
+      'root = Root([l])\nl = List([Entry("Central Park", "Walk it.", "Central Park"), Entry("High Line", "Elevated park.", "High Line")])';
+    const shows = 'root = Root([l])\nl = List([Entry("Jazz night", "Late set.", "Central Park")])';
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sse([
+          ...stream(
+            `Two weeks is plenty.\n\n### 1. Places\n\`\`\`openui\n${places}\n\`\`\`\nStart with the park.\n\n### 2. Shows\n\`\`\`openui\n${shows}\n\`\`\`\nHave fun.`
+          ),
+          finish(),
+        ])
+      )
+    );
+    const sink = new MemorySink();
+    await runModelLoop({
+      engine,
+      sink,
+      messages: [{ role: "user", content: "Plan my trip" }],
+      tools: [],
+      cards: true,
+      findPhotos: async () => ["https://img/park.jpg", "https://img/park2.jpg"],
+      level: "off",
+      difficulty: "easy",
+      sources: new SourceCollector(),
+    });
+    expect(sink.parts.map((p) => p.type)).toEqual([
+      "text",
+      "component",
+      "text",
+      "component",
+      "text",
+    ]);
+    const photos = sink.parts
+      .filter((p): p is Extract<Part, { type: "component" }> => p.type === "component")
+      .map((p) => (p.props as { photos: { url: string | null }[] }).photos.map((x) => x.url));
+    expect(photos).toEqual([["https://img/park.jpg", "https://img/park2.jpg"], [null]]);
+  });
+
   it("merges an edit block into the last card", async () => {
     vi.stubGlobal(
       "fetch",
@@ -447,5 +533,26 @@ describe("cards in Artifacts", () => {
     expect(listed('root = Root([q])\nq = Quiz("Why?", ["a", "b"], 0)')).toMatchObject({
       kind: "Lesson",
     });
+    expect(listed('root = Root([l])\nl = List([Entry("Central Park")])')).toMatchObject({
+      kind: "Picks",
+      group: "reports",
+    });
+  });
+
+  it("leaves out a form that only asks the user something", () => {
+    expect(
+      listed('root = Root([f])\n$a = ""\nf = Form("Your trip", [i])\ni = Input($a, "Dates")')
+    ).toBeUndefined();
+  });
+});
+
+describe("asking for a location", () => {
+  it("knows when the user already named the city", () => {
+    const text = "I'm planning a trip to New York, can you help me figure out places to go";
+    expect(namesCity(text, "New York City")).toBe(true);
+    expect(namesCity(text, "New York, NY")).toBe(true);
+    expect(namesCity(text, "Toronto")).toBe(false);
+    expect(namesCity("movies near me", "York")).toBe(false);
+    expect(namesCity(undefined, "Paris")).toBe(false);
   });
 });

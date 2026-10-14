@@ -26,6 +26,8 @@ export type Artifact =
   | (Base & { type: "report"; message: Message; sources: Source[] });
 
 type Kind<N extends CatalogName> = {
+  /** Cards that only serve the chat they're in (a question for the user) aren't kept. */
+  skip?: (p: CatalogProps<N>) => boolean;
   group: ArtifactGroup | ((p: CatalogProps<N>) => ArtifactGroup);
   kind: (p: CatalogProps<N>) => string;
   title: (p: CatalogProps<N>, thread: Thread) => string;
@@ -40,6 +42,7 @@ const CARD_KINDS: [RegExp, string, ArtifactGroup][] = [
   [/\b(Slider|Choice|Toggle|Input)\(/, "Tool", "apps"],
   [/\bProducts\(/, "Shopping", "apps"],
   [/\bMap\(/, "Map", "apps"],
+  [/\bList\(/, "Picks", "reports"],
   [/\bCompare\(/, "Comparison", "data"],
   [/\bChart\(/, "Chart", "data"],
   [/\bTable\(/, "Table", "data"],
@@ -51,6 +54,11 @@ function cardKind(source: string): { kind: string; group: ArtifactGroup } {
   const hit = CARD_KINDS.find(([re]) => re.test(source));
   return hit ? { kind: hit[1], group: hit[2] } : { kind: "Guide", group: "reports" };
 }
+
+/** A card that only asks the user something: a Form with nothing to look back on beside it. */
+const onlyAsks = (source: string) =>
+  /=\s*Form\(/.test(source) &&
+  !/\b(Hero|List|Map|Compare|Chart|Table|Products|Steps|Carousel|Gallery)\(/.test(source);
 
 /** A card's own title: what its cover says. */
 function cardTitle(source: string): string | null {
@@ -75,6 +83,7 @@ const kinds: { [N in CatalogName]?: Kind<N> } = {
   Compare: { group: "data", kind: () => "Comparison", title: (p, t) => p.title ?? t.title },
   Timeline: { group: "data", kind: () => "Timeline", title: (p, t) => p.title ?? t.title },
   OpenUI: {
+    skip: (p) => onlyAsks(p.source),
     group: (p) => cardKind(p.source).group,
     kind: (p) => cardKind(p.source).kind,
     title: (p, t) => cardTitle(p.source) ?? t.title,
@@ -169,6 +178,7 @@ export function collectArtifacts(
         const k = kinds[p.name as CatalogName] as Kind<CatalogName> | undefined;
         if (!k) continue;
         const props = p.props as CatalogProps<CatalogName>;
+        if (k.skip?.(props)) continue;
         out.push({
           type: "component",
           id: p.id,

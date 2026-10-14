@@ -81,6 +81,10 @@ export default function RootLayout() {
                 <Stack.Screen name="settings" />
                 <Stack.Screen name="artifacts" />
                 <Stack.Screen name="artifact/[id]" />
+                <Stack.Screen
+                  name="image"
+                  options={{ presentation: "fullScreenModal", animation: "fade" }}
+                />
               </Stack>
             </ThemeProvider>
             <PortalHost />

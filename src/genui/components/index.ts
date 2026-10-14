@@ -8,6 +8,7 @@ import { ProductGrid } from "./ProductGrid";
 import { LocationRequest, MemoryConfirm } from "./System";
 import { Weather } from "./Weather";
 import { Blocks } from "./Blocks";
+import { ImageGeneration } from "./ImageGeneration";
 import { OpenUI } from "../openui/OpenUI";
 
 /** Catalog name → native component. Keys must match `catalogSchemas`. */
@@ -32,4 +33,5 @@ export const catalogComponents = {
   MemoryConfirm,
   Blocks,
   OpenUI,
+  ImageGeneration,
 };

@@ -101,10 +101,11 @@ function UserMessageRow({ message }: { message: Message }) {
     <View className="items-end gap-1.5">
       {images.length > 0 ? (
         <View className="flex-row flex-wrap justify-end gap-1.5">
-          {images.map((p) =>
+          {images.map((p, i) =>
             p.type === "image" ? (
+              // Keyed by position: the sent copy swaps its temporary id for the server's.
               <Image
-                key={p.id}
+                key={`img${i}`}
                 source={{ uri: p.uri }}
                 accessibilityLabel="Attached photo"
                 style={{
@@ -166,7 +167,12 @@ function showsActivity(p: Part | undefined, last: boolean): boolean {
   if (p.type === "text") return last;
   if (p.type === "thinking") return !p.done;
   if (p.type === "search") return p.phase !== "done";
-  if (p.type === "component") return p.status === "streaming";
+  if (p.type === "component")
+    return (
+      p.status === "streaming" ||
+      // An image being made shows its own progress line.
+      (p.name === "ImageGeneration" && (p.props as { state?: string } | null)?.state === "working")
+    );
   return false;
 }
 

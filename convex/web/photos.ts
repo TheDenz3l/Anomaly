@@ -34,7 +34,34 @@ const CANDIDATES = 4;
 const isPhoto = (url: unknown): url is string =>
   typeof url === "string" && /^https:\/\//i.test(url) && !/\.svg|logo/i.test(url);
 
-type Page = { index: number; thumbnail?: { source: string }; imageinfo?: { thumburl?: string }[] };
+type Page = {
+  index: number;
+  title?: string;
+  thumbnail?: { source: string };
+  imageinfo?: { thumburl?: string }[];
+};
+
+/** Folds case and accents, so "Arcángel" and "arcangel" compare equal. */
+const fold = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+const MINOR = new Set(["the", "a", "an", "of", "and", "de", "la", "le", "el", "los", "las"]);
+
+/**
+ * Whether an article is about what the phrase names: the first word of its title is in the
+ * phrase. Search ranks near-misses first for loose phrases (the Lincoln Memorial Reflecting Pool
+ * for the 9/11 memorial's pools, the artist Cory Arcangel for the singer Arcángel); those go to
+ * the web image search instead.
+ */
+export function articleFits(title: string, phrase: string): boolean {
+  const words = fold(phrase).split(/[^a-z0-9]+/);
+  const first = fold(title.replace(/\s*\([^)]*\)/g, ""))
+    .split(/[^a-z0-9]+/)
+    .find((w) => w && !MINOR.has(w));
+  return !first || words.includes(first);
+}
 
 async function wikimedia(host: string, params: Record<string, string>): Promise<Page[]> {
   const q = new URLSearchParams({ action: "query", format: "json", formatversion: "2", ...params });
@@ -57,7 +84,10 @@ async function wikipedia(phrase: string): Promise<string[]> {
     piprop: "thumbnail",
     pithumbsize: "1280",
   });
-  return pages.map((p) => p.thumbnail?.source).filter(isPhoto);
+  return pages
+    .filter((p) => !p.title || articleFits(p.title, phrase))
+    .map((p) => p.thumbnail?.source)
+    .filter(isPhoto);
 }
 
 async function commons(phrase: string): Promise<string[]> {
@@ -123,7 +153,7 @@ export function photoFinder(ctx: ActionCtx, search: SearchConfig | null): PhotoF
   return async (phrase, opts = {}) => {
     const kind = opts.kind ?? "photo";
     if (kind === "screenshot") return screenshot(phrase.trim());
-    const key = `photo:v4:${kind === "product" ? "product:" : ""}${phrase.toLowerCase().trim()}`;
+    const key = `photo:v5:${kind === "product" ? "product:" : ""}${phrase.toLowerCase().trim()}`;
     const hit = await cache.get(key);
     if (hit) return JSON.parse(hit.content) as string[];
     const [lead, more, web] = await Promise.all([

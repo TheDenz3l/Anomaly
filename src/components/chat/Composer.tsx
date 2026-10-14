@@ -17,7 +17,7 @@ import { Icon, type IconName } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { fadeIn, fadeOut, popIn, popOut, reflow } from "@/lib/motion";
-import { useApp, useComposerTarget, type Attachment } from "@/lib/store";
+import { useApp, useComposerTarget, useVisionStandIn, type Attachment } from "@/lib/store";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import { modelRef } from "@/lib/models";
 import { colors } from "@/lib/theme";
@@ -128,6 +128,17 @@ function onDeviceSpeech(): boolean {
   }
 }
 
+/** A photo from the library or camera, with the type the picker reported. */
+function photoAttachment(x: ImagePicker.ImagePickerAsset): Attachment {
+  return {
+    uri: x.uri,
+    width: x.width,
+    height: x.height,
+    mime: x.mimeType ?? undefined,
+    name: x.fileName ?? undefined,
+  };
+}
+
 export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => void }) {
   const { target, model } = useComposerTarget();
   const send = useApp((s) => s.send);
@@ -150,8 +161,8 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
 
   const canSend = (text.trim().length > 0 || attachments.length > 0) && !streaming;
   const thinkingSupported = model.profile.reasoning.style !== "none";
-  const visionWarning =
-    attachments.some((a) => a.kind !== "file") && !model.profile.features.vision;
+  const standIn = useVisionStandIn(model);
+  const visionNote = attachments.some((a) => a.kind !== "file") && !model.profile.features.vision;
   const room = MAX_ATTACHMENTS - attachments.length;
   const ref = model.providerId ? modelRef(model) : "";
   const unverified = model.profile.source === "registry" || model.profile.source === "manual";
@@ -193,7 +204,7 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
       quality: 0.7,
     });
     if (res.canceled) return;
-    add(res.assets.map((x) => ({ uri: x.uri, width: x.width, height: x.height })));
+    add(res.assets.map(photoAttachment));
   };
 
   const pickFiles = async () => {
@@ -217,7 +228,7 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
           const photo =
             /^image\/(png|jpe?g|webp|gif|heic|heif)$/.test(mime ?? "") && f.size <= 8 * 1024 * 1024;
           return photo
-            ? { uri: f.uri }
+            ? { uri: f.uri, mime }
             : { uri: f.uri, kind: "file", name: f.name, mime, size: f.size };
         })
     );
@@ -231,7 +242,7 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
     }
     const res = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.7 });
     if (res.canceled) return;
-    add(res.assets.map((x) => ({ uri: x.uri, width: x.width, height: x.height })));
+    add(res.assets.map(photoAttachment));
   };
 
   /** Runs a picker while there's room for another attachment. */
@@ -327,15 +338,29 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
               ))}
             </ScrollView>
           ) : null}
-          {visionWarning ? (
+          {visionNote && standIn ? (
             <Animated.View
               entering={fadeIn}
               exiting={fadeOut}
+              accessibilityLiveRegion="polite"
+              className="mx-1.5 mb-1 flex-row items-center gap-2 rounded-2xl bg-raised px-3 py-2"
+            >
+              <Icon name="eye-outline" size={14} color={colors.textMuted} />
+              <Text muted className="flex-1 text-[13px] leading-[18px]">
+                {model.name} can’t see images, so {standIn.name} will read them for it.
+              </Text>
+            </Animated.View>
+          ) : visionNote ? (
+            <Animated.View
+              entering={fadeIn}
+              exiting={fadeOut}
+              accessibilityLiveRegion="polite"
               className="mx-1.5 mb-1 flex-row items-center gap-2 rounded-2xl bg-[rgba(245,165,36,0.12)] px-3 py-2"
             >
               <Icon name="eye-off-outline" size={14} color={colors.warning} />
               <Text className="flex-1 text-[13px] leading-[18px] text-warning">
-                {model.name} can’t see images. Switch to a vision model.
+                {model.name} can’t see images, and none of your models can. Add a vision model in
+                Settings to include photos.
               </Text>
             </Animated.View>
           ) : null}

@@ -9,9 +9,10 @@ import { Group, Page } from "@/components/ui/Page";
 import { Segmented } from "@/components/ui/Segmented";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
-import { balanceLine } from "@/lib/balance";
+import { balanceLine, imageBalanceLine } from "@/lib/balance";
 import { findModel, useApp } from "@/lib/store";
 import { colors, fonts } from "@/lib/theme";
+import { ImageGenSheet } from "@/components/settings/ImageGenSheet";
 import { InstructionsSheet } from "@/components/settings/InstructionsSheet";
 
 function Row({
@@ -84,6 +85,7 @@ export default function SettingsScreen() {
   const [providerSheet, setProviderSheet] = useState<{ id: string | null } | null>(null);
   const [picker, setPicker] = useState<"default" | "research" | null>(null);
   const [editingInstructions, setEditingInstructions] = useState(false);
+  const [imageSheet, setImageSheet] = useState(false);
   // What's typed stays put while the field has focus; settings arriving from the server lag behind.
   const [searchKey, setSearchKey] = useState<string | null>(null);
   const instructions = settings.customInstructions.trim();
@@ -148,6 +150,34 @@ export default function SettingsScreen() {
                 : "Same as chat"
             }
             onPress={() => setPicker("research")}
+            last
+          />
+        </Group>
+
+        <Group
+          label="Image generation"
+          footer="Your own image model, used whenever you ask for a picture."
+        >
+          <Row
+            label={settings.imageGen ? settings.imageGen.model : "Add an image model"}
+            detail={
+              settings.imageGen
+                ? [
+                    settings.imageGen.baseUrl.replace(/^https?:\/\//, ""),
+                    imageBalanceLine(settings.imageGen),
+                  ]
+                    .filter(Boolean)
+                    .join(", ")
+                : "Endpoint, model ID and API key"
+            }
+            right={
+              settings.imageGen ? (
+                <View
+                  className={`h-2 w-2 rounded-full ${settings.imageGen.hasKey ? "bg-success" : "bg-warning"}`}
+                />
+              ) : undefined
+            }
+            onPress={() => setImageSheet(true)}
             last
           />
         </Group>
@@ -317,6 +347,7 @@ export default function SettingsScreen() {
         onClose={() => setProviderSheet(null)}
         providerId={providerSheet?.id ?? null}
       />
+      <ImageGenSheet open={imageSheet} onClose={() => setImageSheet(false)} />
       <InstructionsSheet
         open={editingInstructions}
         onClose={() => setEditingInstructions(false)}

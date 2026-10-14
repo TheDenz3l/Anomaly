@@ -15,6 +15,7 @@ import type { Sink } from "./writer";
 import { OPENUI_ANSWER_NOTE, OpenUICard } from "../ai/openui";
 import type { PhotoFinder } from "../web/photos";
 import { OPENUI_FENCE, type PhotoPick } from "../../src/genui/openui/library";
+import { CARD_TOPICS, CardPlacer, type Placed } from "./placement";
 
 /**
  * The agent loop: stream → render text/thinking/cards live → run tools → feed results back,
@@ -27,6 +28,8 @@ export type ToolOutcome = {
   stop?: boolean;
   /** Web tools only: whether the call brought anything back (a round that found nothing doesn't count). */
   web?: "results" | "empty";
+  /** Cards the tool drew, for the loop to place in the text that introduces them. */
+  cards?: string[];
 };
 export type LoopTool = { def: ToolDef; run: (args: any, callId: string) => Promise<ToolOutcome> };
 
@@ -294,6 +297,16 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
   let nativeSearch = Boolean(o.nativeSearch);
   /** Cards whose photos are still being found; the reply waits for them before it's saved. */
   const photosPending: Promise<void>[] = [];
+  /** Photos shown so far, shared by the reply's cards so none repeats another's. */
+  const shownPhotos = o.seenPhotos ?? new Set<string>();
+  /** Cards tools drew, waiting for their place in the text the model writes next. */
+  const placer = new CardPlacer();
+  const place = (out: Placed[]) => {
+    for (const x of out) {
+      if (x.type === "text") sink.text(x.text);
+      else sink.release?.(x.id);
+    }
+  };
 
   for (let step = 0; step < maxSteps; step++) {
     result.steps = step + 1;
@@ -354,7 +367,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
         const card: OpenUICard = new OpenUICard({
           base: o.cardBase,
           findPhotos: o.findPhotos,
-          seen: o.seenPhotos,
+          seen: shownPhotos,
           onPhotos: () => setProps(id, { photos: card.photos() }),
         });
         open = { id, card };
@@ -403,9 +416,12 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
 
     const handleFence = (ev: FenceEvent) => {
       if (ev.type === "text") {
-        sink.text(ev.text);
+        place(placer.push(ev.text));
         stepText += ev.text;
-      } else handleCard(ev);
+        return;
+      }
+      if (ev.type === "start") place(placer.beforeBlock());
+      handleCard(ev);
     };
 
     const consume = async (body: Record<string, unknown>, onFirst: () => void) => {
@@ -517,6 +533,8 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
 
     let stopAfter = false;
     let foundOnWeb = false;
+    /** Cards each call drew, in call order. */
+    const drawn: string[][] = [];
     const toolsAt = Date.now();
     const outputs = await Promise.all(
       toolCalls.map(async (call, i): Promise<string> => {
@@ -536,6 +554,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
           if (args === null)
             return "Your arguments weren't valid JSON. Call the tool again with a JSON object.";
           const out = await tool.run(args, call.id);
+          drawn[i] = out.cards ?? [];
           if (out.final) finalNext = true;
           if (out.stop) stopAfter = true;
           if (out.web === "results") foundOnWeb = true;
@@ -550,6 +569,10 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     );
     timing.tools = toolCalls.length;
     timing.toolsMs = Date.now() - toolsAt;
+    toolCalls.forEach((call, i) => {
+      for (const id of drawn[i] ?? [])
+        if (sink.isHeld?.(id)) placer.hold(id, CARD_TOPICS[call.function.name] ?? /$^/);
+    });
     if (foundOnWeb) webDone++;
     // The last round: say so, or models answer with what they'd search next and stop there.
     const lastRound = foundOnWeb && o.webRounds !== undefined && webDone >= o.webRounds;
@@ -572,6 +595,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
       break;
     }
   }
+  place(placer.finish());
   // Photos still on their way: the saved reply should carry them.
   if (photosPending.length && !sink.stopped)
     await Promise.race([Promise.allSettled(photosPending), sleep(PHOTO_WAIT_MS)]);

@@ -42,6 +42,8 @@ import {
   weatherTool,
   webSearchTool,
 } from "./tools";
+import { imageTool, wantsImage } from "./image";
+import { describeImages } from "./vision";
 import { PartWriter } from "./writer";
 import { type ChatMessage } from "../ai/openai";
 
@@ -221,6 +223,14 @@ export async function runTurn(
           })
         : Promise.resolve([]);
     const profile = engine.profile;
+    // A model that can't take images keeps the user's pick: a vision model from their providers
+    // reads the photos (alongside the router) and the reply's model answers from what it saw.
+    const seeing = profile.features.vision
+      ? Promise.resolve(null)
+      : describeImages(engine, history, text, signal.signal).catch((err) => {
+          console.warn("vision stand-in failed", (err as Error).message);
+          return null;
+        });
     const canTools = profile.features.tools;
     const nativeAvailable = profile.features.webSearch && settings.webMode !== "app";
     const photos = Boolean(text) && !input.event && wantsPhotos(text);
@@ -294,6 +304,7 @@ export async function runTurn(
     const env: SpawnEnv = {
       engine,
       sink,
+      messageId,
       sources,
       origin: "app",
       render: true,
@@ -311,6 +322,7 @@ export async function runTurn(
       stoppedRef: () => sink.stopped,
       photos,
       seenImages: shownImages(history),
+      userText: text,
       // Jev leaned toward delegating but wasn't sure: show the plan card before any worker runs.
       forceApproval:
         !delegation.choice.explicit &&
@@ -362,6 +374,7 @@ export async function runTurn(
       if (wantsData && !location) tools.push(requestLocationTool(env));
       if (memoryOn) tools.push(rememberTool(env));
       if (spawnOffered) tools.push(spawnTool(env, sink));
+      tools.push(imageTool(env));
     }
 
     // Cards are written into the reply as OpenUI blocks, which needs no tool calling; the router's
@@ -440,15 +453,19 @@ export async function runTurn(
     }
     if (opts.injected) extra.push(opts.injected);
 
+    const readBy = await seeing;
+    if (readBy && input.images) {
+      meta.visionModelRef = readBy;
+      extra.push(
+        "You can't take images, so a vision model described the user's photos for you (in <photo_description>). Answer from those descriptions as if you had seen the photos, and don't say you can't see images."
+      );
+    }
     const hist = await toChatMessages(ctx, history, {
       vision: profile.features.vision,
       maxChars: Math.max(16_000, Math.floor(engine.contextWindow * 2.5)),
     });
-    if (hist.droppedImages && input.images) {
-      sink.text(
-        "_This model can't see images, so I'm answering from your text only. Pick a model tagged Vision to include the photo._\n\n"
-      );
-    }
+    // Shown under the reply (not written into it) when the photos went unread.
+    if (hist.droppedImages && input.images && !meta.visionModelRef) meta.visionSkipped = true;
 
     const system = systemPrompt({
       now: Date.now(),
@@ -478,6 +495,7 @@ export async function runTurn(
             ? "requested"
             : "available",
       memoryTool: canTools && toolsAtStart && memoryOn,
+      imageTool: canTools && toolsAtStart,
       extra,
     });
 
@@ -505,8 +523,12 @@ export async function runTurn(
       webRoundsDone,
       // Only when a search is near certain: if the model answers from what it knows instead, that
       // first step is the answer, and it must be written at the level the user picked.
+      // A request for a picture is the same: the first step only writes the image tool's brief.
       routeLevel:
-        appWeb && searchMode !== "none" && (search.choice.timeSensitive || act(search) || photos)
+        (appWeb &&
+          searchMode !== "none" &&
+          (search.choice.timeSensitive || act(search) || photos)) ||
+        (canTools && settings.imageGen && wantsImage(text))
           ? routingLevel(profile, thread.reasoningLevel)
           : undefined,
     });

@@ -68,6 +68,7 @@ export function SourcesBar({ message, sources }: { message: Message; sources: So
   const models = useApp((s) => s.models);
   const busy = useApp((s) => s.streaming !== null);
   const model = message.meta ? findModel(models, message.meta.modelRef) : null;
+  const seer = message.meta?.visionModelRef ? findModel(models, message.meta.visionModelRef) : null;
 
   useEffect(() => () => void Speech.stop(), []);
 
@@ -172,6 +173,22 @@ export function SourcesBar({ message, sources }: { message: Message; sources: So
             ]
               .filter(Boolean)
               .join(", ")}
+          </Text>
+        </View>
+      ) : null}
+      {seer || message.meta?.visionSkipped ? (
+        <View className="flex-row gap-1.5 pl-1">
+          <View className="h-4 justify-center">
+            <Icon
+              name={seer ? "eye-outline" : "eye-off-outline"}
+              size={12}
+              color={colors.textFaint}
+            />
+          </View>
+          <Text className="flex-1 text-xs text-ink-faint">
+            {seer
+              ? `${seer.name} read the photos, since ${model?.name ?? "this model"} can’t see images.`
+              : `${model?.name ?? "This model"} can’t see images and no other model could read them, so this answer is based on your text only.`}
           </Text>
         </View>
       ) : null}

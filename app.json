@@ -43,6 +43,14 @@
       ],
       "expo-status-bar",
       "expo-image-picker",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Anomaly attaches photos you choose to your messages.",
+          "savePhotosPermission": "Anomaly saves images you create to your photo library.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-image",
       "expo-secure-store",
       "expo-speech-recognition",

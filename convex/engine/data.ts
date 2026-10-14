@@ -12,6 +12,7 @@ import {
   vSource,
   type CapabilityProfile,
 } from "../lib/validators";
+import { type VisionCandidate } from "../lib/vision";
 
 /** Reads and writes the engine needs from inside actions. */
 
@@ -76,6 +77,63 @@ export const modelContext = internalQuery({
       pricing: model?.pricing,
       profile,
     };
+  },
+});
+
+/** Every chat model the user can reach, with whether it takes images: stand-ins for vision. */
+export const visionCandidates = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const providers = await ctx.db
+      .query("providers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const out: VisionCandidate[] = [];
+    for (const p of providers) {
+      if (p.status === "error") continue;
+      const profiles = await ctx.db
+        .query("capabilityProfiles")
+        .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", p.providerId))
+        .collect();
+      const byId = new Map(profiles.map((x) => [x.modelId, x]));
+      for (const m of p.models) {
+        if (m.kind !== "chat") continue;
+        const prof = byId.get(m.id);
+        const { features, reasoning } = prof ?? registryProfile(p.baseUrl, m.id);
+        out.push({
+          providerId: p.providerId,
+          id: m.id,
+          name: m.name,
+          kind: m.kind,
+          pricing: m.pricing,
+          profile: {
+            features: { vision: features.vision },
+            source: prof?.source ?? "registry",
+            reasoning: { style: reasoning.style, levels: reasoning.levels },
+          },
+        });
+      }
+    }
+    return out;
+  },
+});
+
+/** Caches what a vision model saw in a user's photos on the photos themselves. */
+export const setImageDescriptions = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    items: v.array(v.object({ partId: v.string(), description: v.string(), by: v.string() })),
+  },
+  handler: async (ctx, { messageId, items }) => {
+    const m = await ctx.db.get(messageId);
+    if (!m) return;
+    const byId = new Map(items.map((i) => [i.partId, i]));
+    await ctx.db.patch(messageId, {
+      parts: m.parts.map((p) => {
+        const d = p.type === "image" ? byId.get(p.id) : undefined;
+        return d ? { ...p, description: d.description.slice(0, 12_000), describedBy: d.by } : p;
+      }),
+    });
   },
 });
 

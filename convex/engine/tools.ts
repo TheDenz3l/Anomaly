@@ -52,6 +52,10 @@ export type ToolEnv = {
   photoSearches?: number;
   /** Photo URLs earlier replies in the thread already showed; "show me more" skips them. */
   seenImages?: Set<string>;
+  /** The user's message this turn: a place it names is never asked for again. */
+  userText?: string;
+  /** The reply being written, which owns what the tools store (generated images). */
+  messageId?: Id<"messages">;
 };
 
 /** Photo searches per reply: one, plus another for a second angle or "more". */
@@ -458,13 +462,37 @@ function dayDate(offset: number): string {
 }
 
 const NO_LOCATION =
-  "The user's location is unknown. Call request_location (or ask which city) and stop.";
+  "The user's location is unknown. If they named a place, call this again with it; otherwise call request_location (or ask which city) and stop.";
+
+/** Whether the user's message already names a city ("New York City" in "a trip to New York"). */
+export function namesCity(text: string | undefined, city: string): boolean {
+  const name = city
+    .split(",")[0]
+    .replace(/\b(city|town)\b/gi, "")
+    .trim()
+    .toLowerCase();
+  if (name.length < 3 || !text) return false;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+}
+
+/**
+ * Draws a card a tool made, held back for the loop to place in the text that introduces it
+ * (placement.ts) where the reply's writer can do that; its id goes in the tool's outcome.
+ */
+function drawCard(env: ToolEnv, part: Part, drawn: string[]): void {
+  drawn.push(env.sink.hold ? env.sink.hold(part) : env.sink.add(part));
+}
+
+/** Tells the model where a drawn card lands (placement.ts), so its words about it fit. */
+const placedUnder = (topic: string, heading: string) =>
+  `It shows right after the paragraph that introduces it, so refer to it as below: in a reply with several sections, after the first paragraph of your section about ${topic} (like "${heading}"); otherwise after your opening paragraph. A one-part answer needs no heading.`;
 
 export function weatherTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
       "get_weather",
-      "Live weather (current, hourly, 7-day) from Open-Meteo. Renders the Weather card; you add a one-line takeaway.",
+      "Live weather (current, hourly, 7-day) from Open-Meteo. Renders the Weather card; you add a takeaway (what to wear, the best day) without repeating its numbers.",
       {
         location: {
           type: "string",
@@ -487,23 +515,29 @@ export function weatherTool(env: ToolEnv): LoopTool {
         )
       );
       if (env.render) {
-        env.sink.add({
-          id: uid("cmp"),
-          type: "component",
-          name: "Weather",
-          props: w,
-          status: "ready",
-          fallbackText: weatherFallback(w),
-        });
+        const drawn: string[] = [];
+        drawCard(
+          env,
+          {
+            id: uid("cmp"),
+            type: "component",
+            name: "Weather",
+            props: w,
+            status: "ready",
+            fallbackText: weatherFallback(w),
+          },
+          drawn
+        );
         return {
-          content: `Weather card shown (7-day forecast). ${weatherFallback(w)} Daily: ${w.daily
+          cards: drawn,
+          content: `The app shows a Weather card (7-day forecast). ${placedUnder("the weather", "### Weather")} ${weatherFallback(w)} Daily: ${w.daily
             .map(
               (d, i) =>
                 `${d.day}${i === 0 ? "" : ` (${dayDate(i)})`} ${d.highC}/${d.lowC}°C ${d.condition}`
             )
             .join(
               "; "
-            )}. Answer the user's actual question (e.g. the weekend) in one or two sentences; don't repeat every number.`,
+            )}. Answer what the user asked about the weather (e.g. the weekend) in a sentence or two without repeating every number, then go on with the rest of the request.`,
         };
       }
       return { content: JSON.stringify(w) };
@@ -569,7 +603,7 @@ export function requestLocationTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
       "request_location",
-      "Ask the user to share their location inline (or pick a city). Ends your turn; you'll get a [UI event] with the answer.",
+      "Ask the user to share their location inline (or pick a city). Only when the answer depends on where the user is right now and they haven't named a place; a place they named goes to the other tools as `near`. Ends your turn; you'll get a [UI event] with the answer.",
       {
         reason: {
           type: "string",
@@ -588,6 +622,11 @@ export function requestLocationTool(env: ToolEnv): LoopTool {
         reason: truncate(String(args.reason || "Find places near you"), 80),
         fallbackCity: truncate(String(args.fallbackCity || "Toronto"), 60),
       };
+      // Asking where the user is when they've just said where they're going costs them a turn.
+      if (namesCity(env.userText, props.fallbackCity))
+        return {
+          content: `The user already named ${props.fallbackCity}: don't ask. Pass near: "${props.fallbackCity}" (or location) to the tools that take a place, and answer the whole request.`,
+        };
       env.sink.add({
         id: uid("cmp"),
         type: "component",
@@ -871,7 +910,7 @@ export function showtimesTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
       "find_showtimes",
-      "Movies playing now near the user (TMDB) with theatres (OpenStreetMap) and times read from theatre websites. Renders MovieShowtimes and MapCard; you add one short intro sentence.",
+      "Movies playing now in a place (TMDB) with its theatres (OpenStreetMap) and times read from theatre websites. Renders MovieShowtimes and MapCard; don't repeat them, and answer the rest of the request.",
       {
         near: { type: "string", description: "Place; omit to use the user's location" },
         movie: { type: "string", description: "Optional: a specific movie title" },
@@ -882,8 +921,10 @@ export function showtimesTool(env: ToolEnv): LoopTool {
       const center = await resolvePlace(env, args.near);
       if (!center) return { content: NO_LOCATION };
       const data = showtimeData(env, center);
+      // A place the user named is somewhere they're going, not where they are.
+      const where = args.near ? `in ${center.label.split(",")[0]}` : "near you";
       const mapProps = (theatres: PoiResult[]) => ({
-        title: "Theatres near you",
+        title: `Theatres ${where}`,
         center: { lat: center.lat, lng: center.lng, label: center.label },
         places: theatres.map((t) => ({
           id: t.id,
@@ -894,19 +935,24 @@ export function showtimesTool(env: ToolEnv): LoopTool {
           distanceKm: t.distanceKm,
         })),
       });
+      const drawn: string[] = [];
       const showMap = (theatres: PoiResult[]) => {
         if (!env.render || !theatres.length) return;
-        env.sink.add({
-          id: uid("cmp"),
-          type: "component",
-          name: "MapCard",
-          props: mapProps(theatres),
-          status: "ready",
-          fallbackText: `Nearest cinemas: ${theatres
-            .slice(0, 3)
-            .map((t) => `${t.name} (${t.distanceKm} km)`)
-            .join(", ")}.`,
-        });
+        drawCard(
+          env,
+          {
+            id: uid("cmp"),
+            type: "component",
+            name: "MapCard",
+            props: mapProps(theatres),
+            status: "ready",
+            fallbackText: `Nearest cinemas: ${theatres
+              .slice(0, 3)
+              .map((t) => `${t.name} (${t.distanceKm} km)`)
+              .join(", ")}.`,
+          },
+          drawn
+        );
       };
 
       let movies = await data.movies;
@@ -917,8 +963,9 @@ export function showtimesTool(env: ToolEnv): LoopTool {
           ? "The now-playing list couldn't be loaded right now."
           : "TMDB isn't configured, so there's no now-playing list.";
         return {
+          cards: drawn,
           content: theatres?.length
-            ? `MapCard of theatres shown. ${why} Theatres:\n${placeLines(theatres)}\nUse web_search for what's playing, and say times come from theatre sites.`
+            ? `The app shows a MapCard of theatres. ${placedUnder("movies", "### Movie night")} ${why} Theatres:\n${placeLines(theatres)}\nUse web_search for what's playing, and say times come from theatre sites.`
             : `${why} Cinemas near ${center.label} couldn't be looked up either. Use web_search for what's playing near ${center.label}.`,
         };
       }
@@ -950,7 +997,7 @@ export function showtimesTool(env: ToolEnv): LoopTool {
         extracted: { theatre: PoiResult; rows: Extracted[] }[],
         loading: boolean
       ) => ({
-        title: "Now playing near you",
+        title: `Now playing ${where}`,
         location: center.label.replace(/,\s*[A-Z]{2}$/, ""),
         date: new Date().toLocaleDateString("en-US", {
           weekday: "long",
@@ -990,14 +1037,18 @@ export function showtimesTool(env: ToolEnv): LoopTool {
       // The movies show at once; cinemas and times fill in as they arrive.
       const cardId = uid("cmp");
       if (env.render) {
-        env.sink.add({
-          id: cardId,
-          type: "component",
-          name: "MovieShowtimes",
-          props: props(movies, [], true),
-          status: "ready",
-          fallbackText,
-        });
+        drawCard(
+          env,
+          {
+            id: cardId,
+            type: "component",
+            name: "MovieShowtimes",
+            props: props(movies, [], true),
+            status: "ready",
+            fallbackText,
+          },
+          drawn
+        );
       }
       const theatres = await data.theatres;
       showMap(theatres ?? []);
@@ -1042,11 +1093,12 @@ export function showtimesTool(env: ToolEnv): LoopTool {
       if (env.render) {
         (env.background ??= []).push(times);
         return {
-          content: `Already on screen: MovieShowtimes with ${movies.length} movies now playing${near}. Don't draw the movies or theatres again in a card. Movies: ${titles.join(", ")}.${lookup} ${
+          cards: drawn,
+          content: `The app shows MovieShowtimes with ${movies.length} movies now playing${near}. ${placedUnder("movies", "### Movie night")} Don't draw the movies or theatres again in a card. Movies: ${titles.join(", ")}.${lookup} ${
             sites.length
               ? "Times are being read from the cinemas' websites and fill into the card on their own; don't list times or say they're missing."
               : "No cinema nearby lists a website, so there are no times; suggest checking the theatre directly."
-          } Write one short intro sentence only.`,
+          } Don't describe the cards; if the user asked for more than movies, go on and answer the rest.`,
         };
       }
       const found = await times;

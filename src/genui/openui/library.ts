@@ -139,6 +139,20 @@ const Product = def(
   'Something to buy: name, the real price found, its currency as an ISO code ("USD", "EUR", "GBP", "JPY"), store, its page url, a photo url, brand, 0-5 rating.'
 );
 
+const Entry = def(
+  "Entry",
+  z.object({
+    title: z.string(),
+    body: z.string().optional(),
+    image: photo.optional(),
+    meta: z.string().optional(),
+    badge: z.string().optional(),
+    url: z.string().optional(),
+    link: z.string().optional(),
+  }),
+  "One pick: its name, a sentence or two on why, a photo, a meta line (date · venue, neighbourhood, price, hours), a badge of a word or two ('Must-see', 'Free'), its page url from search results, and that link's label ('Tickets', 'Menu')."
+);
+
 const Root = def(
   "Root",
   z.object({ children, accent: z.enum(OPENUI_ACCENTS).optional() }),
@@ -168,6 +182,16 @@ export const OPENUI_COMPONENTS = [
     z.object({ images: z.array(photo), title: z.string().optional() }),
     "A swipeable strip of 3 to 8 photos, each a URL or a phrase naming a different thing to show."
   ),
+  def(
+    "List",
+    z.object({
+      items: z.array(Entry.ref),
+      title: z.string().optional(),
+      numbered: z.boolean().optional(),
+    }),
+    "Picks the user reads through, each with its photo on the left and its name and a sentence or two beside it: places to go, events with dates and venues, restaurants, artists, shows, books. title only when no heading of yours already names it; numbered for a ranked or ordered list."
+  ),
+  Entry,
   def("Stats", z.object({ items: z.array(Stat.ref) }), "Up to 4 headline figures."),
   Stat,
   def(
@@ -300,7 +324,31 @@ export const OPENUI_COMPONENTS = [
       options: z.array(z.string()),
       label: z.string().optional(),
     }),
-    'Chips that pick one option into a $variable; show different components with `$v == "x" ? a : b`, or pass it to a Query.'
+    'Picks one option into a $variable (chips for short options, a list for longer ones); show different components with `$v == "x" ? a : b`, or pass it to a Query.'
+  ),
+  def(
+    "Checks",
+    z.object({
+      value: bound(z.string()),
+      options: z.array(z.string()),
+      label: z.string().optional(),
+      note: z.string().optional(),
+    }),
+    'A checklist the user picks any number of options from; its $variable holds the picked ones joined with ", " ("Jazz, Rock"), "" for none.'
+  ),
+  def(
+    "Dates",
+    z.object({
+      start: bound(z.string()),
+      end: bound(z.string()),
+      label: z.string().optional(),
+    }),
+    'A date range the user picks on a calendar (travel dates, a stay), into two $variables as "2026-10-12", "" until picked.'
+  ),
+  def(
+    "Form",
+    z.object({ title: z.string(), children, note: z.string().optional() }),
+    "What you need from the user to go further, in one box: fields (Dates, Checks, Choice, Input) and last a primary Button whose @ToAssistant sends their answers. It ends a reply that already gave its best answer."
   ),
   def(
     "Slider",
@@ -348,6 +396,8 @@ export type OpenUIComponentName =
   | "Image"
   | "Screenshot"
   | "Gallery"
+  | "List"
+  | "Entry"
   | "Stats"
   | "Stat"
   | "Facts"
@@ -379,6 +429,9 @@ export type OpenUIComponentName =
   | "Tab"
   | "Section"
   | "Choice"
+  | "Checks"
+  | "Dates"
+  | "Form"
   | "Slider"
   | "Toggle"
   | "Input"
@@ -395,6 +448,7 @@ export const PHOTO_PROPS: Partial<Record<OpenUIComponentName, string[]>> = {
   Card: ["image"],
   Item: ["image"],
   Product: ["image"],
+  Entry: ["image"],
 };
 
 /** The library with a renderer on each component; null renderers serve prompt building and parsing. */

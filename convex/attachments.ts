@@ -72,6 +72,22 @@ export const register = mutation({
   },
 });
 
+/** An image the model made (engine/image.ts), owned like an upload: deleting the chat deletes it. */
+export const recordGenerated = internalMutation({
+  args: {
+    userId: v.id("users"),
+    messageId: v.optional(v.id("messages")),
+    storageId: v.id("_storage"),
+    mime: v.string(),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    size: v.number(),
+  },
+  handler: async (ctx, row) => {
+    await ctx.db.insert("attachments", { ...row, kind: "image" });
+  },
+});
+
 export const byStorage = internalQuery({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, { storageId }) =>

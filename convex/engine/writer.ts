@@ -12,6 +12,13 @@ export interface Sink {
   add(part: Part): string;
   update(id: string, fn: (p: Part) => Part): void;
   get(id: string): Part | undefined;
+  /**
+   * Held cards stay out of the reply until `release` puts one at its current end; updates still
+   * reach them meanwhile. A tool's card waits for the text that introduces it (placement.ts).
+   */
+  hold?(part: Part): string;
+  release?(id: string): void;
+  isHeld?(id: string): boolean;
   last(): Part | undefined;
   find(fn: (p: Part) => boolean): Part | undefined;
   /** Ends the reasoning step in progress, as adding a part does. */
@@ -45,6 +52,8 @@ export class PartWriter implements Sink {
   private closed = false;
   /** Skeletons shown before the model asks for a card (Jev component selection, PRD §4). */
   private preloaded = new Map<string, string>();
+  /** Cards waiting for their place in the reply. */
+  private held = new Map<string, Part>();
   onStop?: () => void;
 
   constructor(
@@ -118,6 +127,32 @@ export class PartWriter implements Sink {
     return part.id;
   }
 
+  hold(part: Part): string {
+    // The card's skeleton, if one was showing, goes now; the card shows where it's placed.
+    if (part.type === "component") this.dropPreload(part.name);
+    this.held.set(part.id, part);
+    return part.id;
+  }
+
+  release(id: string): void {
+    const part = this.held.get(id);
+    if (!part) return;
+    this.held.delete(id);
+    this.closeThinking();
+    this.parts.push(part);
+    this.quietSince = Date.now();
+    this.dirty = true;
+  }
+
+  isHeld(id: string): boolean {
+    return this.held.has(id);
+  }
+
+  /** Cards never placed go at the end rather than missing from the reply. */
+  private releaseHeld(): void {
+    for (const id of [...this.held.keys()]) this.release(id);
+  }
+
   /** Shows a loading skeleton for a card that's being built. */
   preload(name: string): void {
     if (this.preloaded.has(name)) return;
@@ -148,6 +183,11 @@ export class PartWriter implements Sink {
   }
 
   update(id: string, fn: (p: Part) => Part): void {
+    const waiting = this.held.get(id);
+    if (waiting) {
+      this.held.set(id, fn(waiting));
+      return;
+    }
     const i = this.parts.findIndex((p) => p.id === id);
     if (i < 0) return;
     this.parts[i] = fn(this.parts[i]);
@@ -156,7 +196,7 @@ export class PartWriter implements Sink {
   }
 
   get(id: string): Part | undefined {
-    return this.parts.find((p) => p.id === id);
+    return this.parts.find((p) => p.id === id) ?? this.held.get(id);
   }
 
   last(): Part | undefined {
@@ -164,10 +204,11 @@ export class PartWriter implements Sink {
   }
 
   find(fn: (p: Part) => boolean): Part | undefined {
-    return this.parts.find(fn);
+    return this.parts.find(fn) ?? [...this.held.values()].find(fn);
   }
 
   remove(id: string): void {
+    this.held.delete(id);
     const before = this.parts.length;
     this.parts = this.parts.filter((p) => p.id !== id);
     if (this.parts.length !== before) this.dirty = true;
@@ -223,6 +264,7 @@ export class PartWriter implements Sink {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     if (this.inflight) await this.inflight;
+    this.releaseHeld();
     this.closeThinking();
     await this.write();
   }
@@ -236,7 +278,10 @@ export class PartWriter implements Sink {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     if (this.inflight) await this.inflight;
+    this.releaseHeld();
     this.closeThinking();
+    // Line breaks left between cards would show as empty rows.
+    this.parts = this.parts.filter((p) => p.type !== "text" || p.text.trim());
     for (const p of this.parts) {
       if (p.type === "search" && p.phase !== "done") p.phase = "done";
       if (p.type === "component" && p.status === "streaming") {

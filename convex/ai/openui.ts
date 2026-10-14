@@ -11,8 +11,8 @@ import type { PhotoFinder, PhotoKind } from "../web/photos";
 import { OPENUI_TOOLS } from "./openuiTools";
 
 /**
- * Cards: the model writes one ```openui block of OpenUI Lang (openui.com) in its reply, and the app
- * draws it with native components as it streams (src/genui/openui). The prompt comes from the
+ * Cards: the model writes ```openui blocks of OpenUI Lang (openui.com) in its reply, between its
+ * Markdown, and the app draws each with native components as it streams (src/genui/openui). The prompt comes from the
  * shared component library; this file also reads the blocks as they stream, merges edits into the
  * card they change, and finds photos for the phrases a card names.
  */
@@ -21,7 +21,7 @@ const library = openuiLibrary();
 
 const PREAMBLE = [
   "You can answer with a small native app inside the reply, written in openui-lang: a compact, line-based UI language, not JSON.",
-  "Write it in a ```openui fenced block on its own lines. Text before or after the block shows above or below it; keep that to a sentence at most.",
+  "Write each in a ```openui fenced block on its own lines. Your Markdown before, between and after blocks shows around them: that's where you talk to the user (the intro, section headings, your take, caveats).",
   "Only the components listed below exist. Never write HTML, JSX, JSON or code to draw UI.",
 ].join("\n");
 
@@ -62,14 +62,41 @@ p = Query("places", {kind: "restaurant", near: $city, limit: 6}, {center: null, 
 food = Map(p.places, "Places to eat", p.center)
 more = Buttons([Button("Plan a day in " + $city)])
 \`\`\``,
+  `Example — a reply with several parts (a trip, a night out, picks): your Markdown carries the conversation, a block shows each part that's better seen, and a Form asks for what would sharpen it.
+
+Two weeks is enough for the big sights and still a few slow days of living like a local.
+
+### 1. Places to put on your list
+\`\`\`openui
+root = Root([spots])
+spots = List([Entry("Central Park", "Walk Bethesda Terrace and Bow Bridge; October colour is at its best.", "Bethesda Terrace Central Park", "Midtown to Harlem · free", "Must-see"), Entry("Brooklyn Bridge and DUMBO", "Cross at sunset, then pizza under the bridge.", "Brooklyn Bridge at sunset", "Lower Manhattan · free")], null, true)
+\`\`\`
+Pair the park with the Met next door for an easy first day.
+
+### 2. Concerts
+(A List of the events your search found: Entry(artist, why go, "artist name and genre", "Oct 10 · Radio City Music Hall", null, ticket page url, "Tickets").)
+
+### 3. Let's plan your days
+\`\`\`openui
+root = Root([form])
+$from = ""
+$to = ""
+$music = "Hip-hop, R&B"
+$style = "Balanced — paid highlights, free wandering"
+form = Form("Your New York trip", [dates, music, style, go], "Fill in what you know; exact dates help me find real shows.")
+dates = Dates($from, $to, "When are you going?")
+music = Checks($music, ["Hip-hop", "R&B", "Pop", "Rock", "Jazz"], "What music do you want to see live?")
+style = Choice($style, ["Budget — free sights and cheap eats", "Balanced — paid highlights, free wandering", "Premium — best seats, upscale dining"], "What kind of trip?")
+go = Button("Build my itinerary", Action([@ToAssistant("Build my itinerary: " + $from + " to " + $to + ". Music: " + $music + ". Style: " + $style + ".")]), "primary")
+\`\`\``,
 ];
 
 const RULES = [
-  'Photos: an image argument takes an image URL from tool results, or a short, specific phrase naming what the picture shows ("Bent Pyramid Dahshur", "Rosetta Stone", "Monarch butterfly"). The app finds a real photo for a phrase, so use phrases for concrete, well-known things, a different one for each picture; never invent an image URL. Skip photos for abstract ideas. The app never repeats a photo the chat already showed, so a follow-up card gets fresh ones.',
+  'Photos: an image argument takes an image URL from tool results, or a short, specific phrase naming what the picture shows ("Bent Pyramid Dahshur", "Rosetta Stone", "Monarch butterfly"). The app finds a real photo for a phrase, so use phrases for concrete, well-known things, a different one for each picture; never invent an image URL. Name a person by their full name, accents included, and what they are known for ("Arcángel reggaeton singer", "Steve Lacy musician"), not "performing live". Skip photos for abstract ideas. The app never repeats a photo the chat already showed, so a follow-up card gets fresh ones.',
   "Screenshots: when the user wants to see a website, app or page (a pricing page, a store listing, a new site design), use Screenshot(url) with the page's real address, from search results, the user, or a well-known homepage. The app captures it live.",
   "Open with a Hero when the subject is something you can picture, then the short answer, then the parts. Mix components to suit the content instead of the same few every time.",
   "Make it interactive where that helps the user: Tabs or a Choice for parallel views, a Quiz or FlipCards when they're learning, Section for depth most readers skip, Slider/Choice/Toggle/Input with Value for anything they'd tweak, a Query for anything live. End explainers and plans with Buttons offering 2 or 3 natural follow-ups.",
-  "It shows on a phone about 360 points wide: titles under 40 characters, labels a few words, card bodies one or two short sentences. Long explanations belong in Text.",
+  "It shows on a phone about 360 points wide: titles under 40 characters, labels a few words, card and entry bodies one or two short sentences. Long explanations belong in Text, or in your Markdown between blocks.",
   'Strings use double quotes; escape a double quote inside a string as \\". Pass null for an optional argument you skip before one you give.',
 ];
 
@@ -114,19 +141,19 @@ const EXACT: Record<string, string> = {
   Timeline: "Steps with a date on each",
   Checklist: "checkable Steps",
   Stepper: "Steps",
-  Form: "Input fields and a Button that sends them",
+  Form: "a Form whose Button sends what the user fills in",
 };
 
 /** Steers one reply toward a card, built around a specific component when the router is sure of it. */
 export function openuiDirective(kind: "visual" | "tool", exact?: string): string {
   const around = exact && EXACT[exact] ? ` Build it around ${EXACT[exact]}.` : "";
   return kind === "visual"
-    ? `Present this answer as an OpenUI app (one \`\`\`openui block): open with the key point, then the parts the content calls for, with photos and something to tap where they help.${around} Write at most one sentence outside the block.`
-    : `Present this answer as an OpenUI app (one \`\`\`openui block) that works as a small live tool: $variables for what the user would adjust (prefilled with theirs), Value components for the results.${around} Write at most one sentence outside the block.`;
+    ? `Present this answer with OpenUI. One subject: one \`\`\`openui block that opens with the key point, then the parts the content calls for, with photos and something to tap where they help.${around} A request with several parts: a Markdown section for each, with a block where that part is better seen.`
+    : `Present this answer as an OpenUI app (a \`\`\`openui block) that works as a small live tool: $variables for what the user would adjust (prefilled with theirs), Value components for the results.${around} Keep your own text around it to a sentence or two.`;
 }
 
 export const OPENUI_ANSWER_NOTE =
-  "When you answer from these results: if they are products, places, things to compare or dated events, show them in an OpenUI app (one ```openui block) with photos from the results, and your text around it.";
+  "When you answer from these results: show products, places, things to compare or dated events in OpenUI blocks (a List or Products with photos from the results, a Map, a Compare), with your text around them. A plan the user will refine (a trip, an event, a purchase) ends with a Form asking for the details that would sharpen it.";
 
 let parser: ReturnType<typeof createParser> | null = null;
 const parse = (source: string) => {
@@ -184,8 +211,8 @@ function fallbackOf(root: ElementNode): string {
   return found.replace(/\*\*/g, "").slice(0, 400) || "Interactive answer shown.";
 }
 
-/** Whether a card ends with its own follow-up buttons (the turn then adds no chips of its own). */
-export const hasFollowUps = (source: string) => /=\s*Buttons\(/.test(source);
+/** Whether a card offers its own next step, buttons or a form (the turn then adds no chips of its own). */
+export const hasFollowUps = (source: string) => /=\s*(Buttons|Form)\(/.test(source);
 
 /** The photo key a screenshot of a page goes by, so the app can tell it from the page link. */
 export const screenshotKey = (url: string) => `screenshot:${url.trim()}`;
@@ -211,12 +238,15 @@ export class OpenUICard {
       /** The last card in the chat, which an edit changes. */
       base?: { source: string; photos?: PhotoPick[] };
       findPhotos?: PhotoFinder;
-      /** Photos the chat has already shown. */
+      /**
+       * Photos the chat has already shown. The card adds its own picks to it, so the other cards
+       * in the same reply, sharing the set, don't repeat them.
+       */
       seen?: Set<string>;
       onPhotos?: () => void;
     } = {}
   ) {
-    this.used = new Set(o.seen);
+    this.used = o.seen ?? new Set();
     this.kept = new Map((o.base?.photos ?? []).map((p) => [p.q, p.url]));
   }
 

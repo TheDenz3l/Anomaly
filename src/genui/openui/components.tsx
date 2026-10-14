@@ -1,11 +1,12 @@
 import { Image } from "expo-image";
 import { Skeleton, Switch } from "heroui-native";
-import { useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { ScrollView, StyleSheet, TextInput, View } from "react-native";
 import Animated from "react-native-reanimated";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { Markdown } from "@/components/chat/Markdown";
 import { ImageGallery, type ImageRef } from "@/components/chat/Media";
+import { Favicon } from "@/components/ui/Favicon";
 import { Icon } from "@/components/ui/Icon";
 import { Slider as SliderTrack } from "@/components/ui/Slider";
 import { Tap } from "@/components/ui/Tap";
@@ -23,14 +24,14 @@ import { Compare as CompareCard, Table as TableCard } from "@/genui/components/D
 import { MapCard } from "@/genui/components/MapCard";
 import { ProductGrid } from "@/genui/components/ProductGrid";
 import { Weather as WeatherCard } from "@/genui/components/Weather";
-import { ActionButton, GenImage, GenSkeleton, type GenProps } from "@/genui/kit";
+import { ActionButton, GenImage, GenSkeleton, Pill, type GenProps } from "@/genui/kit";
 import {
   validateComponent,
   type Accent,
   type CatalogName,
   type CatalogProps,
 } from "@/genui/schemas";
-import { openLink } from "@/lib/links";
+import { domainOf, openLink } from "@/lib/links";
 import { fadeIn } from "@/lib/motion";
 import { colors } from "@/lib/theme";
 import { openuiLibrary, type OpenUIComponentName } from "./library";
@@ -238,6 +239,137 @@ function Gallery({ props, partial }: R) {
         </View>
       )}
     </View>
+  );
+}
+
+/** Width of a pick's photo in a List; the photo is a 3:4 portrait beside the text. */
+const THUMB_W = 112;
+
+/**
+ * Picks to read through, the way a person would lay them out in a message: a photo on the left,
+ * the name, why it's worth it and where to book beside it, one under another with no box around.
+ */
+function List({ props }: R) {
+  const raw = els(props.items).map((e) => e.props);
+  const urls = usePhotos(raw.map((e) => str(e.image)));
+  const title = str(props.title);
+  const rows = raw
+    .map((entry, k) => ({ entry, photo: urls[k], wanted: str(entry.image) }))
+    .filter((r) => str(r.entry.title));
+  if (!rows.length) return null;
+  return (
+    <View>
+      {title ? (
+        <Text weight="bold" className="pb-1 text-[17px] leading-6">
+          {title}
+        </Text>
+      ) : null}
+      {rows.map((r, k) => (
+        <EntryRow
+          key={k}
+          entry={r.entry}
+          photo={r.photo}
+          wanted={r.wanted}
+          n={props.numbered === true ? k + 1 : undefined}
+          first={k === 0}
+        />
+      ))}
+    </View>
+  );
+}
+
+const linkStyle = {
+  textDecorationLine: "underline",
+  textDecorationStyle: "dotted",
+  textDecorationColor: colors.textFaint,
+} as const;
+
+function EntryRow({
+  entry: p,
+  photo,
+  wanted,
+  n,
+  first,
+}: {
+  entry: Props;
+  photo: string | null | undefined;
+  wanted: string | undefined;
+  n?: number;
+  first: boolean;
+}) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const title = str(p.title) ?? "";
+  const body = str(p.body);
+  const meta = str(p.meta);
+  const badge = str(p.badge);
+  const link = str(p.link);
+  const url = str(p.url)?.trim();
+  const page = url && /^https?:\/\/\S+$/i.test(url) ? url : undefined;
+  const shown = photo && failed !== photo ? photo : null;
+  // A photo on its way keeps its frame; with none found the text takes the whole row.
+  const waiting = wanted !== undefined && photo === undefined;
+  const row = (
+    <View className={`flex-row gap-4 py-4 ${first ? "" : "border-t border-hairline"}`}>
+      {shown ? (
+        <Image
+          source={{ uri: shown }}
+          onError={() => setFailed(shown)}
+          contentFit="cover"
+          transition={200}
+          cachePolicy="memory-disk"
+          accessible
+          accessibilityLabel={title}
+          style={{ width: THUMB_W, aspectRatio: 3 / 4, borderRadius: 18 }}
+        />
+      ) : waiting ? (
+        <Skeleton className="rounded-[18px]" style={{ width: THUMB_W, aspectRatio: 3 / 4 }} />
+      ) : null}
+      <View className="flex-1 gap-1.5">
+        <Text
+          weight="bold"
+          className="text-[17px] leading-[22px]"
+          style={page ? linkStyle : undefined}
+        >
+          {n ? `${n}. ${title}` : title}
+        </Text>
+        {badge ? <Pill label={badge} tone="success" /> : null}
+        {meta ? (
+          <Text muted className="text-[14px] leading-5">
+            {meta}
+          </Text>
+        ) : null}
+        {body ? <Text className="text-[15px] leading-[22px]">{body}</Text> : null}
+        {page ? (
+          <View className="mt-1 flex-row flex-wrap items-center gap-2">
+            {link ? (
+              <View className="flex-row items-center gap-1">
+                <Text weight="medium" className="text-[14px] leading-5" style={linkStyle}>
+                  {link}
+                </Text>
+                <Icon name="open-outline" size={13} color={colors.textMuted} />
+              </View>
+            ) : null}
+            <View className="flex-row items-center gap-1.5 rounded-full bg-raised py-1 pr-2.5 pl-1">
+              <Favicon url={page} size={16} />
+              <Text muted numberOfLines={1} className="text-[12px] leading-4">
+                {domainOf(page)}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+  if (!page) return row;
+  return (
+    <Tap
+      haptic
+      accessibilityRole="link"
+      accessibilityLabel={title}
+      onPress={() => void openLink(page)}
+    >
+      {row}
+    </Tap>
   );
 }
 
@@ -525,18 +657,25 @@ function Section({ props, renderNode, statementId }: R) {
   );
 }
 
+/** Inside a Form, fields drop their own boxes and sit on the form's, divided by hairlines. */
+const FormContext = createContext(false);
+
 function Labelled({
   label,
   value,
+  note,
   children,
 }: {
   label?: string;
   value?: string;
+  note?: string;
   children: ReactNode;
 }) {
   const accent = useAccent();
+  const inForm = useContext(FormContext);
+  const Box = inForm ? View : Panel;
   return (
-    <Panel className="gap-2.5 py-3.5">
+    <Box className={inForm ? "gap-2" : "gap-2.5 py-3.5"}>
       {label || value ? (
         <View className="flex-row items-baseline justify-between gap-3">
           <Text muted className="flex-1 text-[14px] leading-5">
@@ -549,8 +688,11 @@ function Labelled({
           ) : null}
         </View>
       ) : null}
+      {note ? (
+        <Text className="-mt-1.5 text-[13px] leading-[18px] text-ink-faint">{note}</Text>
+      ) : null}
       {children}
-    </Panel>
+    </Box>
   );
 }
 
@@ -561,6 +703,26 @@ function Choice({ props, statementId }: R) {
     .map(str)
     .filter((o): o is string => Boolean(o));
   const current = field.value == null ? undefined : String(field.value);
+  // A number stays a number, so arithmetic on the $variable still adds.
+  const choose = (o: string) =>
+    field.setValue(typeof field.value === "number" && num(o) !== undefined ? num(o) : o);
+  // Options that read as sentences ("Balanced — a mix of free and paid") go one per line.
+  if (options.some((o) => o.length > 22))
+    return (
+      <Labelled label={str(props.label)}>
+        <View>
+          {options.map((o) => (
+            <OptionRow
+              key={o}
+              label={o}
+              on={o === current}
+              kind="radio"
+              onPress={() => choose(o)}
+            />
+          ))}
+        </View>
+      </Labelled>
+    );
   return (
     <Labelled label={str(props.label)}>
       <View className="flex-row flex-wrap gap-2">
@@ -572,10 +734,7 @@ function Choice({ props, statementId }: R) {
               haptic
               accessibilityRole="radio"
               accessibilityState={{ selected: on }}
-              // A number stays a number, so arithmetic on the $variable still adds.
-              onPress={() =>
-                field.setValue(typeof field.value === "number" && num(o) !== undefined ? num(o) : o)
-              }
+              onPress={() => choose(o)}
             >
               <View
                 className="rounded-full px-3.5 py-2"
@@ -631,13 +790,330 @@ function SliderC({ props, statementId }: R) {
 
 function Toggle({ props, statementId }: R) {
   const field = useStateField<unknown>(statementId ?? "toggle", props.value);
+  const inForm = useContext(FormContext);
+  const Box = inForm ? View : Panel;
   return (
-    <Panel className="py-3">
+    <Box className={inForm ? "" : "py-3"}>
       <View className="flex-row items-center gap-3">
         <Text className="flex-1 text-[15px] leading-5">{str(props.label)}</Text>
         <Switch isSelected={field.value === true} onSelectedChange={(on) => field.setValue(on)} />
       </View>
-    </Panel>
+    </Box>
+  );
+}
+
+/** One option in a list of them: a radio for pick-one, a check for pick-any. */
+function OptionRow({
+  label,
+  on,
+  kind,
+  onPress,
+}: {
+  label: string;
+  on: boolean;
+  kind: "radio" | "check";
+  onPress: () => void;
+}) {
+  const icon =
+    kind === "radio"
+      ? on
+        ? "radio-button-on"
+        : "radio-button-off"
+      : on
+        ? "checkmark-circle"
+        : "ellipse-outline";
+  return (
+    <Tap
+      haptic
+      accessibilityRole={kind === "radio" ? "radio" : "checkbox"}
+      accessibilityState={kind === "radio" ? { selected: on } : { checked: on }}
+      onPress={onPress}
+    >
+      <View className="flex-row items-center gap-3 py-2">
+        <Icon name={icon} size={24} color={on ? colors.text : colors.textFaint} />
+        <Text className="flex-1 text-[16px] leading-[22px]">{label}</Text>
+      </View>
+    </Tap>
+  );
+}
+
+/** How Checks keeps its picks in one $variable: joined, so a message reads "Jazz, Rock". */
+const PICK_SEP = ", ";
+
+/** The options picked, from the $variable as Checks writes it (or a list, as a model might). */
+function pickedOf(value: unknown, options: string[]): Set<string> {
+  const joined = Array.isArray(value)
+    ? value.join(PICK_SEP)
+    : typeof value === "string"
+      ? value
+      : "";
+  // A model's prefill may not match the options' case ("museums" for "Museums").
+  const hay = `${PICK_SEP}${joined}${PICK_SEP}`.toLowerCase();
+  return new Set(options.filter((o) => hay.includes(`${PICK_SEP}${o.toLowerCase()}${PICK_SEP}`)));
+}
+
+function Checks({ props, statementId }: R) {
+  const field = useStateField<unknown>(statementId ?? "checks", props.value);
+  const options = (Array.isArray(props.options) ? props.options : [])
+    .map(str)
+    .filter((o): o is string => Boolean(o));
+  const picked = pickedOf(field.value, options);
+  const flip = (o: string) => {
+    const next = new Set(picked);
+    if (next.has(o)) next.delete(o);
+    else next.add(o);
+    field.setValue(options.filter((x) => next.has(x)).join(PICK_SEP));
+  };
+  return (
+    <Labelled label={str(props.label)} note={str(props.note)}>
+      <View>
+        {options.map((o) => (
+          <OptionRow key={o} label={o} on={picked.has(o)} kind="check" onPress={() => flip(o)} />
+        ))}
+      </View>
+    </Labelled>
+  );
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+/** A day as Dates writes it into its $variables: "2026-10-12". */
+const isoDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const dayOf = (v: unknown): Date | null => {
+  const m = typeof v === "string" ? /^(\d{4})-(\d{2})-(\d{2})/.exec(v.trim()) : null;
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+};
+const startOfToday = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+/**
+ * A date range picked on a calendar that opens under the two dates: the first tap sets the start,
+ * the next the end (or a new start, if it's earlier).
+ */
+function Dates({ props, statementId }: R) {
+  const id = statementId ?? "dates";
+  const start = useStateField<unknown>(`${id}.start`, props.start);
+  const end = useStateField<unknown>(`${id}.end`, props.end);
+  const [open, setOpen] = useState<"start" | "end" | null>(null);
+  const from = dayOf(start.value);
+  const to = dayOf(end.value);
+  const pick = (d: Date) => {
+    if (open === "start" || !from || d < from) {
+      start.setValue(isoDay(d));
+      if (to && to < d) end.setValue("");
+      setOpen("end");
+      return;
+    }
+    end.setValue(isoDay(d));
+    setOpen(null);
+  };
+  return (
+    <Labelled label={str(props.label)}>
+      <View className="flex-row gap-2.5">
+        <DateField
+          caption="Start"
+          day={from}
+          on={open === "start"}
+          onPress={() => setOpen(open === "start" ? null : "start")}
+        />
+        <DateField
+          caption="End"
+          day={to}
+          on={open === "end"}
+          onPress={() => setOpen(open === "end" ? null : "end")}
+        />
+      </View>
+      {open ? <Calendar from={from} to={to} onPick={pick} /> : null}
+    </Labelled>
+  );
+}
+
+function DateField({
+  caption,
+  day,
+  on,
+  onPress,
+}: {
+  caption: string;
+  day: Date | null;
+  on: boolean;
+  onPress: () => void;
+}) {
+  // The year only when it isn't this one: "Oct 12" fits beside its twin.
+  const shown = day
+    ? day.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        ...(day.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}),
+      })
+    : `${caption} date`;
+  return (
+    <Tap
+      haptic
+      accessibilityRole="button"
+      accessibilityLabel={`${caption} date: ${day ? shown : "not set"}`}
+      accessibilityState={{ expanded: on }}
+      onPress={onPress}
+      style={{ flex: 1 }}
+    >
+      <View
+        className="flex-row items-center gap-2 rounded-full border px-3.5 py-2.5"
+        style={{ borderColor: on ? colors.text : colors.raisedHigh }}
+      >
+        <Icon name="calendar-clear-outline" size={16} color={colors.textMuted} />
+        <Text
+          weight="medium"
+          numberOfLines={1}
+          className="flex-1 text-[15px] leading-5"
+          style={{ color: day ? colors.text : colors.textMuted }}
+        >
+          {shown}
+        </Text>
+        <Icon name={on ? "chevron-up" : "chevron-down"} size={14} color={colors.textMuted} />
+      </View>
+    </Tap>
+  );
+}
+
+const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
+
+function Calendar({
+  from,
+  to,
+  onPick,
+}: {
+  from: Date | null;
+  to: Date | null;
+  onPick: (d: Date) => void;
+}) {
+  const today = startOfToday();
+  const [month, setMonth] = useState(() => {
+    const at = from ?? today;
+    return new Date(at.getFullYear(), at.getMonth(), 1);
+  });
+  const y = month.getFullYear();
+  const m = month.getMonth();
+  const cells: (Date | null)[] = [
+    ...Array.from({ length: month.getDay() }, () => null),
+    ...Array.from({ length: new Date(y, m + 1, 0).getDate() }, (_, i) => new Date(y, m, i + 1)),
+  ];
+  while (cells.length % 7) cells.push(null);
+  const weeks = Array.from({ length: cells.length / 7 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
+  const canGoBack = month > new Date(today.getFullYear(), today.getMonth(), 1);
+  const ends = [from?.getTime(), to?.getTime()];
+  return (
+    <Animated.View entering={fadeIn} className="gap-1 pt-1">
+      <View className="flex-row items-center justify-between pb-1">
+        <Tap
+          haptic
+          disabled={!canGoBack}
+          accessibilityRole="button"
+          accessibilityLabel="Previous month"
+          onPress={() => setMonth(new Date(y, m - 1, 1))}
+          style={{ padding: 6, opacity: canGoBack ? 1 : 0.3 }}
+        >
+          <Icon name="chevron-back" size={18} color={colors.text} />
+        </Tap>
+        <Text weight="bold" className="text-[15px] leading-5">
+          {month.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+        </Text>
+        <Tap
+          haptic
+          accessibilityRole="button"
+          accessibilityLabel="Next month"
+          onPress={() => setMonth(new Date(y, m + 1, 1))}
+          style={{ padding: 6 }}
+        >
+          <Icon name="chevron-forward" size={18} color={colors.text} />
+        </Tap>
+      </View>
+      <View className="flex-row">
+        {WEEKDAYS.map((d, i) => (
+          <Text key={i} className="flex-1 text-center text-[12px] leading-4 text-ink-faint">
+            {d}
+          </Text>
+        ))}
+      </View>
+      {weeks.map((week, w) => (
+        <View key={w} className="flex-row">
+          {week.map((d, i) => {
+            if (!d) return <View key={i} className="h-10 flex-1" />;
+            const t = d.getTime();
+            const past = d < today;
+            const edge = ends.includes(t);
+            const inside = from && to && t > from.getTime() && t < to.getTime();
+            return (
+              <Tap
+                key={i}
+                disabled={past}
+                accessibilityRole="button"
+                accessibilityLabel={d.toDateString()}
+                accessibilityState={{ selected: edge, disabled: past }}
+                onPress={() => onPick(d)}
+                style={{ flex: 1 }}
+              >
+                <View
+                  className="h-10 items-center justify-center"
+                  style={inside ? { backgroundColor: "rgba(250,250,250,0.1)" } : undefined}
+                >
+                  <View
+                    className="h-9 w-9 items-center justify-center rounded-full"
+                    style={edge ? { backgroundColor: colors.text } : undefined}
+                  >
+                    <Text
+                      weight={edge ? "bold" : "medium"}
+                      className="text-[15px] leading-5"
+                      style={{
+                        color: edge ? colors.background : past ? colors.textFaint : colors.text,
+                      }}
+                    >
+                      {d.getDate()}
+                    </Text>
+                  </View>
+                </View>
+              </Tap>
+            );
+          })}
+        </View>
+      ))}
+    </Animated.View>
+  );
+}
+
+/**
+ * What the assistant needs to go further, asked in one box at the end of a reply: its fields sit
+ * flat, divided by hairlines, and its Button becomes the full-width send.
+ */
+function Form({ props, renderNode }: R) {
+  const title = str(props.title);
+  const note = str(props.note);
+  const kids = Array.isArray(props.children) ? props.children.filter((c) => c != null) : [];
+  if (!title && !kids.length) return null;
+  return (
+    <FormContext.Provider value={true}>
+      <View className="rounded-3xl border border-raised px-4 pt-4 pb-4">
+        {title ? (
+          <Text weight="bold" className="text-[19px] leading-6">
+            {title}
+          </Text>
+        ) : null}
+        {note ? (
+          <Text muted className="mt-1.5 text-[14px] leading-5">
+            {note}
+          </Text>
+        ) : null}
+        {kids.map((c, i) => (
+          <View
+            key={i}
+            className={`py-4 ${i > 0 ? "border-t border-hairline" : ""} ${i === kids.length - 1 ? "pb-0" : ""}`}
+          >
+            {renderNode(c)}
+          </View>
+        ))}
+      </View>
+    </FormContext.Provider>
   );
 }
 
@@ -684,8 +1160,34 @@ function Value({ props }: R) {
 function ButtonView({ props }: { props: Props }) {
   const run = useRunAction();
   const streaming = useIsStreaming();
+  const inForm = useContext(FormContext);
   const label = str(props.label);
   if (!label) return null;
+  if (inForm)
+    return (
+      <Tap
+        haptic
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled: streaming }}
+        onPress={() => {
+          if (!streaming) run(props.action, label);
+        }}
+      >
+        <View
+          className="items-center rounded-full px-4 py-3"
+          style={{ backgroundColor: colors.text, opacity: streaming ? 0.45 : 1 }}
+        >
+          <Text
+            weight="bold"
+            className="text-[15px] leading-5"
+            style={{ color: colors.background }}
+          >
+            {label}
+          </Text>
+        </View>
+      </Tap>
+    );
   return (
     <ActionButton
       label={label}
@@ -938,6 +1440,8 @@ const renderers: Record<OpenUIComponentName, OpenUIComponent> = {
   Image: ImageC,
   Screenshot: ScreenshotC,
   Gallery,
+  List,
+  Entry: ByParent,
   Stats,
   Stat: ByParent,
   Facts,
@@ -969,6 +1473,9 @@ const renderers: Record<OpenUIComponentName, OpenUIComponent> = {
   Tab: ByParent,
   Section,
   Choice,
+  Checks,
+  Dates,
+  Form,
   Slider: SliderC,
   Toggle,
   Input,

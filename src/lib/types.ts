@@ -30,7 +30,15 @@ export type ComponentPart = {
   fallbackText: string;
   error?: string;
 };
-export type ImagePart = { id: string; type: "image"; uri: string; width?: number; height?: number };
+export type ImagePart = {
+  id: string;
+  type: "image";
+  uri: string;
+  width?: number;
+  height?: number;
+  description?: string;
+  describedBy?: string;
+};
 /** A file the user attached; `uri` is the local copy while sending, then the stored file. */
 export type FilePart = {
   id: string;
@@ -79,6 +87,10 @@ export type ReplyMeta = {
   levelSent: string;
   reasoningTokens: number;
   kind?: "report";
+  /** The model that read the photos because the reply's model can't see images. */
+  visionModelRef?: string;
+  /** The reply's model can't see images and no other model could read the photos. */
+  visionSkipped?: boolean;
 };
 
 export type MessageStatus = "streaming" | "done" | "stopped" | "error";
@@ -145,6 +157,8 @@ export type Model = {
   providerId: string;
   contextWindow: number;
   profile: CapabilityProfile;
+  /** USD per token, when the provider publishes it. */
+  pricing?: { prompt: number; completion: number };
 };
 
 export type ProviderStatus = "connected" | "error" | "checking";
@@ -234,4 +248,46 @@ export type Settings = {
   researchModelRef: string | null;
   /** The thinking level picked last; every chat uses it until another is picked. */
   thinkingLevel: string;
+  /** The user's own image model; the key stays on the server. */
+  imageGen?: ImageGenSetup | null;
+};
+
+export type ImageFlavor = "openai" | "chat" | "nanobanana";
+
+/** What's left on an image key: money, or the service's own credits (Nano Banana's bananas). */
+export type ImageBalance = {
+  remaining?: number;
+  total?: number;
+  used?: number;
+  unit: string;
+  money: boolean;
+};
+
+export type ImageGenSetup = {
+  baseUrl: string;
+  model: string;
+  keyHint: string;
+  hasKey: boolean;
+  flavor: ImageFlavor | null;
+  /** As last read; `peak` is the most the key held since its last top-up. */
+  balance:
+    | (ImageBalance & {
+        status: "ok" | "unsupported" | "error";
+        peak?: number;
+        error?: string;
+        checkedAt: number;
+      })
+    | null;
+  usage: { month: string; images: number; spent: number } | null;
+  timing: { model: string; avgMs: number; n: number } | null;
+};
+
+export type ImageModelOption = { id: string; name: string; note?: string };
+
+/** What probing an image endpoint found: where to call it, how, and the models the key can use. */
+export type ImageProbe = {
+  baseUrl: string;
+  flavor: ImageFlavor;
+  models: ImageModelOption[];
+  balance?: ImageBalance;
 };

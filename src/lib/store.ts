@@ -8,6 +8,8 @@ import { withoutLinkMarkup } from "@/lib/links";
 import { modelRef, placeholderModel } from "@/lib/models";
 import type {
   CapabilityProfile,
+  ImageFlavor,
+  ImageProbe,
   Memory,
   Message,
   Model,
@@ -17,6 +19,8 @@ import type {
   Thread,
   UiEventPart,
 } from "@/lib/types";
+import { File as FsFile, UploadTask } from "expo-file-system";
+import { pickVisionModel } from "../../convex/lib/vision";
 
 /**
  * App state. Server data (threads, messages, models, settings, memories) streams in from Convex
@@ -52,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultModelRef: "",
   researchModelRef: null,
   thinkingLevel: "auto",
+  imageGen: null,
 };
 
 type State = {
@@ -104,6 +109,20 @@ type Actions = {
   togglePin(artifactId: string): void;
   markViewed(artifactId: string): void;
   updateSettings(patch: Partial<Settings>): void;
+  /**
+   * Saves the image model setup. Leave `key` out to keep the stored one; null removes the setup.
+   * Resolves false when the server turned it down (the reason is toasted).
+   */
+  saveImageGen(
+    setup: { baseUrl: string; model: string; key?: string; flavor?: ImageFlavor } | null
+  ): Promise<boolean>;
+  /** Reads the image key's balance again. */
+  refreshImageBalance(): Promise<void>;
+  /** Checks an image endpoint and key (the stored key when `key` is left out) and lists its models. */
+  probeImageGen(
+    baseUrl: string,
+    key?: string
+  ): Promise<{ ok: true; probe: ImageProbe } | { ok: false; error: string }>;
   addMemory(m: Omit<Memory, "id" | "createdAt">): void;
   updateMemory(id: string, patch: Partial<Memory>): void;
   deleteMemory(id: string): void;
@@ -232,6 +251,8 @@ function within<T>(p: Promise<T>, ms: number): Promise<T> {
 const ensured = new Set<string>();
 /** Server message id → the optimistic id it replaced, used as a stable React key. */
 const aliases = new Map<string, string>();
+/** Server message id → the on-device URIs of the photos it was sent with, for this session. */
+const localPhotos = new Map<string, string[]>();
 const isTemp = (id: string) => id.includes("_tmp");
 
 /**
@@ -244,36 +265,111 @@ function withStableKeys(prev: Message[], next: Message[]): Message[] {
   const fresh = next.filter((m) => !prevIds.has(m.id) && !aliases.has(m.id));
   for (const t of temps) {
     const match = fresh.find((f) => f.role === t.role && !aliases.has(f.id));
-    if (match) aliases.set(match.id, t.key ?? t.id);
+    if (!match) continue;
+    aliases.set(match.id, t.key ?? t.id);
+    const local = t.parts.flatMap((p) =>
+      p.type === "image" && !/^https?:/.test(p.uri) ? [p.uri] : []
+    );
+    if (local.length) localPhotos.set(match.id, local);
   }
-  return next.map((m) => (aliases.has(m.id) ? { ...m, key: aliases.get(m.id) } : m));
+  return next.map((m) => {
+    const key = aliases.get(m.id);
+    const local = localPhotos.get(m.id);
+    if (!key && !local) return m;
+    let n = 0;
+    return {
+      ...m,
+      ...(key ? { key } : {}),
+      // Photos just sent keep showing from the device instead of reloading from storage.
+      ...(local
+        ? {
+            parts: m.parts.map((p) =>
+              p.type === "image" && n < local.length ? { ...p, uri: local[n++] } : p
+            ),
+          }
+        : {}),
+    };
+  });
 }
 let searchKeyTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Content types by extension, for pickers that don't report one. */
+const TYPE_BY_EXT: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  gif: "image/gif",
+  heic: "image/heic",
+  heif: "image/heif",
+  pdf: "application/pdf",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
+};
+
+/** What the picker reported, else what the platform detected, else the extension. */
+function contentType(a: Attachment, detected?: string | null): string {
+  if (a.mime) return a.mime;
+  if (detected) return detected;
+  const ext = (a.name ?? a.uri).split(/[?#]/)[0].split(".").pop()?.toLowerCase() ?? "";
+  return TYPE_BY_EXT[ext] ?? (a.kind === "file" ? "application/octet-stream" : "image/jpeg");
+}
+
+/**
+ * POSTs an attachment to a storage upload URL. Not with fetch on native: a local file read through
+ * it has no type, and a Blob body replaces the Content-Type header with that empty type, which
+ * storage rejects. The upload task streams the file from disk with the type set.
+ */
+async function postToStorage(
+  url: string,
+  a: Attachment
+): Promise<{ ok: boolean; status: number; body: string; type: string }> {
+  if (Platform.OS === "web") {
+    const blob = await (await fetch(a.uri)).blob();
+    const type = contentType(a, blob.type);
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": type }, body: blob });
+    return { ok: res.ok, status: res.status, body: await res.text(), type };
+  }
+  const local = new FsFile(a.uri);
+  let detected: string | null = null;
+  try {
+    detected = local.type || null;
+  } catch {
+    detected = null;
+  }
+  const type = contentType(a, detected);
+  const task = new UploadTask(local, url, {
+    httpMethod: "POST",
+    headers: { "Content-Type": type },
+    mimeType: type,
+    sessionType: "foreground",
+  });
+  try {
+    const res = await task.uploadAsync();
+    return { ok: res.status >= 200 && res.status < 300, status: res.status, body: res.body, type };
+  } finally {
+    task.release();
+  }
+}
 async function uploadAttachment(
   a: Attachment
 ): Promise<{ storageId: Id<"_storage">; width?: number; height?: number }> {
   const file = a.kind === "file";
-  const blob = await (await fetch(a.uri)).blob();
   const url = await convex.mutation(api.attachments.generateUploadUrl, {});
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type":
-        (file ? a.mime : undefined) ||
-        blob.type ||
-        (file ? "application/octet-stream" : "image/jpeg"),
-    },
-    body: blob,
-  });
-  if (!res.ok)
+  const sent = await postToStorage(url, a);
+  if (!sent.ok) {
+    console.warn(`upload failed (${sent.status}): ${sent.body.slice(0, 200)}`);
     throw new Error(file ? `Couldn't upload ${a.name ?? "the file"}.` : "Photo upload failed.");
-  const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
+  }
+  const { storageId } = JSON.parse(sent.body) as { storageId: Id<"_storage"> };
   await convex.mutation(api.attachments.register, {
     storageId,
     width: a.width,
     height: a.height,
-    ...(file ? { name: a.name, mime: a.mime } : {}),
+    mime: sent.type,
+    ...(file ? { name: a.name } : {}),
   });
   return { storageId, width: a.width, height: a.height };
 }
@@ -739,6 +835,35 @@ export const useApp = create<AppStore>()((set, get) => {
       }
     },
 
+    async saveImageGen(setup) {
+      try {
+        await convex.action(
+          api.settings.setImageGen,
+          setup
+            ? { baseUrl: setup.baseUrl, model: setup.model, key: setup.key, flavor: setup.flavor }
+            : { clear: true }
+        );
+        get().showToast(setup ? "Image model saved" : "Image model removed");
+        return true;
+      } catch (e) {
+        toastError(e);
+        return false;
+      }
+    },
+
+    async refreshImageBalance() {
+      await convex.action(api.settings.refreshImageBalance, {}).catch(toastError);
+    },
+
+    async probeImageGen(baseUrl, key) {
+      try {
+        const probe = await convex.action(api.settings.probeImageGen, { baseUrl, key });
+        return { ok: true, probe };
+      } catch (e) {
+        return { ok: false, error: errorText(e) };
+      }
+    },
+
     addMemory(m) {
       convex
         .mutation(api.memories.create, {
@@ -940,6 +1065,17 @@ export function useComposerTarget() {
   const base = thread ?? draft;
   const target = useMemo(() => ({ ...base, reasoningLevel: level }), [base, level]);
   return { thread, target, model: findModel(models, target.modelRef) };
+}
+
+/** The model that reads photos for `model` when it can't see images; null when it can, or none can. */
+export function useVisionStandIn(model: Model): Model | null {
+  const models = useApp((s) => s.models);
+  const providers = useApp((s) => s.providers);
+  return useMemo(() => {
+    if (model.profile.features.vision) return null;
+    const down = new Set(providers.filter((p) => p.status === "error").map((p) => p.providerId));
+    return pickVisionModel(models, model, { usable: (id) => !down.has(id) });
+  }, [model, models, providers]);
 }
 
 /** Every artifact across non-incognito chats, newest first. */

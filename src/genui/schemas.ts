@@ -592,6 +592,30 @@ export const OpenUISchema = z.object({
   state: z.array(CardStateEntrySchema).optional(),
 });
 
+/**
+ * An image the model is making with the user's own image model (convex/engine/image.ts): the dot
+ * field and the model's running commentary while it renders, then the picture.
+ */
+export const ImageGenerationSchema = z.object({
+  title: z.string(),
+  prompt: z.string(),
+  aspect: z.enum(["portrait", "square", "landscape", "tall", "wide"]),
+  /** Width over height of the picture the endpoint will send back. */
+  ratio: z.number().optional(),
+  /** What the model says it's doing, shown one line after another while the image renders. */
+  steps: z.array(z.string()),
+  model: z.string(),
+  state: z.enum(["working", "done", "error"]),
+  startedAt: z.number(),
+  doneAt: z.number().optional(),
+  url: z.string().optional(),
+  storageId: z.string().optional(),
+  mime: z.string().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  error: z.string().optional(),
+});
+
 export const catalogSchemas = {
   MovieShowtimes: MovieShowtimesSchema,
   MapCard: MapCardSchema,
@@ -613,6 +637,7 @@ export const catalogSchemas = {
   MemoryConfirm: MemoryConfirmSchema,
   Blocks: BlocksSchema,
   OpenUI: OpenUISchema,
+  ImageGeneration: ImageGenerationSchema,
 } as const;
 
 export type CatalogName = keyof typeof catalogSchemas;

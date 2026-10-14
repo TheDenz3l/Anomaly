@@ -60,6 +60,10 @@ export const vImagePart = v.object({
   mime: v.optional(v.string()),
   width: v.optional(v.number()),
   height: v.optional(v.number()),
+  /** What a vision model saw in it, for models that can't take images (cached per photo). */
+  description: v.optional(v.string()),
+  /** Ref of the model that wrote the description. */
+  describedBy: v.optional(v.string()),
 });
 
 /** A file the user attached; its text is read on the server (convex/files.ts) and given to the model. */
@@ -117,6 +121,10 @@ export const vReplyMeta = v.object({
   promptTokens: v.optional(v.number()),
   completionTokens: v.optional(v.number()),
   costUsd: v.optional(v.number()),
+  /** The model that read the photos because the reply's model can't see images. */
+  visionModelRef: v.optional(v.string()),
+  /** The reply's model can't see images and no other model could read the photos. */
+  visionSkipped: v.optional(v.boolean()),
 });
 
 export const vThreadMode = v.union(v.literal("chat"), v.literal("research"));

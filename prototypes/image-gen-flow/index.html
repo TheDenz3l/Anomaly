@@ -1,0 +1,1261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Image generation — dot flow prototype</title>
+    <style>
+      @font-face {
+        font-family: Satoshi;
+        src: url(../../assets/fonts/Satoshi-Regular.otf);
+        font-weight: 400;
+      }
+      @font-face {
+        font-family: Satoshi;
+        src: url(../../assets/fonts/Satoshi-Medium.otf);
+        font-weight: 500;
+      }
+      @font-face {
+        font-family: Satoshi;
+        src: url(../../assets/fonts/Satoshi-Bold.otf);
+        font-weight: 700;
+      }
+      :root {
+        --bg: #000000;
+        --surface: #18181b;
+        --raised: #27272a;
+        --raised-high: #3f3f46;
+        --text: #fafafa;
+        --muted: #a1a1aa;
+        --faint: #71717a;
+        --bubble: #03096b;
+        --primary: #3b82f6;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Satoshi, system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        min-height: 100dvh;
+        display: flex;
+        justify-content: center;
+      }
+      .page {
+        width: 100%;
+        max-width: 430px;
+        padding: 28px 20px 40px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .user {
+        align-self: flex-end;
+        max-width: 82%;
+        background: var(--bubble);
+        padding: 10px 14px;
+        border-radius: 20px;
+        font-size: 16px;
+        line-height: 22px;
+      }
+      .assistant {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .frame {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 20px;
+        overflow: hidden;
+        background: #000;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .frame canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .status {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 14px;
+        line-height: 20px;
+        color: var(--muted);
+      }
+      .status .model {
+        color: var(--faint);
+      }
+      .status .time {
+        margin-left: auto;
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .reply {
+        margin: 2px 0 0;
+        font-size: 16px;
+        line-height: 24px;
+        animation: rise 420ms ease-out both;
+      }
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+      }
+      .lab {
+        margin-top: 22px;
+        background: var(--surface);
+        border-radius: 24px;
+        padding: 18px;
+        display: grid;
+        gap: 16px;
+      }
+      .lab h1 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 700;
+      }
+      .lab p {
+        margin: 4px 0 0;
+        font-size: 14px;
+        line-height: 20px;
+        color: var(--muted);
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .field > span:first-child {
+        width: 64px;
+        flex: none;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .btn {
+        height: 40px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 999px;
+        background: var(--raised);
+        color: var(--text);
+        font:
+          500 15px Satoshi,
+          system-ui,
+          sans-serif;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        position: relative;
+      }
+      .btn.primary {
+        background: var(--primary);
+      }
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .btn:focus-visible,
+      .seg button:focus-visible,
+      input[type="range"]:focus-visible,
+      .file:focus-within {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+      input[type="range"] {
+        flex: 1;
+        min-width: 0;
+        accent-color: var(--primary);
+      }
+      output {
+        width: 32px;
+        text-align: right;
+        font-size: 14px;
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .seg {
+        display: inline-flex;
+        background: var(--raised);
+        border-radius: 999px;
+        padding: 3px;
+      }
+      .seg button {
+        height: 34px;
+        padding: 0 11px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--muted);
+        font:
+          500 14px Satoshi,
+          system-ui,
+          sans-serif;
+        cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] {
+        background: var(--raised-high);
+        color: var(--text);
+      }
+      .file input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="user">Paint a quiet alpine lake at blue hour, with mist sitting on the water</div>
+
+      <section class="assistant">
+        <div id="frame" class="frame" role="img" aria-label="Image being created" aria-busy="true">
+          <canvas id="flow" aria-hidden="true"></canvas>
+        </div>
+        <div class="status" aria-live="polite">
+          <span id="status">Creating image</span>
+          <span class="model">with flux-pro-1.1</span>
+          <span id="elapsed" class="time">0s</span>
+        </div>
+        <p id="reply" class="reply" hidden></p>
+      </section>
+
+      <aside class="lab" aria-label="Prototype controls">
+        <div>
+          <h1>Dot flow</h1>
+          <p>
+            Rub the card while it works: the dots part around your finger, light up and drag the
+            flow along with you. Once the image arrives, rubbing wipes it in faster.
+          </p>
+        </div>
+        <div class="row">
+          <button id="primary" class="btn primary">Reveal image</button>
+          <button id="restart" class="btn">Start over</button>
+        </div>
+        <label class="row field">
+          <span>Dot size</span>
+          <input id="pitch" type="range" min="6" max="16" step="1" value="10" />
+          <output id="pitchOut">10</output>
+        </label>
+        <label class="row field">
+          <span>Glow</span>
+          <input id="glow" type="range" min="40" max="160" step="5" value="100" />
+          <output id="glowOut">100</output>
+        </label>
+        <div class="row field">
+          <span>Tone</span>
+          <div class="seg" id="tone">
+            <button data-tone="silver" aria-pressed="true">Silver</button>
+            <button data-tone="cobalt" aria-pressed="false">Cobalt</button>
+            <button data-tone="champagne" aria-pressed="false">Champagne</button>
+          </div>
+        </div>
+        <div class="row field">
+          <span>Card</span>
+          <div class="seg" id="card">
+            <button data-card="black" aria-pressed="true">Black</button>
+            <button data-card="tinted" aria-pressed="false">Tinted</button>
+          </div>
+        </div>
+        <div class="row field">
+          <span>Shape</span>
+          <div class="seg" id="aspect">
+            <button data-aspect="1" aria-pressed="true">Square</button>
+            <button data-aspect="0.75" aria-pressed="false">Portrait</button>
+            <button data-aspect="1.5" aria-pressed="false">Landscape</button>
+          </div>
+        </div>
+        <div class="row field">
+          <span>Image</span>
+          <label class="btn file"
+            >Use your own<input id="file" type="file" accept="image/*"
+          /></label>
+        </div>
+      </aside>
+    </main>
+
+    <script>
+      "use strict";
+      (() => {
+        const $ = (id) => document.getElementById(id);
+        const frame = $("frame");
+        const canvas = $("flow");
+        const ctx = canvas.getContext("2d");
+        const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        const TAU = Math.PI * 2;
+        const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+        const smooth = (k) => k * k * (3 - 2 * k);
+        const sstep = (a, b, x) => smooth(clamp((x - a) / (b - a)));
+        const easeOut = (k) => 1 - Math.pow(1 - k, 3);
+        const easeInOut = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+        const hash = (n) => {
+          const x = Math.sin(n) * 43758.5453;
+          return x - Math.floor(x);
+        };
+        function rng(seed) {
+          return () => {
+            seed = (seed + 0x6d2b79f5) | 0;
+            let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+            x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+            return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+          };
+        }
+
+        // 2D simplex noise.
+        const perm = new Uint8Array(512);
+        {
+          const r = rng(1337);
+          const p = Array.from({ length: 256 }, (_, i) => i);
+          for (let i = 255; i > 0; i--) {
+            const j = Math.floor(r() * (i + 1));
+            [p[i], p[j]] = [p[j], p[i]];
+          }
+          for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+        }
+        const GX = [1, -1, 1, -1, 1, -1, 0, 0];
+        const GY = [1, 1, -1, -1, 0, 0, 1, -1];
+        const F2 = 0.5 * (Math.sqrt(3) - 1);
+        const G2 = (3 - Math.sqrt(3)) / 6;
+        function snoise(x, y) {
+          const s = (x + y) * F2;
+          const i = Math.floor(x + s);
+          const j = Math.floor(y + s);
+          const t = (i + j) * G2;
+          const x0 = x - (i - t);
+          const y0 = y - (j - t);
+          const i1 = x0 > y0 ? 1 : 0;
+          const j1 = 1 - i1;
+          const x1 = x0 - i1 + G2;
+          const y1 = y0 - j1 + G2;
+          const x2 = x0 - 1 + 2 * G2;
+          const y2 = y0 - 1 + 2 * G2;
+          const ii = i & 255;
+          const jj = j & 255;
+          let n = 0;
+          let t0 = 0.5 - x0 * x0 - y0 * y0;
+          if (t0 > 0) {
+            const g = perm[ii + perm[jj]] & 7;
+            t0 *= t0;
+            n += t0 * t0 * (GX[g] * x0 + GY[g] * y0);
+          }
+          let t1 = 0.5 - x1 * x1 - y1 * y1;
+          if (t1 > 0) {
+            const g = perm[ii + i1 + perm[jj + j1]] & 7;
+            t1 *= t1;
+            n += t1 * t1 * (GX[g] * x1 + GY[g] * y1);
+          }
+          let t2 = 0.5 - x2 * x2 - y2 * y2;
+          if (t2 > 0) {
+            const g = perm[ii + 1 + perm[jj + 1]] & 7;
+            t2 *= t2;
+            n += t2 * t2 * (GX[g] * x2 + GY[g] * y2);
+          }
+          return 70 * n;
+        }
+
+        // The flow: a domain-warped noise field with thin ridged filaments running through it.
+        // Field units: 160 CSS px = 1, so the pattern keeps its physical size on any card.
+        function field(x, y, t) {
+          const fx = (x - S.W / 2) / 160;
+          const fy = (y - S.H / 2) / 160;
+          const wx = snoise(fx * 0.55 + t * 0.2, fy * 0.55 - t * 0.12);
+          const wy = snoise(fx * 0.55 + 5.2 - t * 0.16, fy * 0.55 + 1.3 + t * 0.1);
+          const px = fx + wx * 0.6;
+          const py = fy + wy * 0.6;
+          const n =
+            snoise(px * 0.85 + t * 0.08, py * 0.85 - t * 0.05) * 0.65 +
+            snoise(px * 1.9 - t * 0.06, py * 1.9 + t * 0.07) * 0.35;
+          let v = smooth(clamp(n * 0.55 + 0.5));
+          v = Math.pow(v, 2.4);
+          const ridge = Math.pow(1 - Math.abs(snoise(px * 1.3 + 3.1, py * 1.3 - t * 0.09)), 8);
+          return Math.max(v, ridge * 0.85);
+        }
+
+        const TONES = {
+          silver: {
+            bg: [13, 17, 24],
+            stops: [
+              [26, 32, 48],
+              [62, 73, 94],
+              [128, 141, 166],
+              [204, 213, 231],
+              [255, 255, 255],
+            ],
+          },
+          cobalt: {
+            bg: [9, 13, 28],
+            stops: [
+              [16, 28, 66],
+              [30, 64, 160],
+              [59, 130, 246],
+              [150, 199, 253],
+              [240, 247, 255],
+            ],
+          },
+          champagne: {
+            bg: [17, 14, 11],
+            stops: [
+              [40, 31, 22],
+              [94, 74, 52],
+              [170, 140, 100],
+              [234, 214, 180],
+              [255, 249, 236],
+            ],
+          },
+        };
+        function ramp(stops, v) {
+          const x = clamp(v) * (stops.length - 1);
+          const i = Math.min(stops.length - 2, Math.floor(x));
+          const f = x - i;
+          const a = stops[i];
+          const b = stops[i + 1];
+          return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+        }
+        const NB = 14;
+        let bucketCss = [];
+        function setTone(name) {
+          S.tone = TONES[name];
+          bucketCss = Array.from({ length: NB }, (_, i) => {
+            const v = (i + 0.5) / NB;
+            const c = ramp(S.tone.stops, v);
+            const a = sstep(0.1, 0.6, v);
+            return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`;
+          });
+          frame.style.background = S.black ? "#000" : `rgb(${S.tone.bg})`;
+          if (S.W) paintBackdrop();
+        }
+
+        const GLINT = (() => {
+          const c = document.createElement("canvas");
+          c.width = c.height = 64;
+          const g = c.getContext("2d");
+          for (const horizontal of [true, false]) {
+            const gr = horizontal
+              ? g.createLinearGradient(0, 32, 64, 32)
+              : g.createLinearGradient(32, 0, 32, 64);
+            gr.addColorStop(0, "rgba(255,255,255,0)");
+            gr.addColorStop(0.5, "rgba(255,255,255,0.95)");
+            gr.addColorStop(1, "rgba(255,255,255,0)");
+            g.fillStyle = gr;
+            if (horizontal) g.fillRect(0, 31.25, 64, 1.5);
+            else g.fillRect(31.25, 0, 1.5, 64);
+          }
+          const halo = g.createRadialGradient(32, 32, 0, 32, 32, 10);
+          halo.addColorStop(0, "rgba(255,255,255,0.8)");
+          halo.addColorStop(1, "rgba(255,255,255,0)");
+          g.fillStyle = halo;
+          g.fillRect(0, 0, 64, 64);
+          return c;
+        })();
+
+        // Stand-in model output, painted so the prototype works offline.
+        const SCENES = [
+          {
+            seed: 11,
+            alt: "Alpine lake at blue hour, mist on the water",
+            reply:
+              "Here's the lake at blue hour. I kept the mist low so the far ridge reads as a soft silhouette against the afterglow.",
+            sky: ["#0a1130", "#232a5c", "#6d5a8e", "#d49a8c", "#f0c3a0"],
+            ranges: [
+              ["#7d6e9e", "#6a6290"],
+              ["#4a4a7e", "#3b4170"],
+              ["#262c56", "#1c2248"],
+            ],
+            haze: "214,164,170",
+            water: "#0d1330",
+            orb: { x: 0.72, y: 0.26, r: 0.032, fill: "#fbf1de", glow: "255,236,210" },
+          },
+          {
+            seed: 29,
+            alt: "The same alpine lake at first light",
+            reply:
+              "Another take: the same lake at first light, with the sun just clearing the far ridge.",
+            sky: ["#1d2c52", "#5a6a96", "#c28c86", "#f0b78c", "#ffe0ae"],
+            ranges: [
+              ["#958ab0", "#8379a0"],
+              ["#5e5b8a", "#4f4f7c"],
+              ["#2f3459", "#242a4c"],
+            ],
+            haze: "246,212,186",
+            water: "#18223f",
+            orb: { x: 0.34, y: 0.86, r: 0.05, fill: "#fff1d0", glow: "255,214,160" },
+          },
+        ];
+
+        function ridgeLine(g, w, hz, r, rand) {
+          const octaves = [1, 2.3, 5.1, 11.7, 23].map((m, i) => ({
+            f: (m * r.peaks * TAU) / w,
+            p: rand() * TAU,
+            a: Math.pow(0.5, i),
+          }));
+          const norm = octaves.reduce((n, o) => n + o.a, 0);
+          g.beginPath();
+          g.moveTo(0, hz + 1);
+          for (let x = 0; x <= w + 2; x += 2) {
+            let y = 0;
+            for (const o of octaves) y += o.a * (1 - Math.abs(Math.sin(x * o.f + o.p)));
+            g.lineTo(x, r.base - r.amp * Math.pow(y / norm, 1.6));
+          }
+          g.lineTo(w, hz + 1);
+          g.closePath();
+          const fill = g.createLinearGradient(0, r.base - r.amp, 0, hz);
+          fill.addColorStop(0, r.top);
+          fill.addColorStop(1, r.bottom);
+          g.fillStyle = fill;
+          g.fill();
+        }
+        function trees(g, from, to, hz, u, rand, scale) {
+          g.fillStyle = "#0a0f26";
+          let x = from;
+          while (x < to) {
+            const edge = Math.min(1, Math.min(x - from, to - x) / (u * 0.08));
+            const th = u * (0.012 + rand() * 0.045 * edge) * scale;
+            const tw = th * 0.3;
+            g.beginPath();
+            g.moveTo(x - tw, hz + 1);
+            g.lineTo(x, hz - th);
+            g.lineTo(x + tw, hz + 1);
+            g.fill();
+            x += tw * (0.5 + rand() * 0.9);
+          }
+        }
+        function paintScene(w, h, sc) {
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          const g = c.getContext("2d", { willReadFrequently: true });
+          const rand = rng(sc.seed);
+          const u = Math.min(w, h);
+          const hz = h * 0.6;
+
+          const sky = g.createLinearGradient(0, 0, 0, hz);
+          sc.sky.forEach((col, i) => sky.addColorStop([0, 0.4, 0.75, 0.93, 1][i], col));
+          g.fillStyle = sky;
+          g.fillRect(0, 0, w, hz + 1);
+
+          g.fillStyle = "#ffffff";
+          for (let i = 0; i < 160; i++) {
+            const y = Math.pow(rand(), 1.6) * hz * 0.6;
+            g.globalAlpha =
+              (1 - y / (hz * 0.6)) * (0.3 + rand() * 0.6) * (sc.seed === 11 ? 1 : 0.35);
+            g.beginPath();
+            g.arc(rand() * w, y, u * (0.0006 + rand() * 0.0018), 0, TAU);
+            g.fill();
+          }
+          g.globalAlpha = 1;
+
+          const o = sc.orb;
+          const mx = w * o.x;
+          const my = hz * o.y;
+          const mr = u * o.r;
+          const halo = g.createRadialGradient(mx, my, 0, mx, my, mr * 7);
+          halo.addColorStop(0, `rgba(${o.glow},0.4)`);
+          halo.addColorStop(1, `rgba(${o.glow},0)`);
+          g.fillStyle = halo;
+          g.fillRect(mx - mr * 7, my - mr * 7, mr * 14, mr * 14);
+          g.fillStyle = o.fill;
+          g.beginPath();
+          g.arc(mx, my, mr, 0, TAU);
+          g.fill();
+
+          const bases = [
+            [0.17, 0.2, 1.6],
+            [0.09, 0.18, 2.4],
+            [0.02, 0.11, 3.5],
+          ];
+          sc.ranges.forEach(([top, bottom], i) => {
+            const [b, a, peaks] = bases[i];
+            ridgeLine(g, w, hz, { base: hz - h * b, amp: h * a, peaks, top, bottom }, rand);
+            if (i < 2) {
+              const mist = g.createLinearGradient(0, hz - h * 0.14, 0, hz);
+              mist.addColorStop(0, `rgba(${sc.haze},0)`);
+              mist.addColorStop(1, `rgba(${sc.haze},0.2)`);
+              g.fillStyle = mist;
+              g.fillRect(0, hz - h * 0.14, w, h * 0.14);
+            }
+          });
+          trees(g, -u * 0.02, w * 0.44, hz, u, rand, 1.25);
+          trees(g, w * 0.8, w * 1.02, hz, u, rand, 0.7);
+
+          const top = document.createElement("canvas");
+          top.width = w;
+          top.height = Math.ceil(hz);
+          top.getContext("2d").drawImage(c, 0, 0, w, hz, 0, 0, w, hz);
+          g.fillStyle = sc.water;
+          g.fillRect(0, hz, w, h - hz);
+          g.save();
+          g.translate(0, hz * 2);
+          g.scale(1, -1);
+          g.globalAlpha = 0.55;
+          g.drawImage(top, 0, 0, w, hz);
+          g.restore();
+          const deep = g.createLinearGradient(0, hz, 0, h);
+          deep.addColorStop(0, "rgba(8,12,34,0.15)");
+          deep.addColorStop(1, "rgba(6,9,26,0.82)");
+          g.fillStyle = deep;
+          g.fillRect(0, hz, w, h - hz);
+
+          for (let i = 0; i < 90; i++) {
+            const y = hz + Math.pow(rand(), 1.4) * (h - hz);
+            const len = u * (0.02 + rand() * 0.12) * (0.6 + (y - hz) / (h - hz));
+            g.fillStyle = `rgba(240,210,200,${0.04 + rand() * 0.08})`;
+            g.fillRect(rand() * w, y, len, Math.max(1, u * 0.0015));
+          }
+          const rx = mx;
+          for (let i = 0; i < 26; i++) {
+            const y = hz + (i / 26) * (h - hz) * 0.9 + rand() * u * 0.006;
+            const len = mr * (1.4 + rand() * 2.2) * (1 + i / 26);
+            g.fillStyle = `rgba(${o.glow},${0.35 * (1 - i / 30)})`;
+            g.fillRect(rx - len / 2 + (rand() - 0.5) * mr, y, len, Math.max(1, u * 0.002));
+          }
+
+          const fog = g.createLinearGradient(0, hz - h * 0.05, 0, hz + h * 0.1);
+          fog.addColorStop(0, `rgba(${sc.haze},0)`);
+          fog.addColorStop(0.4, `rgba(${sc.haze},0.28)`);
+          fog.addColorStop(1, `rgba(${sc.haze},0)`);
+          g.fillStyle = fog;
+          g.fillRect(0, hz - h * 0.05, w, h * 0.15);
+
+          const vig = g.createRadialGradient(
+            w / 2,
+            h / 2,
+            u * 0.3,
+            w / 2,
+            h / 2,
+            Math.hypot(w, h) * 0.6
+          );
+          vig.addColorStop(0, "rgba(0,0,0,0)");
+          vig.addColorStop(1, "rgba(0,0,0,0.45)");
+          g.fillStyle = vig;
+          g.fillRect(0, 0, w, h);
+
+          const img = g.getImageData(0, 0, w, h);
+          const d = img.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const n = (Math.random() - 0.5) * 10;
+            d[i] += n;
+            d[i + 1] += n;
+            d[i + 2] += n;
+          }
+          g.putImageData(img, 0, 0);
+          return c;
+        }
+
+        const S = {
+          W: 0,
+          H: 0,
+          DPR: 1,
+          pitch: 10,
+          glow: 1,
+          black: true,
+          tone: TONES.silver,
+          phase: "gen",
+          startAt: performance.now(),
+          phaseAt: 0,
+          sceneIndex: 0,
+          scene: null,
+          custom: null,
+          time: 0,
+        };
+        const ptr = {
+          x: 0,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          speed: 0,
+          t: 0,
+          active: false,
+          down: false,
+          glow: 0,
+        };
+
+        // One dot per cell of a staggered (hex) lattice, stored as flat arrays.
+        let N = 0;
+        let D = {};
+        let backdrop = null;
+        let layer = null;
+        let mask = null;
+
+        function offscreen() {
+          const c = document.createElement("canvas");
+          c.width = canvas.width;
+          c.height = canvas.height;
+          return c;
+        }
+        function paintBackdrop() {
+          const { W, H, DPR } = S;
+          backdrop = offscreen();
+          const g = backdrop.getContext("2d");
+          g.scale(DPR, DPR);
+          g.fillStyle = S.black ? "#000" : `rgb(${S.tone.bg})`;
+          g.fillRect(0, 0, W, H);
+          if (S.black) return;
+          const lift = g.createRadialGradient(
+            W * 0.5,
+            H * 0.42,
+            0,
+            W * 0.5,
+            H * 0.42,
+            Math.max(W, H) * 0.75
+          );
+          const c = S.tone.stops[2];
+          lift.addColorStop(0, `rgba(${c},0.07)`);
+          lift.addColorStop(1, `rgba(${c},0)`);
+          g.fillStyle = lift;
+          g.fillRect(0, 0, W, H);
+        }
+
+        function build() {
+          const { W, H, pitch } = S;
+          const rowH = pitch * 0.8660254;
+          const cols = Math.ceil(W / pitch) + 1;
+          const rows = Math.ceil(H / rowH) + 1;
+          const ox = (W - (cols - 0.5) * pitch) / 2 + pitch / 2;
+          const oy = (H - (rows - 1) * rowH) / 2;
+          const xs = [];
+          const ys = [];
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const x = ox + c * pitch + (r & 1 ? pitch / 2 : 0) - pitch / 4;
+              const y = oy + r * rowH;
+              if (
+                x < -pitch * 0.3 ||
+                x > W + pitch * 0.3 ||
+                y < -pitch * 0.3 ||
+                y > H + pitch * 0.3
+              )
+                continue;
+              xs.push(x);
+              ys.push(y);
+            }
+          }
+          N = xs.length;
+          const F = (fill) => {
+            const a = new Float32Array(N);
+            if (fill) a.set(fill);
+            return a;
+          };
+          D = {
+            hx: F(xs),
+            hy: F(ys),
+            dx: F(),
+            dy: F(),
+            vx: F(),
+            vy: F(),
+            en: F(),
+            sx: F(),
+            sy: F(),
+            v: F(),
+            b: F(),
+            r: F(),
+            edge: F(),
+            seed: F(),
+            jit: F(),
+            sw: F(),
+            th: F(),
+            re: F(),
+            ir: F(),
+            ig: F(),
+            ib: F(),
+            lum: F(),
+          };
+          const buckets = [];
+          for (let i = 0; i < NB; i++) buckets.push(new Int32Array(N));
+          D.buckets = buckets;
+          D.counts = new Int32Array(NB);
+          for (let i = 0; i < N; i++) {
+            D.seed[i] = Math.random();
+            D.jit[i] = 0.6 + Math.random() * 0.8;
+            D.sw[i] = Math.random() * 2 - 1;
+            const e = Math.min(xs[i], W - xs[i], ys[i], H - ys[i]);
+            D.edge[i] = sstep(-2, 24, e);
+          }
+        }
+
+        function resize() {
+          const rect = frame.getBoundingClientRect();
+          const W = Math.round(rect.width);
+          const H = Math.round(rect.height);
+          if (!W || !H || (W === S.W && H === S.H)) return;
+          S.W = W;
+          S.H = H;
+          S.DPR = Math.min(2, window.devicePixelRatio || 1);
+          canvas.width = Math.round(W * S.DPR);
+          canvas.height = Math.round(H * S.DPR);
+          paintBackdrop();
+          layer = offscreen();
+          mask = offscreen();
+          setScene();
+          build();
+          if (S.phase !== "gen") restart();
+        }
+
+        function cover(src) {
+          const c = offscreen();
+          const s = Math.max(c.width / src.width, c.height / src.height);
+          const w = src.width * s;
+          const h = src.height * s;
+          c.getContext("2d").drawImage(src, (c.width - w) / 2, (c.height - h) / 2, w, h);
+          return c;
+        }
+        function setScene() {
+          S.scene = S.custom
+            ? cover(S.custom)
+            : paintScene(canvas.width, canvas.height, SCENES[S.sceneIndex]);
+        }
+
+        // Each dot takes the average colour of the patch of image under it.
+        function sampleImage() {
+          const { W, H } = S;
+          const sw = Math.max(2, Math.round(W / (S.pitch * 0.6)));
+          const sh = Math.max(2, Math.round(H / (S.pitch * 0.6)));
+          const c = document.createElement("canvas");
+          c.width = sw;
+          c.height = sh;
+          const g = c.getContext("2d", { willReadFrequently: true });
+          g.imageSmoothingQuality = "high";
+          g.drawImage(S.scene, 0, 0, sw, sh);
+          const px = g.getImageData(0, 0, sw, sh).data;
+          for (let i = 0; i < N; i++) {
+            const x = clamp(Math.floor((D.hx[i] / W) * sw), 0, sw - 1);
+            const y = clamp(Math.floor((D.hy[i] / H) * sh), 0, sh - 1);
+            const k = (y * sw + x) * 4;
+            D.ir[i] = px[k];
+            D.ig[i] = px[k + 1];
+            D.ib[i] = px[k + 2];
+            D.lum[i] = (px[k] * 0.299 + px[k + 1] * 0.587 + px[k + 2] * 0.114) / 255;
+          }
+        }
+
+        // Timeline of the non-idle phases, in seconds.
+        const T = reduce
+          ? { tone: 0.2, start: 0.1, resolve: 0.6, hideOut: 0.4, boil: 0.5 }
+          : { tone: 0.6, start: 0.35, resolve: 2.2, hideOut: 0.9, boil: 1.2 };
+        function timeline(now) {
+          const rt = (now - S.phaseAt) / 1000;
+          if (S.phase === "reveal") {
+            return {
+              rt,
+              tone: easeOut(clamp(rt / T.tone)),
+              p: easeOut(clamp((rt - T.start) / T.resolve)),
+            };
+          }
+          if (S.phase === "hide") {
+            if (rt < T.hideOut) return { rt, tone: 1, p: 1 - easeInOut(rt / T.hideOut) };
+            return { rt, tone: 1 - easeInOut(clamp((rt - T.hideOut) / T.boil)), p: 0 };
+          }
+          return { rt, tone: 0, p: 0 };
+        }
+
+        function step(dt, now) {
+          S.time += dt * (reduce ? 0.15 : 1);
+          const t = S.time * 0.35;
+          const decay = Math.exp(-7 * dt);
+          ptr.speed *= decay;
+          ptr.vx *= decay;
+          ptr.vy *= decay;
+          ptr.glow += ((ptr.active ? 1 : 0) - ptr.glow) * clamp(dt * 7);
+
+          const R = 46 * (ptr.down ? 1.2 : 1);
+          const R2 = R * R;
+          const motion = clamp(ptr.speed / 700);
+          const push = (450 + 4600 * motion) * (ptr.down ? 1.2 : 1);
+          const generating = S.phase === "gen";
+          const revealing = S.phase === "reveal";
+          const damp = Math.exp(-5.5 * dt);
+          const enDecay = Math.exp(-1.5 * dt);
+          const smDecay = Math.exp(-0.9 * dt);
+          const { hx, hy, dx, dy, vx, vy, en, sx, sy, v, jit, sw, re } = D;
+
+          for (let i = 0; i < N; i++) {
+            let ax = -dx[i] * 55;
+            let ay = -dy[i] * 55;
+            if (ptr.active) {
+              // While generating the finger parts and drags the dots. Once the image is on its way
+              // it only lights them and, during the reveal, wipes the image in under the finger;
+              // pushing dots aside then would open holes in the picture.
+              const ddx = (generating ? hx[i] + dx[i] : hx[i]) - ptr.x;
+              const ddy = (generating ? hy[i] + dy[i] : hy[i]) - ptr.y;
+              const d2 = ddx * ddx + ddy * ddy;
+              if (d2 < R2) {
+                const d = Math.sqrt(d2) || 0.01;
+                const f = 1 - d / R;
+                const f2 = f * Math.sqrt(f) * jit[i];
+                en[i] = Math.min(1.4, en[i] + f2 * (0.6 + motion * 2.4) * dt * 4);
+                if (generating) {
+                  ax += ((ddx - ddy * sw[i] * 0.5) / d) * f2 * push + ptr.vx * f2 * 4;
+                  ay += ((ddy + ddx * sw[i] * 0.5) / d) * f2 * push + ptr.vy * f2 * 4;
+                  sx[i] = clamp(sx[i] + ptr.vx * f2 * dt * 0.9, -90, 90);
+                  sy[i] = clamp(sy[i] + ptr.vy * f2 * dt * 0.9, -90, 90);
+                } else if (revealing) {
+                  re[i] = Math.min(1, re[i] + f2 * (0.6 + motion * 2.4) * dt * 3.5);
+                }
+              }
+            }
+            vx[i] = (vx[i] + ax * dt) * damp;
+            vy[i] = (vy[i] + ay * dt) * damp;
+            dx[i] += vx[i] * dt;
+            dy[i] += vy[i] * dt;
+            en[i] *= enDecay;
+            sx[i] *= smDecay;
+            sy[i] *= smDecay;
+            v[i] = field(hx[i] - sx[i], hy[i] - sy[i], t);
+          }
+        }
+
+        function draw(now) {
+          const { W, H, DPR, pitch } = S;
+          const t = S.time * 0.35;
+          const { rt, tone, p } = timeline(now);
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
+          ctx.drawImage(backdrop, 0, 0, W, H);
+
+          const { hx, hy, dx, dy, en, v, b, r, edge, seed, th, re, ir, ig, ib, lum } = D;
+          const clk = S.time * 1.6;
+          const s0 = Math.floor(clk);
+          const fz = smooth(clk - s0);
+          const base = pitch * 0.5 * 0.66;
+          const sparks = [];
+
+          // Brightness and size for every dot, from the flow, a slow highlight wave, a stepped
+          // per-dot flicker and the energy the finger left behind.
+          for (let i = 0; i < N; i++) {
+            const lx = (hx[i] - W / 2) / 160;
+            const ly = (hy[i] - H / 2) / 160;
+            const lw =
+              (Math.sin(lx * 1.5 + t * 1.5) * 0.5 + 0.5) *
+              (Math.sin(ly * 1.25 - t * 1.1) * 0.5 + 0.5);
+            const hl = lw * lw;
+            const sd = seed[i] * 1000;
+            const rnd = hash(sd + s0 * 17.23) * (1 - fz) + hash(sd + (s0 + 1) * 17.23) * fz;
+            let bi = v[i] * (0.66 + hl * 0.55) * S.glow;
+            bi += (rnd - 0.5) * 0.22 * (0.25 + bi);
+            bi += en[i] * 0.75;
+            b[i] = bi;
+            r[i] = base * (0.14 + 0.86 * clamp(bi)) * (1 + hl * 0.3) * (1 + en[i] * 0.5) * edge[i];
+            if (!reduce && bi > 0.3 && hash(seed[i] * 733.1 + s0 * 3.71) > 0.994)
+              sparks.push(i, Math.sin(Math.PI * fz) * clamp(bi));
+          }
+
+          if (tone <= 0 && p <= 0) {
+            const { buckets, counts } = D;
+            counts.fill(0);
+            for (let i = 0; i < N; i++) {
+              if (r[i] < 0.25) continue;
+              const k = Math.min(NB - 1, Math.max(0, Math.floor(b[i] * NB)));
+              buckets[k][counts[k]++] = i;
+            }
+            for (let k = 0; k < NB; k++) {
+              const n = counts[k];
+              if (!n) continue;
+              const list = buckets[k];
+              ctx.fillStyle = bucketCss[k];
+              ctx.beginPath();
+              for (let j = 0; j < n; j++) {
+                const i = list[j];
+                const x = hx[i] + dx[i];
+                const y = hy[i] + dy[i];
+                ctx.moveTo(x + r[i], y);
+                ctx.arc(x, y, r[i], 0, TAU);
+              }
+              ctx.fill();
+            }
+          } else {
+            // Reveal / regenerate: the dots take the image's colours (a halftone of it), then each
+            // one swells into the real image when the sweep passes its threshold.
+            const cover = pitch * 0.74;
+            if (p > 0 || S.phase === "reveal") {
+              const m = mask.getContext("2d");
+              m.setTransform(DPR, 0, 0, DPR, 0, 0);
+              m.clearRect(0, 0, W, H);
+              m.fillStyle = "#000";
+              m.beginPath();
+              let any = false;
+              for (let i = 0; i < N; i++) {
+                const thi = th[i] - re[i] * 0.75;
+                const k = sstep(thi - 0.07, thi + 0.07, p);
+                if (k <= 0.001) continue;
+                const rr = cover * Math.pow(k, 0.7);
+                const x = hx[i] + dx[i] * (1 - k);
+                const y = hy[i] + dy[i] * (1 - k);
+                m.moveTo(x + rr, y);
+                m.arc(x, y, rr, 0, TAU);
+                any = true;
+              }
+              if (any) {
+                m.fill();
+                const L = layer.getContext("2d");
+                L.setTransform(1, 0, 0, 1, 0, 0);
+                L.globalCompositeOperation = "source-over";
+                L.clearRect(0, 0, layer.width, layer.height);
+                L.drawImage(S.scene, 0, 0);
+                L.globalCompositeOperation = "destination-in";
+                L.drawImage(mask, 0, 0);
+                ctx.drawImage(layer, 0, 0, W, H);
+              }
+            }
+            const stops = S.tone.stops;
+            for (let i = 0; i < N; i++) {
+              const thi = th[i] - re[i] * 0.75;
+              const k = sstep(thi - 0.07, thi + 0.07, p);
+              if (k >= 0.999) continue;
+              const fc = ramp(stops, b[i]);
+              const fa = sstep(0.1, 0.6, b[i]);
+              const halftone = pitch * 0.5 * (0.28 + 0.72 * Math.sqrt(lum[i]));
+              let rr = r[i] + (halftone - r[i]) * tone;
+              rr = rr + (cover - rr) * k;
+              if (rr < 0.25) continue;
+              let cr = fc[0] + (ir[i] * 1.08 + 8 - fc[0]) * tone;
+              let cg = fc[1] + (ig[i] * 1.08 + 8 - fc[1]) * tone;
+              let cb = fc[2] + (ib[i] * 1.08 + 8 - fc[2]) * tone;
+              const edgeGlow = 1 - Math.abs(p - thi) * 6.25;
+              if (edgeGlow > 0 && p > 0 && p < 1) {
+                const sd = seed[i] * 1000;
+                const fl = hash(sd + s0 * 17.23) * edgeGlow * 0.6;
+                cr += (255 - cr) * fl;
+                cg += (255 - cg) * fl;
+                cb += (255 - cb) * fl;
+              }
+              const a = (fa + (1 - fa) * tone) * (1 - k);
+              if (a < 0.01) continue;
+              ctx.globalAlpha = a;
+              ctx.fillStyle = `rgb(${cr | 0},${cg | 0},${cb | 0})`;
+              ctx.beginPath();
+              ctx.arc(hx[i] + dx[i] * (1 - k), hy[i] + dy[i] * (1 - k), rr, 0, TAU);
+              ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+          }
+
+          ctx.globalCompositeOperation = "lighter";
+          if (ptr.glow > 0.01 && S.phase === "gen") {
+            const R = 80;
+            const a = ptr.glow * (0.04 + 0.06 * clamp(ptr.speed / 700));
+            const c = S.tone.stops[3];
+            const g = ctx.createRadialGradient(ptr.x, ptr.y, 0, ptr.x, ptr.y, R);
+            g.addColorStop(0, `rgba(${c},${a})`);
+            g.addColorStop(1, `rgba(${c},0)`);
+            ctx.fillStyle = g;
+            ctx.fillRect(ptr.x - R, ptr.y - R, R * 2, R * 2);
+          }
+          if (tone < 1) {
+            for (let j = 0; j < sparks.length; j += 2) {
+              const i = sparks[j];
+              const a = sparks[j + 1] * (1 - tone);
+              if (a < 0.02) continue;
+              const g = pitch * 2.6;
+              ctx.globalAlpha = a;
+              ctx.drawImage(GLINT, hx[i] + dx[i] - g / 2, hy[i] + dy[i] - g / 2, g, g);
+            }
+          }
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
+
+          if (S.phase === "reveal" && rt > T.start + T.resolve + 0.25) finish();
+          else if (S.phase === "hide" && rt > T.hideOut + T.boil) backToGen();
+        }
+
+        function drawDone() {
+          ctx.setTransform(S.DPR, 0, 0, S.DPR, 0, 0);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
+          ctx.drawImage(S.scene, 0, 0, S.W, S.H);
+        }
+
+        let raf = 0;
+        let last = 0;
+        function tick(now) {
+          const dt = Math.min(0.05, (now - last) / 1000);
+          last = now;
+          if (S.W) {
+            step(dt, now);
+            draw(now);
+          }
+          if (S.phase !== "done") raf = requestAnimationFrame(tick);
+        }
+        function run() {
+          cancelAnimationFrame(raf);
+          last = performance.now();
+          raf = requestAnimationFrame(tick);
+        }
+
+        const ui = {
+          status: $("status"),
+          elapsed: $("elapsed"),
+          reply: $("reply"),
+          primary: $("primary"),
+        };
+        let timer = 0;
+        const tickTimer = () => {
+          ui.elapsed.textContent = `${Math.floor((performance.now() - S.startAt) / 1000)}s`;
+        };
+        function startTimer() {
+          S.startAt = performance.now();
+          clearInterval(timer);
+          timer = setInterval(tickTimer, 250);
+          tickTimer();
+        }
+        function sceneMeta() {
+          return S.custom
+            ? { alt: "Your image", reply: "Here's your image." }
+            : SCENES[S.sceneIndex];
+        }
+
+        function reveal() {
+          if (S.phase !== "gen" || !S.scene) return;
+          sampleImage();
+          for (let i = 0; i < N; i++) {
+            D.re[i] = 0;
+            D.th[i] = 0.07 + 0.86 * (0.45 * Math.random() + 0.55 * (1 - clamp(D.v[i])));
+          }
+          S.phase = "reveal";
+          S.phaseAt = performance.now();
+          clearInterval(timer);
+          ui.status.textContent = `Created in ${Math.max(1, Math.round((performance.now() - S.startAt) / 1000))}s`;
+          ui.elapsed.textContent = "";
+          ui.primary.disabled = true;
+        }
+        function finish() {
+          S.phase = "done";
+          drawDone();
+          frame.setAttribute("aria-label", sceneMeta().alt);
+          frame.setAttribute("aria-busy", "false");
+          ui.reply.textContent = sceneMeta().reply;
+          ui.reply.hidden = false;
+          ui.primary.textContent = "Regenerate";
+          ui.primary.disabled = false;
+        }
+        function regenerate() {
+          if (S.phase !== "done") return;
+          S.phase = "hide";
+          S.phaseAt = performance.now();
+          for (let i = 0; i < N; i++) D.re[i] = 0;
+          ui.reply.hidden = true;
+          ui.status.textContent = "Creating another take";
+          ui.primary.textContent = "Reveal image";
+          ui.primary.disabled = true;
+          frame.setAttribute("aria-label", "Image being created");
+          frame.setAttribute("aria-busy", "true");
+          startTimer();
+          run();
+        }
+        function backToGen() {
+          S.phase = "gen";
+          if (!S.custom) {
+            S.sceneIndex = (S.sceneIndex + 1) % SCENES.length;
+            setScene();
+          }
+          ui.primary.disabled = false;
+        }
+        function restart() {
+          S.phase = "gen";
+          ui.reply.hidden = true;
+          ui.status.textContent = "Creating image";
+          ui.primary.textContent = "Reveal image";
+          ui.primary.disabled = false;
+          frame.setAttribute("aria-label", "Image being created");
+          frame.setAttribute("aria-busy", "true");
+          startTimer();
+          if (S.W) build();
+          run();
+        }
+
+        function local(e) {
+          const r = frame.getBoundingClientRect();
+          return [e.clientX - r.left, e.clientY - r.top];
+        }
+        function move(e, fresh) {
+          const now = performance.now();
+          const [x, y] = local(e);
+          if (!ptr.active || (fresh && e.pointerType !== "mouse")) {
+            Object.assign(ptr, { x, y, vx: 0, vy: 0, speed: 0, t: now, active: true });
+            return;
+          }
+          const dt = Math.max(0.008, (now - ptr.t) / 1000);
+          const ivx = clamp((x - ptr.x) / dt, -1800, 1800);
+          const ivy = clamp((y - ptr.y) / dt, -1800, 1800);
+          ptr.vx = ptr.vx * 0.5 + ivx * 0.5;
+          ptr.vy = ptr.vy * 0.5 + ivy * 0.5;
+          ptr.speed = Math.hypot(ptr.vx, ptr.vy);
+          Object.assign(ptr, { x, y, t: now });
+        }
+        frame.addEventListener("pointerdown", (e) => {
+          frame.setPointerCapture(e.pointerId);
+          ptr.down = true;
+          move(e, true);
+        });
+        frame.addEventListener("pointermove", (e) => move(e, false));
+        const release = (e) => {
+          ptr.down = false;
+          if (e.pointerType !== "mouse") ptr.active = false;
+        };
+        frame.addEventListener("pointerup", release);
+        frame.addEventListener("pointercancel", release);
+        frame.addEventListener("pointerleave", () => {
+          ptr.active = false;
+          ptr.down = false;
+        });
+
+        ui.primary.addEventListener("click", () => (S.phase === "done" ? regenerate() : reveal()));
+        $("restart").addEventListener("click", restart);
+        $("pitch").addEventListener("input", (e) => {
+          S.pitch = Number(e.target.value);
+          $("pitchOut").textContent = e.target.value;
+          restart();
+        });
+        $("glow").addEventListener("input", (e) => {
+          S.glow = Number(e.target.value) / 100;
+          $("glowOut").textContent = e.target.value;
+        });
+        const segment = (id, apply) =>
+          $(id).addEventListener("click", (e) => {
+            const btn = e.target.closest("button");
+            if (!btn) return;
+            for (const b of $(id).children) b.setAttribute("aria-pressed", String(b === btn));
+            apply(btn.dataset);
+          });
+        segment("tone", (d) => {
+          setTone(d.tone);
+          if (S.phase === "done") drawDone();
+        });
+        segment("card", (d) => {
+          S.black = d.card === "black";
+          setTone(Object.keys(TONES).find((k) => TONES[k] === S.tone));
+          if (S.phase === "done") drawDone();
+        });
+        segment("aspect", (d) => {
+          frame.style.aspectRatio = d.aspect;
+          restart();
+        });
+        $("file").addEventListener("change", async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          S.custom = await createImageBitmap(file);
+          if (S.W) setScene();
+          restart();
+        });
+
+        setTone("silver");
+        new ResizeObserver(resize).observe(frame);
+        window.__flow = { S, D: () => D, ptr, reveal, regenerate, restart, step, draw };
+        restart();
+      })();
+    </script>
+  </body>
+</html>

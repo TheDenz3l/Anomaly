@@ -61,6 +61,37 @@ export default defineSchema({
     /** The thinking level picked last; every chat uses it until another is picked. */
     thinkingLevel: v.optional(v.string()),
     pushToken: v.optional(v.string()),
+    /** The user's own image model: an OpenAI-compatible images endpoint, its model ID and key. */
+    imageGen: v.optional(
+      v.object({
+        baseUrl: v.string(),
+        model: v.string(),
+        keyCipher: v.optional(v.string()),
+        keyHint: v.string(),
+        /** How the endpoint draws: OpenAI images API, chat completions, or Nano Banana's API. */
+        flavor: v.optional(
+          v.union(v.literal("openai"), v.literal("chat"), v.literal("nanobanana"))
+        ),
+        /** What's left on the key, as last read; `peak` is the most it held since the last top-up. */
+        balance: v.optional(
+          v.object({
+            status: v.union(v.literal("ok"), v.literal("unsupported"), v.literal("error")),
+            remaining: v.optional(v.number()),
+            total: v.optional(v.number()),
+            used: v.optional(v.number()),
+            peak: v.optional(v.number()),
+            unit: v.string(),
+            money: v.boolean(),
+            error: v.optional(v.string()),
+            checkedAt: v.number(),
+          })
+        ),
+        /** Images made this month (UTC) and what they cost, when the service says. */
+        usage: v.optional(v.object({ month: v.string(), images: v.number(), spent: v.number() })),
+        /** How long the current model takes, averaged over its recent images. */
+        timing: v.optional(v.object({ model: v.string(), avgMs: v.number(), n: v.number() })),
+      })
+    ),
   }).index("by_user", ["userId"]),
 
   providers: defineTable({

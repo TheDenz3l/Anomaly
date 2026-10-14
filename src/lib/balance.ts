@@ -1,4 +1,4 @@
-import type { Provider } from "@/lib/types";
+import type { ImageGenSetup, Provider } from "@/lib/types";
 
 /** Money with cents, so a balance draining reply by reply visibly moves. */
 export function formatAmount(n: number, currency = "USD"): string {
@@ -76,4 +76,36 @@ export function balanceLine(p: Provider): string | null {
 export function monthUsage(p: Provider, now = Date.now()) {
   const u = p.usage;
   return u && u.month === new Date(now).toISOString().slice(0, 7) ? u : null;
+}
+
+/** An image key's figure: money with its currency, or the service's own credits ("1,250 bananas"). */
+export function formatCredit(n: number, unit: string, money: boolean): string {
+  return money ? formatAmount(n, unit) : `${Math.round(n).toLocaleString("en-US")} ${unit}`;
+}
+
+/** "1,250 bananas left" or "$4.20 left" for the image key, or null when it isn't known. */
+export function imageBalanceLine(g: ImageGenSetup | null | undefined): string | null {
+  const b = g?.balance;
+  if (!b || b.status === "unsupported") return null;
+  if (b.remaining !== undefined) return `${formatCredit(b.remaining, b.unit, b.money)} left`;
+  if (b.used !== undefined) return `${formatCredit(b.used, b.unit, b.money)} used`;
+  return null;
+}
+
+/**
+ * Share of the image key's balance left, 0–1: of its limit when the service has one, otherwise of
+ * the most it held since the last top-up.
+ */
+export function imageBalanceFraction(g: ImageGenSetup | null | undefined): number | null {
+  const b = g?.balance;
+  if (!b || b.remaining === undefined) return null;
+  const of = b.total ?? b.peak;
+  if (!of) return null;
+  return Math.min(1, Math.max(0, b.remaining / of));
+}
+
+/** "About 58 s", "About 2 min". */
+export function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s < 90 ? `${Math.max(1, s)} s` : `${Math.round(s / 60)} min`;
 }
