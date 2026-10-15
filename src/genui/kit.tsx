@@ -3,6 +3,7 @@ import { Button, Skeleton } from "heroui-native";
 import { useState, type ReactNode } from "react";
 import { View, type DimensionValue } from "react-native";
 import { ActivityRow } from "@/components/chat/Activity";
+import { buildingName } from "@/lib/replyStatus";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { Display, Text } from "@/components/ui/Text";
 import type { CatalogName, CatalogProps } from "@/genui/schemas";
@@ -185,31 +186,6 @@ export function Pill({
   );
 }
 
-/** What the activity line says while each component's arguments stream in. */
-const building: Record<string, string> = {
-  MovieShowtimes: "showtimes",
-  MapCard: "the map",
-  Chart: "your chart",
-  Table: "a table",
-  Compare: "the comparison",
-  Timeline: "a timeline",
-  Form: "a form",
-  Stepper: "the steps",
-  Checklist: "your checklist",
-  ChoiceChips: "options",
-  Weather: "the forecast",
-  ProductGrid: "product picks",
-  Blocks: "your answer",
-  OpenUI: "your answer",
-  SubagentPlan: "a plan",
-  SubagentTimeline: "the workers",
-  ResearchPlan: "a research plan",
-  ResearchProgress: "the research run",
-  LocationRequest: "a location request",
-  MemoryConfirm: "a memory",
-  ImageGeneration: "your image",
-};
-
 /** Skeleton shown while a tool call's arguments are still streaming. Shape hints at what's coming. */
 export function GenSkeleton({ name }: { name: string }) {
   const shape: Record<string, "media" | "map" | "chart" | "rows" | "grid" | "compact"> = {
@@ -229,7 +205,7 @@ export function GenSkeleton({ name }: { name: string }) {
       className="overflow-hidden rounded-3xl bg-card p-4"
     >
       <View className="mb-4">
-        <ActivityRow orb="working" live label={`Building ${building[name] ?? "a card"}`} />
+        <ActivityRow orb="working" live label={`Building ${buildingName(name)}`} />
       </View>
       {kind === "media" ? (
         <View className="flex-row gap-3">

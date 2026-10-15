@@ -39,7 +39,14 @@ export async function clientMessage(ctx: QueryCtx, m: Doc<"messages">) {
     status: m.status,
     meta: m.meta,
     error: m.error,
+    startedAt: m.streamStartedAt ?? m._creationTime,
+    workedMs: m.workedMs,
   };
+}
+
+/** How long a reply's current run has been going, for the "Worked for 9s" line. */
+export function workedFor(m: Doc<"messages">): number {
+  return Math.max(0, Date.now() - (m.streamStartedAt ?? m._creationTime));
 }
 
 export async function threadMessages(ctx: QueryCtx, threadId: Id<"threads">, limit?: number) {
@@ -80,7 +87,7 @@ export async function stopStreaming(
   let n = 0;
   for (const m of recent) {
     if (m.status === "streaming" && m._id !== keep) {
-      await ctx.db.patch(m._id, { status: "stopped" });
+      await ctx.db.patch(m._id, { status: "stopped", workedMs: workedFor(m) });
       n++;
     }
   }

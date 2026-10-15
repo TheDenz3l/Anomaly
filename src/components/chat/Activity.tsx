@@ -14,7 +14,7 @@ import { springs } from "@/lib/motion";
 import { colors } from "@/lib/theme";
 
 /** Points right when closed and turns down to open, following the row's state. */
-function Disclosure({ open }: { open: boolean }) {
+export function Disclosure({ open }: { open: boolean }) {
   const reduced = useReducedMotion();
   const turn = useSharedValue(open ? 1 : 0);
   useEffect(() => {

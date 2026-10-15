@@ -105,6 +105,10 @@ export type Message = {
   createdAt: number;
   status: MessageStatus;
   meta?: ReplyMeta;
+  /** When the reply's current run started (a regenerate restarts it). */
+  startedAt?: number;
+  /** How long the reply took, once it finished or was stopped. */
+  workedMs?: number;
 };
 
 export type ThreadMode = "chat" | "research";

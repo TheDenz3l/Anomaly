@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { registryProfile } from "../ai/registry";
+import { workedFor } from "../lib/messages";
 import { loadSettings } from "../lib/settings";
 import { parseModelRef } from "../lib/util";
 import {
@@ -155,6 +156,7 @@ export const writeParts = internalMutation({
     const stopped = m.status === "stopped";
     const patch: Partial<Doc<"messages">> = { parts };
     if (status && !stopped) patch.status = status;
+    if (status && status !== "streaming" && !stopped) patch.workedMs = workedFor(m);
     if (meta) patch.meta = meta;
     if (error !== undefined) patch.error = error;
     if (searchText !== undefined) patch.searchText = searchText;

@@ -196,6 +196,8 @@ export default defineSchema({
     runId: v.optional(v.string()),
     /** When the current run started streaming (regenerate restarts it). */
     streamStartedAt: v.optional(v.number()),
+    /** How long the run took, set when it finishes or is stopped: "Worked for 9s". */
+    workedMs: v.optional(v.number()),
   })
     .index("by_thread", ["threadId"])
     .index("by_user", ["userId"])

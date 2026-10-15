@@ -7,6 +7,9 @@ import {
   ZoomIn,
   ZoomOut,
   Easing,
+  withSpring,
+  withTiming,
+  type EntryExitAnimationFunction,
 } from "react-native-reanimated";
 
 /**
@@ -83,3 +86,30 @@ export const replyIn = FadeIn.duration(320);
 export const cardIn = FadeIn.duration(280);
 /** The new-chat orb making way for the first message. */
 export const emptyOut = FadeOut.duration(200);
+
+/** Its glyph swapping: the old one shrinks away while the new one grows in with a small twist. */
+const glyphEnter: EntryExitAnimationFunction = () => {
+  "worklet";
+  return {
+    initialValues: { opacity: 0, transform: [{ scale: 0.35 }, { rotate: "-35deg" }] },
+    animations: {
+      opacity: withTiming(1, { duration: 160 }),
+      transform: [
+        { scale: withSpring(1, { damping: 13, stiffness: 260, mass: 0.7 }) },
+        { rotate: withSpring("0deg", { damping: 16, stiffness: 220 }) },
+      ],
+    },
+  };
+};
+const glyphExit: EntryExitAnimationFunction = () => {
+  "worklet";
+  return {
+    initialValues: { opacity: 1, transform: [{ scale: 1 }] },
+    animations: {
+      opacity: withTiming(0, { duration: 150 }),
+      transform: [{ scale: withTiming(0.35, { duration: 190 }) }],
+    },
+  };
+};
+export const glyphIn = web ? ZoomIn.duration(220) : glyphEnter;
+export const glyphOut = web ? ZoomOut.duration(150) : glyphExit;

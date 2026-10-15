@@ -472,6 +472,7 @@ export const regenerate = mutation({
       status: "streaming",
       error: undefined,
       searchText: undefined,
+      workedMs: undefined,
       meta: {
         modelRef: thread.modelRef,
         levelRequested: thread.reasoningLevel,
