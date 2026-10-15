@@ -5,8 +5,21 @@ import { domainOf } from "@/lib/links";
 import { hsl, hueFrom } from "@/lib/theme";
 import { Text } from "./Text";
 
-/** Site favicon over a letter badge; the letter stays when the icon can't load. */
-export function Favicon({ url, size = 20, ring }: { url: string; size?: number; ring?: boolean }) {
+/**
+ * Site favicon over a letter badge; the letter stays when the icon can't load. `fill` lets the icon
+ * cover the whole circle, for sizes too small to inset it.
+ */
+export function Favicon({
+  url,
+  size = 20,
+  ring,
+  fill,
+}: {
+  url: string;
+  size?: number;
+  ring?: boolean;
+  fill?: boolean;
+}) {
   const domain = domainOf(url);
   const hue = hueFrom(domain);
   const [failed, setFailed] = useState(false);
@@ -40,9 +53,9 @@ export function Favicon({ url, size = 20, ring }: { url: string; size?: number; 
           accessibilityIgnoresInvertColors
           style={{
             position: "absolute",
-            width: size * 0.72,
-            height: size * 0.72,
-            borderRadius: size * 0.18,
+            width: fill ? size : size * 0.72,
+            height: fill ? size : size * 0.72,
+            borderRadius: fill ? size / 2 : size * 0.18,
           }}
         />
       )}

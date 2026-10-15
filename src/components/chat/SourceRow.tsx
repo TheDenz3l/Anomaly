@@ -38,13 +38,3 @@ export function SourceRow({ source, index }: { source: Source; index: number }) 
     </Tap>
   );
 }
-
-/** Short publisher name for inline citations: "electricbikereview.com" → "electricbikereview". */
-export function shortName(url: string): string {
-  const labels = domainOf(url).split(".");
-  // The label before the suffix, stepping past short second-level suffixes like "co" or "gc".
-  let i = labels.length - 2;
-  if (i > 0 && labels[i].length <= 3) i -= 1;
-  const name = labels[Math.max(0, i)];
-  return name.length > 16 ? `${name.slice(0, 15)}…` : name;
-}

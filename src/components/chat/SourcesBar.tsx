@@ -9,6 +9,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { reportText, tableMarkdown } from "@/lib/artifacts";
+import { stripCitations } from "@/lib/citations";
 import { fadeIn, popIn } from "@/lib/motion";
 import { findModel, useApp } from "@/lib/store";
 import { colors } from "@/lib/theme";
@@ -20,7 +21,7 @@ export function plainText(message: Message): string {
   return message.parts
     .map((p) =>
       p.type === "text"
-        ? p.text.replace(/\*\*/g, "").replace(/\s?\[\d+\]/g, "")
+        ? stripCitations(p.text.replace(/\*\*/g, ""))
         : p.type === "component"
           ? (p.name === "Table" && tableMarkdown(p.props)) || p.fallbackText
           : ""

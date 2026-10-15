@@ -13,6 +13,7 @@ import {
   type RowLook,
   type ThreadMenuTarget,
 } from "@/components/navigation/ThreadMenu";
+import { stripCitations } from "@/lib/citations";
 import { fadeIn, fadeOut, reflow } from "@/lib/motion";
 import { goBack } from "@/lib/nav";
 import { findModel, useApp } from "@/lib/store";
@@ -24,7 +25,7 @@ function preview(list: Message[] | undefined): string {
   const texts = (last?.parts ?? []).filter((p) => p.type === "text");
   const text = texts[texts.length - 1];
   return text && text.type === "text"
-    ? text.text.replace(/\*\*|###\s?|\[\d+\]/g, "").split("\n")[0]
+    ? stripCitations(text.text.replace(/\*\*|###\s?/g, "")).split("\n")[0]
     : "";
 }
 

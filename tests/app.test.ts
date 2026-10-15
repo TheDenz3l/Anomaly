@@ -55,6 +55,8 @@ vi.mock("@/lib/convex", () => ({
 const { useApp, mergeArtifacts } = await import("@/lib/store");
 const { reportText, tableMarkdown } = await import("@/lib/artifacts");
 const { isOpenableUrl, openLink, trustedImageUrls } = await import("@/lib/links");
+const { citationNumbers, citationsAfterPunctuation, isCitationRun, publisherName, stripCitations } =
+  await import("@/lib/citations");
 const { Linking } = await import("react-native");
 
 const initial = useApp.getState();
@@ -343,5 +345,57 @@ describe("links", () => {
     expect(trusted.has("https://cdn.example/p.jpg")).toBe(true);
     expect(trusted.has("https://site.example/x.png")).toBe(true);
     expect(trusted.has("https://evil.example/leak.png?d=secret")).toBe(false);
+  });
+});
+
+describe("citations", () => {
+  it("reads every way a reply writes them as one run", () => {
+    // verifyCitations writes several sources as [3, 5]; models also chain or use ranges.
+    for (const run of [" [1]", "[1, 7]", " [3, 5, 7, 9]", "[1][7]", " [1] [7]", "[2–4]", "[1; 2]"])
+      expect(isCitationRun(run)).toBe(true);
+    for (const text of ["[a]", "[1, b]", "[]", "[2023 report]"])
+      expect(isCitationRun(text)).toBe(false);
+    expect(citationNumbers("[3, 5][5] [1]")).toEqual([3, 5, 1]);
+    expect(citationNumbers("[2–4]")).toEqual([2, 3, 4]);
+  });
+
+  it("moves the pill after the sentence's punctuation", () => {
+    expect(citationsAfterPunctuation("Newark, New Jersey [1, 7]. He was")).toBe(
+      "Newark, New Jersey.[1, 7] He was"
+    );
+    expect(citationsAfterPunctuation("the 280 [3][5], with Moose [9].")).toBe(
+      "the 280,[3][5] with Moose.[9]"
+    );
+    expect(citationsAfterPunctuation("Rated R [2] is his")).toBe("Rated R [2] is his");
+  });
+
+  it("leaves no markers in plain text", () => {
+    expect(stripCitations("Newark, New Jersey [1, 7]. Big Moose 280 [3][5].")).toBe(
+      "Newark, New Jersey. Big Moose 280."
+    );
+  });
+
+  it("names the publisher the way it styles itself", () => {
+    expect(
+      publisherName("https://www.youtube.com/watch?v=x", "Qua Louie - Lotta Bars - YouTube")
+    ).toBe("YouTube");
+    expect(
+      publisherName("https://genius.com/x", "Qua Louie – Free the Army Lyrics | Genius Lyrics")
+    ).toBe("Genius");
+    expect(
+      publisherName(
+        "https://soundcloud.com/x",
+        "Stream XXL by Big Moose 280 | Listen online for free on SoundCloud"
+      )
+    ).toBe("SoundCloud");
+    expect(
+      publisherName("https://www.investing.com/news/x", "Ed Sheeran tour news | Investing.com")
+    ).toBe("Investing.com");
+    expect(
+      publisherName("https://www.washingtonpost.com/x", "Ed Sheeran - The Washington Post")
+    ).toBe("Washington Post");
+    // No name in the title: the domain's own, capitalised, short ones as initials.
+    expect(publisherName("https://www.complex.com/music/x", "Best albums of 2026")).toBe("Complex");
+    expect(publisherName("https://www.bbc.co.uk/news/x", "Headline")).toBe("BBC");
   });
 });

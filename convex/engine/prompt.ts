@@ -121,7 +121,7 @@ export function systemPrompt(o: PromptOptions): string {
         "- You may also have built-in web search. If it isn't available or comes back empty, use web_search; never say you can't browse."
       );
     lines.push(
-      "- Cite sources inline as [n] using the numbers given in search results, right after the claim they support. Only cite numbers you were given.",
+      "- Cite sources inline as [n] using the numbers given in search results, at the end of the sentence they support; several sources for one sentence go together as [2, 5]. Each shows as a small source chip, so cite a sentence once rather than after every clause. Only cite numbers you were given.",
       `- ${UNTRUSTED_RULE}`
     );
   }

@@ -14,6 +14,12 @@ import { IMAGE_URL, ImageGallery, VideoCard, youtubeId, type ImageRef } from "./
 import { Text } from "@/components/ui/Text";
 import { CitationPill } from "./Citations";
 import { useSmoothText } from "./useSmoothText";
+import {
+  CITATION_RUN,
+  citationNumbers,
+  citationsAfterPunctuation,
+  isCitationRun,
+} from "@/lib/citations";
 import { domainOf, openLink, trimUrl } from "@/lib/links";
 
 /** Drops a trailing unmatched `**` so half-streamed bold doesn't flash raw asterisks. */
@@ -32,13 +38,13 @@ function balance(text: string): string {
 function settle(text: string): string {
   return (
     text
-      // A citation still arriving: " [1".
-      .replace(/\s?\[\d*$/, "")
+      // A citation still arriving: " [1", " [1, 7".
+      .replace(/\s?\[[\d\s,;–-]*$/, "")
       // A photo waits whole; it shows as a picture once its address is complete.
       .replace(/!\[[^\]\n]*(?:\]\([^)\s]*|\])?$/, "")
       // A link still arriving reads as its label, already bold like the link it becomes.
       .replace(/\[([^\]\n]*)(?:\]\([^)\s]*|\])?$/, (all, label: string) =>
-        !label ? "" : /^\d+$/.test(label) ? all : `**${label}**`
+        !label ? "" : /^[\d\s,;–-]+$/.test(label) ? all : `**${label}**`
       )
       // A bare address waits until it is whole: it may become a link, a photo or a video.
       .replace(/(^|\s)(?:https?:\/\/\S*|h(?:t(?:t(?:p(?:s?:?\/{0,2})?)?)?)?)$/, "$1")
@@ -49,6 +55,18 @@ function settle(text: string): string {
   );
 }
 
+/** Links, bare URLs, bold, italic, code and citation runs, in the order they're tried. */
+const INLINE = new RegExp(
+  `(${[
+    /\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)/.source,
+    /https?:\/\/[^\s<>()\]]+/.source,
+    /\*\*[^*]+\*\*/.source,
+    /\*[^*\s][^*\n]*?\*/.source,
+    /`[^`]+`/.source,
+    CITATION_RUN,
+  ].join("|")})`,
+  "g"
+);
 const LINK = /^\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)$/;
 const BARE_URL = /^https?:\/\/[^\s<>()\]]+$/;
 
@@ -85,10 +103,8 @@ function LinkRun({ label, url, mask }: { label: ReactNode; url: string; mask?: b
 
 /** `mask` lays the same text out invisibly, with only the link runs filled in. */
 function inline(text: string, keyBase: string, mask = false): ReactNode[] {
-  return balance(text)
-    .split(
-      /(\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()\]]+|\*\*[^*]+\*\*|\*[^*\s][^*\n]*?\*|`[^`]+`|(?:\s?\[\d+\])+)/g
-    )
+  return citationsAfterPunctuation(balance(text))
+    .split(INLINE)
     .filter(Boolean)
     .map((seg, i) => {
       const key = `${keyBase}-${i}`;
@@ -130,15 +146,8 @@ function inline(text: string, keyBase: string, mask = false): ReactNode[] {
           </RNText>
         );
       }
-      if (/^(\s?\[\d+\])+$/.test(seg)) {
-        const nums = [...seg.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
-        return mask ? (
-          <View key={key} style={{ opacity: 0 }}>
-            <CitationPill nums={nums} />
-          </View>
-        ) : (
-          <CitationPill key={key} nums={nums} />
-        );
+      if (isCitationRun(seg)) {
+        return <CitationPill key={key} nums={citationNumbers(seg)} hidden={mask} />;
       }
       return <Fragment key={key}>{seg}</Fragment>;
     });
@@ -491,7 +500,8 @@ const BlockView = memo(function BlockView({
 
 /**
  * Chat Markdown: headings, paragraphs, bullets and numbered lists (nested), quotes, tables, code
- * fences, rules, bold, italic, code, [label](https://…) links and [n] citations. While streaming,
+ * fences, rules, bold, italic, code, [label](https://…) links and [n] / [n, m] citations, which show
+ * as source pills. While streaming,
  * text is revealed smoothly and only the block still growing re-renders.
  */
 export function Markdown({

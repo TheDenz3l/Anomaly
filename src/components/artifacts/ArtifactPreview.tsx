@@ -7,6 +7,7 @@ import { catalogComponents } from "@/genui/components";
 import type { GenProps } from "@/genui/kit";
 import type { CatalogName } from "@/genui/schemas";
 import { reportText, type Artifact } from "@/lib/artifacts";
+import { stripCitations } from "@/lib/citations";
 import { useComponentEvents } from "@/lib/store";
 import { colors } from "@/lib/theme";
 
@@ -17,9 +18,7 @@ const RENDER_W = 360;
 const noop = () => {};
 
 function ReportPage({ artifact }: { artifact: Extract<Artifact, { type: "report" }> }) {
-  const body = reportText(artifact.message)
-    .replace(/\s?\[\d+\]/g, "")
-    .slice(0, 700);
+  const body = stripCitations(reportText(artifact.message)).slice(0, 700);
   return (
     <View className="rounded-3xl bg-card px-5 pb-5 pt-5">
       <View className="mb-3 flex-row items-center gap-2">
