@@ -18,13 +18,13 @@ export type VisionCandidate = {
 };
 
 /** Ids that take images but don't chat about them (generators, speech, embeddings). */
-const NOT_CHAT =
+export const NOT_CHAT =
   /embed|tts|whisper|transcri|speech|audio|realtime|moderation|dall-e|imagen|[-_/]image([-_.\d]|$)|rerank|guard/i;
 /** Fast, cheap tiers. */
 const QUICK =
   /(^|[-_/.:\s])(flash|flashx|mini|haiku|lite|nano|small|fast|air|turbo|luna|instant)($|[-_/.:\s\d])/i;
 /** Flagship tiers: slow and costly for a job a fast model does as well. */
-const PREMIUM =
+export const PREMIUM =
   /(^|[-_/.:\s])(opus|fable|ultra|max|astra|pro|prime|heavy|large|sonnet)($|[-_/.:\s\d])/i;
 /** Families known to read screenshots and small text well. */
 const KNOWN = /gemini|gpt-?\d|claude|grok|qwen[\w.-]*vl|pixtral|llama-4/i;

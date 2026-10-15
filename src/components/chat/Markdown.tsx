@@ -20,7 +20,9 @@ import {
   citationsAfterPunctuation,
   isCitationRun,
 } from "@/lib/citations";
+import { ENTITY, isEntity, parseEntity, settleEntity, type EntityRef } from "@/lib/entities";
 import { domainOf, openLink, trimUrl } from "@/lib/links";
+import { useEntityOpener } from "./entityContext";
 
 /** Drops a trailing unmatched `**` so half-streamed bold doesn't flash raw asterisks. */
 function balance(text: string): string {
@@ -37,7 +39,8 @@ function balance(text: string): string {
  */
 function settle(text: string): string {
   return (
-    text
+    // A marked name still arriving reads as the name so far: "[[Isaiah Ra" → "Isaiah Ra".
+    settleEntity(text)
       // A citation still arriving: " [1", " [1, 7".
       .replace(/\s?\[[\d\s,;–-]*$/, "")
       // A photo waits whole; it shows as a picture once its address is complete.
@@ -55,9 +58,10 @@ function settle(text: string): string {
   );
 }
 
-/** Links, bare URLs, bold, italic, code and citation runs, in the order they're tried. */
+/** Marked names, links, bare URLs, bold, italic, code and citation runs, in the order tried. */
 const INLINE = new RegExp(
   `(${[
+    ENTITY,
     /\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)/.source,
     /https?:\/\/[^\s<>()\]]+/.source,
     /\*\*[^*]+\*\*/.source,
@@ -101,6 +105,25 @@ function LinkRun({ label, url, mask }: { label: ReactNode; url: string; mask?: b
   );
 }
 
+/**
+ * A marked name: the words as written, in the weight around them, with a dotted underline (drawn
+ * by RichText) and a tap that opens its profile. Plain text where nothing opens profiles.
+ */
+function EntityRun({ entity, mask }: { entity: EntityRef; mask?: boolean }) {
+  const open = useEntityOpener();
+  if (!open) return <>{entity.name}</>;
+  if (mask) return <RNText style={styles.maskEntity}>{entity.name}</RNText>;
+  return (
+    <RNText
+      accessibilityRole="button"
+      accessibilityHint="Opens a profile"
+      onPress={() => open(entity)}
+    >
+      {entity.name}
+    </RNText>
+  );
+}
+
 /** `mask` lays the same text out invisibly, with only the link runs filled in. */
 function inline(text: string, keyBase: string, mask = false): ReactNode[] {
   return citationsAfterPunctuation(balance(text))
@@ -108,6 +131,8 @@ function inline(text: string, keyBase: string, mask = false): ReactNode[] {
     .filter(Boolean)
     .map((seg, i) => {
       const key = `${keyBase}-${i}`;
+      const entity = isEntity(seg) ? parseEntity(seg) : null;
+      if (entity) return <EntityRun key={key} entity={entity} mask={mask} />;
       const link = seg.match(LINK);
       if (link) return <LinkRun key={key} label={link[1]} url={link[2]} mask={mask} />;
       if (BARE_URL.test(seg)) {
@@ -160,11 +185,12 @@ function inline(text: string, keyBase: string, mask = false): ReactNode[] {
 const DOT_BAND = [2, 2 + 1 / 3];
 const DOT_STEP = 10 / 3;
 const DOT_SIZE = 4 / 3;
-const HAS_LINK = /\]\(https?:\/\/|https?:\/\//;
+/** Text with something the dots go under: a link or a marked name. */
+const UNDERLINED = /\]\(https?:\/\/|https?:\/\/|\[\[[^\]\n]+\]\]/;
 
 /**
- * Evenly spaced dot columns. The mask keeps only a thin band under each link, which cuts the
- * columns into a row of dots wherever that link's text runs, on every line it wraps to.
+ * Evenly spaced dot columns. The mask keeps only a thin band under each link and marked name,
+ * which cuts the columns into a row of dots wherever its text runs, on every line it wraps to.
  */
 function Dots() {
   return (
@@ -198,7 +224,7 @@ function RichText({
   return (
     <View style={style}>
       <Text className={className}>{inline(text, keyBase)}</Text>
-      {!live && HAS_LINK.test(text) ? (
+      {!live && UNDERLINED.test(text) ? (
         <MaskedView
           pointerEvents="none"
           accessibilityElementsHidden
@@ -237,13 +263,17 @@ const FENCE = /^\s*```/;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
 function cells(row: string): string[] {
-  return row
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .replace(/\\\|/g, "\u0000")
-    .split("|")
-    .map((c) => c.replace(/\u0000/g, "|").trim());
+  return (
+    row
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .replace(/\\\|/g, "\u0000")
+      // A marked name's fields are split by pipes too; they stay in their cell.
+      .replace(/\[\[[^\]\n]+\]\]/g, (m) => m.replace(/\|/g, "\u0000"))
+      .split("|")
+      .map((c) => c.replace(/\u0000/g, "|").trim())
+  );
 }
 
 /** Splits text into headings, paragraphs, lists, quotes, tables, code fences and rules. */
@@ -411,9 +441,13 @@ const BlockView = memo(function BlockView({
     const [, hashes, text] = raw.match(HEADING)!;
     const size = HEADING_SIZE[hashes.length - 1] ?? "text-base leading-6";
     return (
-      <Text weight="bold" className={`${size} ${index > 0 ? "mt-2" : ""}`}>
-        {inline(text.replace(/\*\*/g, ""), String(index))}
-      </Text>
+      <RichText
+        text={text.replace(/\*\*/g, "")}
+        keyBase={String(index)}
+        className={`font-body-bold ${size}`}
+        style={index > 0 ? { marginTop: 8 } : undefined}
+        live={live}
+      />
     );
   }
   if (kind === "rule") return <View className="my-1 h-px bg-raised" />;
@@ -500,8 +534,8 @@ const BlockView = memo(function BlockView({
 
 /**
  * Chat Markdown: headings, paragraphs, bullets and numbered lists (nested), quotes, tables, code
- * fences, rules, bold, italic, code, [label](https://…) links and [n] / [n, m] citations, which show
- * as source pills. While streaming,
+ * fences, rules, bold, italic, code, [label](https://…) links, [n] / [n, m] citations, which show
+ * as source pills, and [[Name|kind|what it is]] names, which open a profile. While streaming,
  * text is revealed smoothly and only the block still growing re-renders.
  */
 export function Markdown({
@@ -548,5 +582,6 @@ const styles = StyleSheet.create({
     textDecorationColor: "#000",
   },
   maskArrow: { fontSize: 13, color: "transparent", textDecorationLine: "none" },
+  maskEntity: { color: "transparent", textDecorationLine: "underline", textDecorationColor: "#000" },
   maskCopy: { position: "absolute", top: 0, left: 0, right: 0 },
 });

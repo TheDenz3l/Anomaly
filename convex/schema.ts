@@ -3,6 +3,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import {
   vAgentRole,
+  vEntity,
   vFeatures,
   vHeader,
   vProviderAuth,
@@ -164,6 +165,15 @@ export default defineSchema({
     ts: v.number(),
   }).index("by_user_model", ["userId", "providerId", "modelId"]),
 
+  /** How soon a model starts writing at low effort, from the speed probe (engine/speed.ts). */
+  modelSpeeds: defineTable({
+    userId: v.id("users"),
+    providerId: v.string(),
+    modelId: v.string(),
+    firstTextMs: v.number(),
+    at: v.number(),
+  }).index("by_user_model", ["userId", "providerId", "modelId"]),
+
   threads: defineTable({
     userId: v.id("users"),
     title: v.string(),
@@ -177,9 +187,19 @@ export default defineSchema({
     preview: v.optional(v.string()),
     /** When the user pinned the chat to the top of Recents. */
     pinnedAt: v.optional(v.number()),
+    /**
+     * A profile chat, opened by tapping a name in a reply: the chat it was opened from (the first
+     * chat, for names tapped inside another profile). Never listed; it lives in its sheet.
+     */
+    parentThreadId: v.optional(v.id("threads")),
+    entity: v.optional(vEntity),
+    /** The name, kind and hint folded, so tapping the same name again reopens this profile. */
+    entityKey: v.optional(v.string()),
   })
     .index("by_user_updated", ["userId", "updatedAt"])
     .index("by_incognito", ["incognito", "updatedAt"])
+    .index("by_parent", ["parentThreadId"])
+    .index("by_user_entity", ["userId", "entityKey"])
     .searchIndex("search_title", { searchField: "title", filterFields: ["userId"] }),
 
   messages: defineTable({

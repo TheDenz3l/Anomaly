@@ -16,6 +16,7 @@ import { OPENUI_ANSWER_NOTE, OpenUICard } from "../ai/openui";
 import type { PhotoFinder } from "../web/photos";
 import { OPENUI_FENCE, type PhotoPick } from "../../src/genui/openui/library";
 import { CARD_TOPICS, CardPlacer, type Placed } from "./placement";
+import { plainNames } from "./profile";
 
 /**
  * The agent loop: stream → render text/thinking/cards live → run tools → feed results back,
@@ -387,11 +388,12 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
         const now = Date.now();
         if (now - (painted.get(id) ?? 0) < PAINT_MS) return;
         painted.set(id, now);
-        setProps(id, { source: card.update(ev.body) });
+        // Names are marked in prose, not in cards; one slipped into a card shows as its name.
+        setProps(id, { source: card.update(plainNames(ev.body)) });
         return;
       }
       open = null;
-      const read = card.finish(ev.body);
+      const read = card.finish(plainNames(ev.body));
       sink.update(id, (p) =>
         p.type !== "component"
           ? p

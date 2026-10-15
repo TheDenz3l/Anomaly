@@ -10,6 +10,7 @@ import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { reportText, tableMarkdown } from "@/lib/artifacts";
 import { stripCitations } from "@/lib/citations";
+import { stripEntities } from "@/lib/entities";
 import { fadeIn, popIn } from "@/lib/motion";
 import { findModel, useApp } from "@/lib/store";
 import { colors } from "@/lib/theme";
@@ -21,7 +22,7 @@ export function plainText(message: Message): string {
   return message.parts
     .map((p) =>
       p.type === "text"
-        ? stripCitations(p.text.replace(/\*\*/g, ""))
+        ? stripEntities(stripCitations(p.text.replace(/\*\*/g, "")))
         : p.type === "component"
           ? (p.name === "Table" && tableMarkdown(p.props)) || p.fallbackText
           : ""
@@ -59,7 +60,16 @@ function tokens(n: number) {
 }
 
 /** Always last in a reply: stacked favicons, "N sources", then share/save/regenerate/copy (PRD §3.2). */
-export function SourcesBar({ message, sources }: { message: Message; sources: Source[] }) {
+export function SourcesBar({
+  message,
+  sources,
+  onRegenerate,
+}: {
+  message: Message;
+  sources: Source[];
+  /** For a reply outside the open chat (a profile sheet's): regenerates it, and hides Save. */
+  onRegenerate?: (messageId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const saved = useApp((s) => s.savedMessageIds.includes(message.id));
@@ -146,16 +156,20 @@ export function SourcesBar({ message, sources }: { message: Message; sources: So
           active={speaking}
         />
         <ActionIcon icon="share-outline" label="Share" onPress={share} />
-        <ActionIcon
-          icon={saved ? "bookmark" : "bookmark-outline"}
-          label={saved ? "Unsave" : "Save"}
-          onPress={() => toggleSaved(message.id)}
-          active={saved}
-        />
+        {onRegenerate ? null : (
+          <ActionIcon
+            icon={saved ? "bookmark" : "bookmark-outline"}
+            label={saved ? "Unsave" : "Save"}
+            onPress={() => toggleSaved(message.id)}
+            active={saved}
+          />
+        )}
         <ActionIcon
           icon="refresh"
           label="Regenerate"
-          onPress={() => !busy && regenerate(message.id)}
+          onPress={() =>
+            onRegenerate ? onRegenerate(message.id) : !busy && regenerate(message.id)
+          }
         />
         <ActionIcon icon="copy-outline" label="Copy" onPress={copy} />
       </View>

@@ -1,5 +1,7 @@
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
+
+type Limit = { key: string; limit: number; windowMs: number };
 
 /**
  * Counts one use against several fixed-window limits at once: allowed only if every limit has room,
@@ -10,24 +12,30 @@ export const hit = internalMutation({
   args: {
     limits: v.array(v.object({ key: v.string(), limit: v.number(), windowMs: v.number() })),
   },
-  handler: async (ctx, { limits }) => {
-    const now = Date.now();
-    const rows = await Promise.all(
-      limits.map(async (l) => {
-        const row = await ctx.db
-          .query("rateLimits")
-          .withIndex("by_key", (q) => q.eq("key", l.key))
-          .first();
-        const fresh = !row || now - row.windowStart >= l.windowMs;
-        return { l, row, count: fresh ? 0 : row.count, start: fresh ? now : row.windowStart };
-      })
-    );
-    const full = rows.find((r) => r.count >= r.l.limit);
-    if (full) return { ok: false as const, retryAfterMs: full.start + full.l.windowMs - now };
-    for (const r of rows) {
-      if (r.row) await ctx.db.patch(r.row._id, { windowStart: r.start, count: r.count + 1 });
-      else await ctx.db.insert("rateLimits", { key: r.l.key, windowStart: now, count: 1 });
-    }
-    return { ok: true as const };
-  },
+  handler: async (ctx, { limits }) => await countHit(ctx, limits),
 });
+
+/** hit, for a mutation that's already running. */
+export async function countHit(
+  ctx: MutationCtx,
+  limits: Limit[]
+): Promise<{ ok: true } | { ok: false; retryAfterMs: number }> {
+  const now = Date.now();
+  const rows = await Promise.all(
+    limits.map(async (l) => {
+      const row = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_key", (q) => q.eq("key", l.key))
+        .first();
+      const fresh = !row || now - row.windowStart >= l.windowMs;
+      return { l, row, count: fresh ? 0 : row.count, start: fresh ? now : row.windowStart };
+    })
+  );
+  const full = rows.find((r) => r.count >= r.l.limit);
+  if (full) return { ok: false as const, retryAfterMs: full.start + full.l.windowMs - now };
+  for (const r of rows) {
+    if (r.row) await ctx.db.patch(r.row._id, { windowStart: r.start, count: r.count + 1 });
+    else await ctx.db.insert("rateLimits", { key: r.l.key, windowStart: now, count: 1 });
+  }
+  return { ok: true as const };
+}

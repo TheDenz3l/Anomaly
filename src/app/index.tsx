@@ -2,6 +2,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Composer } from "@/components/chat/Composer";
 import { EmptyState } from "@/components/chat/EmptyState";
+import { EntityProvider } from "@/components/chat/EntitySheet";
 import { AssistantMessage, UserMessage } from "@/components/chat/Messages";
 import { NavPanel } from "@/components/navigation/NavPanel";
 import { SideDrawer } from "@/components/navigation/SideDrawer";
@@ -232,105 +233,107 @@ export default function ChatScreen() {
   return (
     <SideDrawer panel={<NavPanel />}>
       <View className="flex-1 bg-background">
-        <KeyboardChatScrollView
-          ref={scroller}
-          // ChatGPT-style: lift the conversation with the keyboard only when reading the latest
-          // message. The empty state recentres itself instead of scrolling away.
-          keyboardLiftBehavior={count === 0 ? "never" : "whenAtEnd"}
-          offset={keyboardOffset}
-          blankSpace={blank}
-          // A new chat is a fixed screen, not a list: the keyboard inset must not make the orb
-          // draggable. Tapping the empty space still puts the keyboard away.
-          scrollEnabled={count > 0}
-          showsVerticalScrollIndicator={count > 0}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          onLayout={(e) => {
-            viewH.current = e.nativeEvent.layout.height;
-            syncBlank();
-          }}
-          onScroll={(e) => {
-            offsetY.current = e.nativeEvent.contentOffset.y;
-            if (Date.now() < smoothUntil.current) return;
-            trackScroll();
-          }}
-          // Scroll events are ignored while a smooth scroll runs; where it lands decides.
-          onMomentumScrollEnd={trackScroll}
-          onScrollBeginDrag={() => {
-            dragging.current = true;
-            stick.current = false;
-          }}
-          onScrollEndDrag={() => {
-            dragging.current = false;
-            trackScroll();
-          }}
-          scrollEventThrottle={32}
-          onContentSizeChange={(_, h) => {
-            contentH.current = h;
-            syncBlank();
-            // Content that shrank or emptied (a new chat, a regenerated reply) can leave the end in view.
-            if (away && (count === 0 || distanceToEnd() <= FOLLOW_SLACK * 2)) setAway(false);
-            // Follow new content while a thread settles in. A parked send stays put while the
-            // reply streams below it; growth the user caused (opening a thinking block,
-            // expanding a card) never drags the view either.
-            const now = Date.now();
-            if (
-              anchor.current ||
-              dragging.current ||
-              !stick.current ||
-              count === 0 ||
-              now < smoothUntil.current
-            )
-              return;
-            if (useApp.getState().streaming || now < settleUntil.current)
-              scroller.current?.scrollToEnd({ animated: false });
-          }}
-          contentContainerStyle={{
-            flexGrow: 1,
-            width: "100%",
-            maxWidth: 720,
-            alignSelf: "center",
-            paddingTop: padTop,
-            paddingBottom: padBottom,
-            paddingHorizontal: 18,
-          }}
-        >
-          <Animated.View key={generation} entering={threadIn} style={{ flexGrow: 1, gap: 22 }}>
-            {messages && messages.length > 0 ? (
-              messages.map((m, i) => {
-                const key = m.key ?? m.id;
-                return (
-                  <Animated.View
-                    key={key}
-                    entering={
-                      existing.has(key) ? undefined : m.role === "user" ? bubbleIn : replyIn
-                    }
-                    onLayout={
-                      m.role === "user"
-                        ? (e) => {
-                            userY.current.set(key, e.nativeEvent.layout.y);
-                            if (key !== anchor.current) return;
-                            syncBlank();
-                            park();
-                          }
-                        : undefined
-                    }
-                  >
-                    {m.role === "user" ? (
-                      <UserMessage message={m} />
-                    ) : (
-                      <AssistantMessage message={m} last={i === messages.length - 1} />
-                    )}
-                  </Animated.View>
-                );
-              })
-            ) : (
-              <Animated.View style={[{ flexGrow: 1 }, recentre]}>
-                <EmptyState restY={(padTop + screenH - padBottom) / 2} />
-              </Animated.View>
-            )}
-          </Animated.View>
-        </KeyboardChatScrollView>
+        <EntityProvider threadId={threadId}>
+          <KeyboardChatScrollView
+            ref={scroller}
+            // ChatGPT-style: lift the conversation with the keyboard only when reading the latest
+            // message. The empty state recentres itself instead of scrolling away.
+            keyboardLiftBehavior={count === 0 ? "never" : "whenAtEnd"}
+            offset={keyboardOffset}
+            blankSpace={blank}
+            // A new chat is a fixed screen, not a list: the keyboard inset must not make the orb
+            // draggable. Tapping the empty space still puts the keyboard away.
+            scrollEnabled={count > 0}
+            showsVerticalScrollIndicator={count > 0}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            onLayout={(e) => {
+              viewH.current = e.nativeEvent.layout.height;
+              syncBlank();
+            }}
+            onScroll={(e) => {
+              offsetY.current = e.nativeEvent.contentOffset.y;
+              if (Date.now() < smoothUntil.current) return;
+              trackScroll();
+            }}
+            // Scroll events are ignored while a smooth scroll runs; where it lands decides.
+            onMomentumScrollEnd={trackScroll}
+            onScrollBeginDrag={() => {
+              dragging.current = true;
+              stick.current = false;
+            }}
+            onScrollEndDrag={() => {
+              dragging.current = false;
+              trackScroll();
+            }}
+            scrollEventThrottle={32}
+            onContentSizeChange={(_, h) => {
+              contentH.current = h;
+              syncBlank();
+              // Content that shrank or emptied (a new chat, a regenerated reply) can leave the end in view.
+              if (away && (count === 0 || distanceToEnd() <= FOLLOW_SLACK * 2)) setAway(false);
+              // Follow new content while a thread settles in. A parked send stays put while the
+              // reply streams below it; growth the user caused (opening a thinking block,
+              // expanding a card) never drags the view either.
+              const now = Date.now();
+              if (
+                anchor.current ||
+                dragging.current ||
+                !stick.current ||
+                count === 0 ||
+                now < smoothUntil.current
+              )
+                return;
+              if (useApp.getState().streaming || now < settleUntil.current)
+                scroller.current?.scrollToEnd({ animated: false });
+            }}
+            contentContainerStyle={{
+              flexGrow: 1,
+              width: "100%",
+              maxWidth: 720,
+              alignSelf: "center",
+              paddingTop: padTop,
+              paddingBottom: padBottom,
+              paddingHorizontal: 18,
+            }}
+          >
+            <Animated.View key={generation} entering={threadIn} style={{ flexGrow: 1, gap: 22 }}>
+              {messages && messages.length > 0 ? (
+                messages.map((m, i) => {
+                  const key = m.key ?? m.id;
+                  return (
+                    <Animated.View
+                      key={key}
+                      entering={
+                        existing.has(key) ? undefined : m.role === "user" ? bubbleIn : replyIn
+                      }
+                      onLayout={
+                        m.role === "user"
+                          ? (e) => {
+                              userY.current.set(key, e.nativeEvent.layout.y);
+                              if (key !== anchor.current) return;
+                              syncBlank();
+                              park();
+                            }
+                          : undefined
+                      }
+                    >
+                      {m.role === "user" ? (
+                        <UserMessage message={m} />
+                      ) : (
+                        <AssistantMessage message={m} last={i === messages.length - 1} />
+                      )}
+                    </Animated.View>
+                  );
+                })
+              ) : (
+                <Animated.View style={[{ flexGrow: 1 }, recentre]}>
+                  <EmptyState restY={(padTop + screenH - padBottom) / 2} />
+                </Animated.View>
+              )}
+            </Animated.View>
+          </KeyboardChatScrollView>
+        </EntityProvider>
 
         <ChatHeader />
 

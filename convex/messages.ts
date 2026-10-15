@@ -27,7 +27,8 @@ export const list = query({
   },
 });
 
-async function startReply(
+/** Starts the assistant's reply to the latest message in a thread. */
+export async function startReply(
   ctx: MutationCtx,
   thread: Doc<"threads">,
   userId: Id<"users">
@@ -526,8 +527,11 @@ export const artifacts = query({
         m.meta?.kind === "report" ||
         m.parts.some((p) => p.type === "component" && p.status === "ready");
       if (!rich) continue;
-      if (!threads.has(m.threadId))
-        threads.set(m.threadId, Boolean((await ctx.db.get(m.threadId))?.incognito ?? true));
+      if (!threads.has(m.threadId)) {
+        // Incognito chats and profile sheets stay out of the gallery.
+        const t = await ctx.db.get(m.threadId);
+        threads.set(m.threadId, !t || t.incognito || Boolean(t.parentThreadId));
+      }
       if (threads.get(m.threadId)) continue;
       out.push(await clientMessage(ctx, m));
     }

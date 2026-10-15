@@ -54,6 +54,18 @@ export type Engine = {
   safety: string[];
 };
 
+/** One of the user's models with its endpoint, key decrypted; null when it's gone. */
+export async function modelAccess(ctx: ActionCtx, userId: Id<"users">, ref: string) {
+  const m = await ctx.runQuery(internal.engine.data.modelContext, { userId, ref });
+  if (!m) return null;
+  const endpoint: Endpoint = {
+    baseUrl: m.baseUrl,
+    apiKey: m.keyCipher ? await decryptSecret(m.keyCipher) : undefined,
+    headers: m.headersCipher ? JSON.parse(await decryptSecret(m.headersCipher)) : [],
+  };
+  return { ...m, endpoint };
+}
+
 export async function modelEngine(
   ctx: ActionCtx,
   base: {
@@ -66,17 +78,13 @@ export async function modelEngine(
   },
   ref: string
 ): Promise<Engine> {
-  const m = await ctx.runQuery(internal.engine.data.modelContext, { userId: base.userId, ref });
+  const m = await modelAccess(ctx, base.userId, ref);
   if (!m) {
     throw new ConvexError(
       `The model "${ref}" isn't available. Pick another model, or re-add its provider in Settings.`
     );
   }
-  const endpoint: Endpoint = {
-    baseUrl: m.baseUrl,
-    apiKey: m.keyCipher ? await decryptSecret(m.keyCipher) : undefined,
-    headers: m.headersCipher ? JSON.parse(await decryptSecret(m.headersCipher)) : [],
-  };
+  const { endpoint } = m;
   let search = base.search;
   if (!search) {
     const s = base.settings;

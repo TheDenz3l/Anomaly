@@ -79,7 +79,7 @@ function fn(
   };
 }
 
-const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+export const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
   Promise.race([p, sleep(ms).then(() => fallback)]);
 
 /**

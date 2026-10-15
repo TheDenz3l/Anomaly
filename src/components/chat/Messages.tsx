@@ -157,8 +157,20 @@ function UserMessageRow({ message }: { message: Message }) {
   );
 }
 
-/** Assistant replies have no bubble: text on black, components on surface cards (PRD §2.4). */
-function AssistantMessageRow({ message, last }: { message: Message; last: boolean }) {
+/**
+ * Assistant replies have no bubble: text on black, components on surface cards (PRD §2.4).
+ * `onRegenerate` is for replies outside the open chat (a profile sheet's), which the app's chat
+ * state doesn't hold: it regenerates them itself and they can't be saved.
+ */
+function AssistantMessageRow({
+  message,
+  last,
+  onRegenerate,
+}: {
+  message: Message;
+  last: boolean;
+  onRegenerate?: (messageId: string) => void;
+}) {
   const streaming = message.status === "streaming";
   // The end of a reply settles the haptics: a soft tap once a finished reply has played out.
   const wasStreaming = useRef(streaming);
@@ -207,7 +219,9 @@ function AssistantMessageRow({ message, last }: { message: Message; last: boolea
           }
         })}
         {tail && status ? <TailGlobe phase={status.phase} /> : null}
-        {!streaming ? <SourcesBar message={message} sources={sources} /> : null}
+        {!streaming ? (
+          <SourcesBar message={message} sources={sources} onRegenerate={onRegenerate} />
+        ) : null}
         {last ? null : <View className="h-1" />}
       </View>
     </CitationProvider>

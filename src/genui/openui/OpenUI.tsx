@@ -1,4 +1,5 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useContext, useLayoutEffect, useMemo, useRef } from "react";
+import { AskTarget } from "@/components/chat/entityContext";
 import { GenSkeleton, type GenProps } from "@/genui/kit";
 import type { CardStateEntry } from "@/genui/schemas";
 import { api, convex, type Id } from "@/lib/convex";
@@ -16,7 +17,9 @@ const notLive = () => Promise.reject(new Error("Live data shows when the card is
  * server; what the user sets on it is saved with it, so it's the same next time.
  */
 export function OpenUI({ props, building = false, busy, card }: GenProps<"OpenUI">) {
-  const send = useApp((s) => s.send);
+  const sendInChat = useApp((s) => s.send);
+  // Inside a profile sheet a card's questions are asked there, not in the chat underneath.
+  const askHere = useContext(AskTarget);
   const busyRef = useRef(busy);
   useLayoutEffect(() => {
     busyRef.current = busy;
@@ -25,12 +28,14 @@ export function OpenUI({ props, building = false, busy, card }: GenProps<"OpenUI
   const handlers = useMemo<OpenUIHandlers>(
     () => ({
       toAssistant: (message) => {
-        if (live && !busyRef.current && message.trim()) send(message, []);
+        if (!live || busyRef.current || !message.trim()) return;
+        if (askHere) askHere(message);
+        else sendInChat(message, []);
       },
       openUrl: (url) => void openLink(url),
       callTool: live ? (name, args) => convex.action(api.cardTools.call, { name, args }) : notLive,
     }),
-    [send, live]
+    [sendInChat, askHere, live]
   );
   const threadId = card?.threadId;
   const partId = card?.partId;

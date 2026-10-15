@@ -1,5 +1,6 @@
 import type { CatalogName, CatalogProps } from "@/genui/schemas";
 import type { ComponentPart, Message, Part, Source, Thread } from "@/lib/types";
+import { stripEntities } from "@/lib/entities";
 
 /**
  * Artifacts: everything Anomaly has made in your chats that's worth coming back to — interactive
@@ -141,7 +142,7 @@ export function reportText(message: Message): string {
   return reportParts(message)
     .map((p) =>
       p.type === "text"
-        ? p.text
+        ? stripEntities(p.text)
         : p.type === "component"
           ? tableMarkdown(p.props) || p.fallbackText
           : ""

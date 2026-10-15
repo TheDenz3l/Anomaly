@@ -210,6 +210,11 @@ export const remove = mutation({
       .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", providerId))
       .collect();
     for (const p of profiles) await ctx.db.delete(p._id);
+    const speeds = await ctx.db
+      .query("modelSpeeds")
+      .withIndex("by_user_model", (q) => q.eq("userId", userId).eq("providerId", providerId))
+      .collect();
+    for (const s of speeds) await ctx.db.delete(s._id);
   },
 });
 

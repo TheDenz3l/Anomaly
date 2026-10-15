@@ -274,6 +274,37 @@ export const vProviderUsage = v.object({
 
 export const vLocation = v.object({ lat: v.number(), lng: v.number(), label: v.string() });
 
+/** What a name marked in a reply is, as the model labelled it: [[Name|kind|what it is]]. */
+export const vEntityKind = v.union(
+  v.literal("person"),
+  v.literal("place"),
+  v.literal("organization"),
+  v.literal("work"),
+  v.literal("product"),
+  v.literal("event"),
+  v.literal("thing")
+);
+
+/** The top of a profile sheet: found on Wikipedia and the web as the profile starts. */
+export const vEntityCard = v.object({
+  title: v.string(),
+  /** Wikipedia's short description: "American rapper (born 1991)". */
+  description: v.optional(v.string()),
+  /** The article's opening sentences, shown as the profile's overview. */
+  extract: v.optional(v.string()),
+  url: v.optional(v.string()),
+  images: v.array(v.string()),
+});
+
+/** The name a profile chat is about. */
+export const vEntity = v.object({
+  name: v.string(),
+  kind: vEntityKind,
+  hint: v.string(),
+  /** Unset until the lookup finishes; empty images and no extract when nothing was found. */
+  card: v.optional(vEntityCard),
+});
+
 export type Source = Infer<typeof vSource>;
 export type SourceOrigin = Infer<typeof vSourceOrigin>;
 export type Part = Infer<typeof vPart>;
@@ -297,3 +328,6 @@ export type SubagentMode = Infer<typeof vSubagentMode>;
 export type WebMode = Infer<typeof vWebMode>;
 export type SearchProviderId = Infer<typeof vSearchProvider>;
 export type GeoLocation = Infer<typeof vLocation>;
+export type EntityKind = Infer<typeof vEntityKind>;
+export type EntityCard = Infer<typeof vEntityCard>;
+export type Entity = Infer<typeof vEntity>;

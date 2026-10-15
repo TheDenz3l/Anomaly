@@ -44,6 +44,8 @@ export const list = query({
       .query("threads")
       .withIndex("by_user_updated", (q) => q.eq("userId", userId))
       .order("desc")
+      // Profile sheets' chats live in their sheets.
+      .filter((q) => q.eq(q.field("parentThreadId"), undefined))
       .take(Math.min(limit ?? 200, 500));
     // Incognito chats are never listed: not in Recents, not in History.
     return rows.filter((t) => !t.incognito).map(clientThread);
@@ -204,6 +206,12 @@ export const purge = internalMutation({
       await ctx.scheduler.runAfter(0, internal.threads.purge, { threadId, userId });
       return;
     }
+    // The profiles opened from it go with it.
+    const profiles = await ctx.db
+      .query("threads")
+      .withIndex("by_parent", (q) => q.eq("parentThreadId", threadId))
+      .collect();
+    for (const p of profiles) await discard(ctx, p);
     for (const table of ["agentRuns", "researchRuns", "reasoningEvents"] as const) {
       const rows = await ctx.db
         .query(table)
@@ -251,13 +259,13 @@ export const search = query({
       { threadId: Id<"threads">; title: string; snippet: string; updatedAt: number }
     >();
     for (const t of byTitle) {
-      if (t.incognito) continue;
+      if (t.incognito || t.parentThreadId) continue;
       hits.set(t._id, { threadId: t._id, title: t.title, snippet: "", updatedAt: t.updatedAt });
     }
     for (const m of byText) {
       if (hits.has(m.threadId)) continue;
       const t = await ctx.db.get(m.threadId);
-      if (!t || t.incognito) continue;
+      if (!t || t.incognito || t.parentThreadId) continue;
       const body = m.searchText ?? "";
       const i = body.toLowerCase().indexOf(text.toLowerCase().split(/\s+/)[0]);
       const snippet = body.slice(Math.max(0, i - 40), Math.max(0, i - 40) + 160);

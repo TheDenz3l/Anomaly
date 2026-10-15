@@ -19,7 +19,7 @@ import { uid } from "../lib/util";
 import type { GeoLocation, Part, ReplyMeta, Source } from "../lib/validators";
 import { photoFinder } from "../web/photos";
 import type { PhotoPick } from "../../src/genui/openui/library";
-import { SourceCollector } from "../web/sources";
+import { makeSource, SourceCollector } from "../web/sources";
 import { spawnTool, type SpawnEnv } from "./agents";
 import { modelEngine, note, type Engine } from "./context";
 import { failTurn, finishTurn } from "./finish";
@@ -41,10 +41,12 @@ import {
   startSearch,
   weatherTool,
   webSearchTool,
+  withTimeout,
 } from "./tools";
 import { imageTool, wantsImage } from "./image";
 import { describeImages } from "./vision";
 import { PartWriter } from "./writer";
+import { followUpQuery, profileBrief, profileCard, profileNote, profileQuery } from "./profile";
 import { type ChatMessage } from "../ai/openai";
 
 const RESEARCH_OFFER = "cmp_resoffer";
@@ -148,6 +150,11 @@ export async function runTurn(
   const data = await ctx.runQuery(internal.engine.data.turnContext, { messageId });
   if (!data || data.message.status !== "streaming") return;
   const { thread, settings, history } = data;
+  // A profile chat (engine/profile.ts): its first reply writes the profile sheet.
+  const subject = thread.entity;
+  const writingProfile = Boolean(subject) && !history.some((m) => m.role === "assistant");
+  // A question typed into the open profile's sheet.
+  const asking = Boolean(subject) && !writingProfile;
   const sink = new PartWriter(ctx, messageId, data.message.parts, data.message.runId).start();
   const signal = new AbortController();
   sink.onStop = () => signal.abort();
@@ -159,9 +166,14 @@ export async function runTurn(
     ...(opts.kind ? { kind: opts.kind } : {}),
   };
   let engine: Engine | null = null;
+  // A profile's header is saved to its chat even when the reply fails.
+  let cardSaved: Promise<void> | undefined;
   try {
     engine = await modelEngine(ctx, { userId: thread.userId, thread, settings }, thread.modelRef);
     const input = lastInput(history);
+    // The sheet's photos and overview are found while everything else gets going.
+    const cardRun = writingProfile ? profileCard(engine, thread._id, subject!) : null;
+    cardSaved = cardRun?.saved;
 
     let location: GeoLocation | undefined = thread.location;
     const setLocation = async (loc: GeoLocation) => {
@@ -211,7 +223,8 @@ export async function runTurn(
     const dp = engine.dp;
     const text = input.text;
     const previous = [...history].reverse().find((m) => m.role === "assistant");
-    const memoryOn = settings.memoryEnabled && !thread.incognito;
+    // A profile is the app asking, not the user telling: nothing in it is worth remembering.
+    const memoryOn = settings.memoryEnabled && !thread.incognito && !subject;
     const t0 = Date.now();
     // Memory recall (an embedding call and a search) doesn't depend on the router's answers, so it
     // runs alongside them instead of after.
@@ -236,20 +249,35 @@ export async function runTurn(
     const photos = Boolean(text) && !input.event && wantsPhotos(text);
     // Pre-search: a chat's first question that reads as current events is searched while the router
     // decides, so the first model call already has results and answers in one round trip instead of
-    // two (pick a search, then answer). Follow-ups lean on context a raw-text query wouldn't carry.
+    // two (pick a search, then answer). Follow-ups lean on context a raw-text query wouldn't carry,
+    // except in a profile, where the subject's name is that context.
     let pre: { at: number; query: string; run: ReturnType<typeof startSearch> } | null = null;
-    if (
+    const searchable =
       canTools &&
       !nativeAvailable &&
-      !previous &&
       !input.event &&
       !input.images &&
       // A question about an attached file is answered from the file, not a search on its wording.
       !input.files &&
       !opts.injected &&
       text.trim().length >= 8 &&
-      !/https?:\/\//i.test(text)
-    ) {
+      !/https?:\/\//i.test(text);
+    if (writingProfile && canTools && !nativeAvailable) {
+      const query = profileQuery(subject!);
+      pre = {
+        at: Date.now(),
+        query,
+        run: startSearch(engine, query, { deadline: true, limit: 8 }),
+      };
+    } else if (asking && searchable) {
+      // Started before the router says whether the question needs one, which it hasn't yet.
+      const query = followUpQuery(subject!, text);
+      pre = {
+        at: Date.now(),
+        query,
+        run: startSearch(engine, query, { deadline: true, photos, limit: 8 }),
+      };
+    } else if (searchable && !previous) {
       const [hi, hs] = await Promise.all([
         heuristicDecisions.intent({ text, hasImages: false, researchMode: false }),
         heuristicDecisions.search(text),
@@ -295,12 +323,28 @@ export async function runTurn(
     const decidedAt = Date.now();
     const memories = await recalled;
     const recalledAt = Date.now();
-    const sources = new SourceCollector(opts.sources);
+    // Wikipedia's overview opens the sheet, so it is the profile's first source.
+    const card = cardRun ? await withTimeout(cardRun.article, 3000, undefined) : undefined;
+    const cardLog = cardRun ? ` article=${Date.now() - startedAt}ms` : "";
+    const wiki =
+      card?.url && card.extract
+        ? [makeSource(card.url, `${card.title} - Wikipedia`, card.extract, "app")]
+        : [];
+    const sources = new SourceCollector([...(opts.sources ?? []), ...wiki]);
 
     // Search decision → auto web access: none skips web tools, quick/deep size the budget.
     // Photos only come from the web, so a photo request searches even when the router says no.
-    const searchMode = photos && search.choice.mode === "none" ? "quick" : search.choice.mode;
+    // A profile is always searched: its facts are cited and its dates current.
+    const searchMode =
+      (photos || writingProfile) && search.choice.mode === "none" ? "quick" : search.choice.mode;
     const skipWeb = act(search) && searchMode === "none";
+    // A sheet question that needs no search is answered from the profile above it with no tools on
+    // offer: offering them alone kept gpt-6.1-sol on 7api 2 to 6 s longer from its first words.
+    const bare =
+      asking &&
+      searchMode === "none" &&
+      !/https?:\/\//i.test(text) &&
+      !(canTools && settings.imageGen && wantsImage(text));
     const env: SpawnEnv = {
       engine,
       sink,
@@ -337,6 +381,7 @@ export async function runTurn(
     // possibility, even for a question routed as plain chat, and is asked for when it's likely.
     const compose = pres.choice.visual + pres.choice.tool;
     const wantsCards =
+      writingProfile ||
       !it ||
       it === "ui" ||
       it === "search" ||
@@ -352,7 +397,7 @@ export async function runTurn(
         !nativeAvailable ||
         (settings.webMode === "auto" && canTools)) &&
       it !== "memory";
-    const appWeb = appWebAllowed && !skipWeb;
+    const appWeb = appWebAllowed && !skipWeb && !bare;
     // "Don't search" isn't "don't open the link I gave you".
     const readLink = !appWeb && appWebAllowed && /https?:\/\/\S/i.test(text);
     const useNative = nativeAvailable && searchMode !== "none";
@@ -361,12 +406,13 @@ export async function runTurn(
     const delegate = delegation.choice;
     // PRD §3.6: in Auto, workers are only on the table when the user asks or Jev decides to delegate.
     const spawnOffered =
-      delegate.explicit ||
-      (settings.subagentMode !== "off" &&
-        (delegate.mode === "single" || delegate.mode === "parallel"));
+      !subject &&
+      (delegate.explicit ||
+        (settings.subagentMode !== "off" &&
+          (delegate.mode === "single" || delegate.mode === "parallel")));
 
     const tools: LoopTool[] = [];
-    if (canTools) {
+    if (canTools && !bare) {
       if (appWeb) tools.push(webSearchTool(env), readUrlTool(env));
       else if (readLink) tools.push(readUrlTool(env));
       if (wantsData)
@@ -383,13 +429,14 @@ export async function runTurn(
     const cards = wantsCards;
     // Showtimes are likely: look up movies and cinemas while the model thinks, so the tool call
     // finds them ready.
-    if (canTools && wantsData && location && (probs.MovieShowtimes ?? 0) > THRESHOLDS.act)
+    if (canTools && !bare && wantsData && location && (probs.MovieShowtimes ?? 0) > THRESHOLDS.act)
       showtimeData(env, location);
 
     // Every round of searching is another full model round trip before the answer starts. A question
     // with several parts (a list plus figures, hits and artwork) rarely fits one round; with a
     // second on offer the model fills the gaps instead of answering with a plan to search.
-    const webRounds = searchMode === "deep" ? 3 : difficulty.choice === "easy" ? 1 : 2;
+    // A sheet question gets one: its answer is meant to be brief, and is about the profile above it.
+    const webRounds = searchMode === "deep" ? 3 : difficulty.choice === "easy" || asking ? 1 : 2;
     let webRoundsDone = 0;
     let preLog = pre ? "dropped" : "no";
     const extra: string[] = [];
@@ -397,7 +444,7 @@ export async function runTurn(
     if (
       pre &&
       appWeb &&
-      (intent.choice === "search" || photos) &&
+      (intent.choice === "search" || photos || writingProfile || asking) &&
       searchMode !== "none" &&
       !spawnOffered
     ) {
@@ -415,7 +462,7 @@ export async function runTurn(
       extra.push("# Search results gathered for this question (cite as [n])", found.content);
     }
     // With the rounds already spent the first call has no app tools: it answers.
-    const toolsAtStart = webRoundsDone < webRounds;
+    const toolsAtStart = webRoundsDone < webRounds && !bare;
     if (search.choice.timeSensitive && searchMode !== "none") {
       extra.push(
         webRoundsDone
@@ -443,7 +490,7 @@ export async function runTurn(
     // Asked for next to the user's message rather than at the end of a long system prompt, where
     // models (especially mid-conversation, with earlier cards in the history) tend to miss it.
     let presentAs: string | undefined;
-    if (cards && compose >= COMPOSE_ASK) {
+    if (cards && compose >= COMPOSE_ASK && !subject) {
       // A card built around one shape (a comparison, a series, a map) when the router is sure of it.
       const [top, p] = Object.entries(td.components.choice).sort((x, y) => y[1] - x[1])[0] ?? [];
       presentAs = openuiDirective(
@@ -452,6 +499,8 @@ export async function runTurn(
       );
     }
     if (opts.injected) extra.push(opts.injected);
+    if (writingProfile) extra.push(profileBrief(subject!, card, wiki.length > 0));
+    else if (subject) extra.push(profileNote(subject));
 
     const readBy = await seeing;
     if (readBy && input.images) {
@@ -543,7 +592,7 @@ export async function runTurn(
       )
       .join(" | ");
     console.log(
-      `[turn] ${messageId} firstText=${result.firstTextAt ? `${result.firstTextAt - startedAt}ms` : "none"} setup=${t0 - startedAt}ms pre=${preLog} decide=${decidedAt - t0}ms recallWait=${recalledAt - decidedAt}ms model+tools=${loopDoneAt - recalledAt}ms cards=${Date.now() - loopDoneAt}ms steps=${result.steps} [${stepLog}] tools=${result.usedTools.join(",") || "none"} cards=${result.componentsShown.join(",") || (cards ? "offered" : "off")}${result.cardRepairs.length ? ` dropped=${JSON.stringify(result.cardRepairs.slice(0, 6))}` : ""}`
+      `[turn] ${messageId} firstText=${result.firstTextAt ? `${result.firstTextAt - startedAt}ms` : "none"} setup=${t0 - startedAt}ms search=${searchMode}${bare ? "(bare)" : ""} pre=${preLog} decide=${decidedAt - t0}ms${cardLog} recallWait=${recalledAt - decidedAt}ms model+tools=${loopDoneAt - recalledAt}ms cards=${Date.now() - loopDoneAt}ms steps=${result.steps} [${stepLog}] tools=${result.usedTools.join(",") || "none"} cards=${result.componentsShown.join(",") || (cards ? "offered" : "off")}${result.cardRepairs.length ? ` dropped=${JSON.stringify(result.cardRepairs.slice(0, 6))}` : ""}`
     );
 
     // Memory write gate: act → auto-save, confirm → inline chip, fallback → skip.
@@ -559,7 +608,8 @@ export async function runTurn(
       await proposeMemory(env, td.memory.choice, td.memory.confidence);
     }
 
-    if (!sink.stopped) {
+    // A profile's sheet has its own question box, so no chips or offers under it.
+    if (!sink.stopped && !subject) {
       // Sub-agent decision "research" → offer Deep Research instead of guessing.
       if (
         !delegate.explicit &&
@@ -605,5 +655,7 @@ export async function runTurn(
     await finishTurn(engine, sink, { messageId, sources, result, meta });
   } catch (e) {
     await failTurn(engine, sink, e, meta);
+  } finally {
+    await cardSaved;
   }
 }
