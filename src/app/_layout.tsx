@@ -6,11 +6,13 @@ import { StatusBar } from "expo-status-bar";
 import { HeroUINativeProvider } from "heroui-native";
 import * as SecureStore from "expo-secure-store";
 import { useEffect } from "react";
+import { ShareIntentProvider } from "expo-share-intent";
 import { Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Uniwind } from "uniwind";
+import { ShareReceiver } from "@/components/chat/ShareReceiver";
 import { ToastHost } from "@/components/ui/ToastHost";
-import { convex } from "@/lib/convex";
+import { convex, authStorageNamespace } from "@/lib/convex";
 import { ConvexSync } from "@/lib/sync";
 import { colors } from "@/lib/theme";
 
@@ -61,38 +63,45 @@ export default function RootLayout() {
   if (!loaded && !error) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 
   return (
-    <ConvexAuthProvider client={convex} storage={secureStorage}>
-      <ConvexSync />
-      <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
-        <KeyboardProvider>
-          <HeroUINativeProvider
-            config={{ devInfo: { stylingPrinciples: false }, toast: "disabled" }}
-          >
-            <ThemeProvider value={navTheme}>
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: colors.background },
-                }}
-              >
-                <Stack.Screen name="index" />
-                <Stack.Screen name="history" />
-                <Stack.Screen name="memory" />
-                <Stack.Screen name="settings" />
-                <Stack.Screen name="artifacts" />
-                <Stack.Screen name="artifact/[id]" />
-                <Stack.Screen
-                  name="image"
-                  options={{ presentation: "fullScreenModal", animation: "fade" }}
-                />
-              </Stack>
-            </ThemeProvider>
-            <PortalHost />
-            <ToastHost />
-            <StatusBar style="light" />
-          </HeroUINativeProvider>
-        </KeyboardProvider>
-      </GestureHandlerRootView>
-    </ConvexAuthProvider>
+    <ShareIntentProvider>
+      <ConvexAuthProvider
+        client={convex}
+        storage={secureStorage}
+        storageNamespace={authStorageNamespace}
+      >
+        <ConvexSync />
+        <ShareReceiver />
+        <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
+          <KeyboardProvider>
+            <HeroUINativeProvider
+              config={{ devInfo: { stylingPrinciples: false }, toast: "disabled" }}
+            >
+              <ThemeProvider value={navTheme}>
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: colors.background },
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="history" />
+                  <Stack.Screen name="memory" />
+                  <Stack.Screen name="settings" />
+                  <Stack.Screen name="artifacts" />
+                  <Stack.Screen name="artifact/[id]" />
+                  <Stack.Screen
+                    name="image"
+                    options={{ presentation: "fullScreenModal", animation: "fade" }}
+                  />
+                </Stack>
+              </ThemeProvider>
+              <PortalHost />
+              <ToastHost />
+              <StatusBar style="light" />
+            </HeroUINativeProvider>
+          </KeyboardProvider>
+        </GestureHandlerRootView>
+      </ConvexAuthProvider>
+    </ShareIntentProvider>
   );
 }

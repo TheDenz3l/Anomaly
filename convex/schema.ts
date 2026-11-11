@@ -6,6 +6,7 @@ import {
   vEntity,
   vFeatures,
   vHeader,
+  vHealthStatus,
   vProviderAuth,
   vProviderBalance,
   vProviderLimits,
@@ -173,6 +174,24 @@ export default defineSchema({
     firstTextMs: v.number(),
     at: v.number(),
   }).index("by_user_model", ["userId", "providerId", "modelId"]),
+
+  /** Whether each model is up: the latest check or real reply (lib/health.ts). */
+  modelHealth: defineTable({
+    userId: v.id("users"),
+    providerId: v.string(),
+    modelId: v.string(),
+    status: vHealthStatus,
+    detail: v.optional(v.string()),
+    latencyMs: v.optional(v.number()),
+    /** Milliseconds to the first answer text. */
+    textMs: v.optional(v.number()),
+    /** Failed readings in a row. */
+    fails: v.number(),
+    checkedAt: v.number(),
+    source: v.union(v.literal("check"), v.literal("reply")),
+  })
+    .index("by_user_model", ["userId", "providerId", "modelId"])
+    .index("by_user_provider", ["userId", "providerId"]),
 
   threads: defineTable({
     userId: v.id("users"),

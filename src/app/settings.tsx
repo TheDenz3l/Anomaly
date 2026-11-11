@@ -335,7 +335,7 @@ export default function SettingsScreen() {
             value={
               (process.env.EXPO_PUBLIC_CONVEX_URL ?? "")
                 .replace(/^https?:\/\//, "")
-                .split(".")[0] || "Convex"
+                .replace(/\.convex\.cloud.*$/, "") || "Convex"
             }
           />
           <Row label="Decisions" value="Heuristic (Jev later)" last />

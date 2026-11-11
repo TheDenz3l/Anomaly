@@ -1,6 +1,7 @@
 import type { CatalogName, CatalogProps } from "@/genui/schemas";
 import type { ComponentPart, Message, Part, Source, Thread } from "@/lib/types";
 import { stripEntities } from "@/lib/entities";
+import { documentsIn, type ReplyFile } from "@/lib/docFiles";
 
 /**
  * Artifacts: everything Anomaly has made in your chats that's worth coming back to — interactive
@@ -9,7 +10,7 @@ import { stripEntities } from "@/lib/entities";
  * and so is anything from an incognito chat.
  */
 
-export type ArtifactGroup = "apps" | "reports" | "data";
+export type ArtifactGroup = "apps" | "reports" | "data" | "files";
 
 type Base = {
   id: string;
@@ -24,7 +25,8 @@ type Base = {
 
 export type Artifact =
   | (Base & { type: "component"; part: ComponentPart })
-  | (Base & { type: "report"; message: Message; sources: Source[] });
+  | (Base & { type: "report"; message: Message; sources: Source[] })
+  | (Base & { type: "file"; file: ReplyFile });
 
 type Kind<N extends CatalogName> = {
   /** Cards that only serve the chat they're in (a question for the user) aren't kept. */
@@ -174,7 +176,24 @@ export function collectArtifacts(
           sources: collectSources(m),
         });
       }
+      let n = 0;
       for (const p of m.parts) {
+        if (p.type === "text") {
+          for (const file of documentsIn(p.text)) {
+            out.push({
+              type: "file",
+              id: `${m.id}-file-${n++}`,
+              threadId: thread.id,
+              messageId: m.id,
+              title: file.name,
+              kind: `${file.ext.toUpperCase() || "Text"} file`,
+              group: "files",
+              createdAt: m.createdAt,
+              file,
+            });
+          }
+          continue;
+        }
         if (p.type !== "component" || p.status !== "ready") continue;
         const k = kinds[p.name as CatalogName] as Kind<CatalogName> | undefined;
         if (!k) continue;
@@ -201,6 +220,7 @@ export const groupLabels: Record<ArtifactGroup, string> = {
   apps: "Apps",
   reports: "Reports",
   data: "Data",
+  files: "Files",
 };
 
 /** "Today", "Yesterday", a weekday within the week, otherwise a short date. */
@@ -218,6 +238,7 @@ export function ago(ts: number): string {
 /** Plain text for sharing or copying an artifact. */
 export function artifactText(a: Artifact): string {
   if (a.type === "component") return `${a.title}\n\n${a.part.fallbackText}`;
+  if (a.type === "file") return a.file.body;
   const refs = a.sources.map((s, i) => `[${i + 1}] ${s.title}: ${s.url}`).join("\n");
   return `# ${a.title}\n\n${reportText(a.message)}\n\n## Sources\n${refs}`;
 }

@@ -1,5 +1,12 @@
 import { ConvexReactClient } from "convex/react";
 
+/**
+ * Key prefix for the auth tokens stored on the device. Pinned to the address of the cloud
+ * deployment the app first ran against instead of following EXPO_PUBLIC_CONVEX_URL, so moving the
+ * data to another backend (the self-hosted Mac mini) keeps each device signed in to its account.
+ */
+export const authStorageNamespace = "https://vibrant-platypus-358.convex.cloud";
+
 export { api } from "../../convex/_generated/api";
 export type { Id } from "../../convex/_generated/dataModel";
 

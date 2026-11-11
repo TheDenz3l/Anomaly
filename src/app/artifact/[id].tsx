@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef } from "react";
 import { Share, View } from "react-native";
 import { CitationProvider } from "@/components/chat/Citations";
+import { FileCard } from "@/components/chat/CodeBlock";
 import { Markdown } from "@/components/chat/Markdown";
 import { SourceRow } from "@/components/chat/SourceRow";
 import { Glass } from "@/components/ui/Glass";
@@ -13,6 +14,7 @@ import { ComponentRenderer } from "@/genui/ComponentRenderer";
 import { ActionButton } from "@/genui/kit";
 import { ago, artifactText, reportParts, type Artifact } from "@/lib/artifacts";
 import { goBack } from "@/lib/nav";
+import { saveTextFile } from "@/lib/saveFile";
 import { useApp, useArtifacts, useComponentEvents } from "@/lib/store";
 import { colors } from "@/lib/theme";
 
@@ -89,6 +91,19 @@ function ReportBody({ artifact }: { artifact: Extract<Artifact, { type: "report"
   );
 }
 
+function FileBody({ artifact }: { artifact: Extract<Artifact, { type: "file" }> }) {
+  return (
+    <View key="file" className="mb-8">
+      <FileCard
+        file={artifact.file}
+        body={artifact.file.body}
+        expanded
+        renderMarkdown={(text) => <Markdown text={text} />}
+      />
+    </View>
+  );
+}
+
 /** One artifact, full size and live, with a way back to the chat that made it. */
 export default function ArtifactScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -99,6 +114,7 @@ export default function ArtifactScreen() {
   const togglePin = useApp((s) => s.togglePin);
   const markViewed = useApp((s) => s.markViewed);
   const openThread = useApp((s) => s.openThread);
+  const showToast = useApp((s) => s.showToast);
 
   useEffect(() => {
     if (artifact) markViewed(artifact.id);
@@ -118,6 +134,15 @@ export default function ArtifactScreen() {
     );
   }
 
+  const download = async (a: Extract<Artifact, { type: "file" }>) => {
+    try {
+      const result = await saveTextFile(a.file.name, a.file.body, a.file.mime);
+      if (result === "downloaded") showToast(`Downloaded ${a.file.name}`);
+    } catch {
+      showToast(`${a.file.name} couldn’t be downloaded. Try again.`, "danger");
+    }
+  };
+
   const openChat = () => {
     openThread(artifact.threadId);
     router.navigate("/");
@@ -136,11 +161,19 @@ export default function ArtifactScreen() {
             onPress={() => togglePin(artifact.id)}
             active={pinned}
           />
-          <BarButton
-            icon="share-outline"
-            label="Share"
-            onPress={() => void Share.share({ message: artifactText(artifact) })}
-          />
+          {artifact.type === "file" ? (
+            <BarButton
+              icon="download-outline"
+              label={`Download ${artifact.file.name}`}
+              onPress={() => void download(artifact)}
+            />
+          ) : (
+            <BarButton
+              icon="share-outline"
+              label="Share"
+              onPress={() => void Share.share({ message: artifactText(artifact) })}
+            />
+          )}
         </>
       }
     >
@@ -162,6 +195,8 @@ export default function ArtifactScreen() {
         <View key="report" className="mb-8">
           <ReportBody artifact={artifact} />
         </View>
+      ) : artifact.type === "file" ? (
+        <FileBody key="file" artifact={artifact} />
       ) : (
         <ComponentBody key="component" artifact={artifact} />
       )}

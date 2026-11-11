@@ -3,6 +3,7 @@ import { Share, View } from "react-native";
 import { Sheet } from "@/components/ui/Sheet";
 import { ActionButton } from "@/genui/kit";
 import { artifactText, type Artifact } from "@/lib/artifacts";
+import { saveTextFile } from "@/lib/saveFile";
 import { useApp } from "@/lib/store";
 
 /** Long-press menu for an artifact: pin, go back to the chat that made it, share. */
@@ -16,6 +17,7 @@ export function ArtifactActions({
   const pinned = useApp((s) => (artifact ? s.pinnedArtifacts.includes(artifact.id) : false));
   const togglePin = useApp((s) => s.togglePin);
   const openThread = useApp((s) => s.openThread);
+  const showToast = useApp((s) => s.showToast);
   return (
     <Sheet
       open={artifact !== null}
@@ -44,15 +46,30 @@ export function ArtifactActions({
               router.navigate("/");
             }}
           />
-          <ActionButton
-            variant="secondary"
-            icon="share-outline"
-            label="Share"
-            onPress={() => {
-              onClose();
-              void Share.share({ message: artifactText(artifact) });
-            }}
-          />
+          {artifact.type === "file" ? (
+            <ActionButton
+              variant="secondary"
+              icon="download-outline"
+              label="Download"
+              onPress={() => {
+                onClose();
+                const { name, body, mime } = artifact.file;
+                saveTextFile(name, body, mime)
+                  .then((r) => r === "downloaded" && showToast(`Downloaded ${name}`))
+                  .catch(() => showToast(`${name} couldn’t be downloaded. Try again.`, "danger"));
+              }}
+            />
+          ) : (
+            <ActionButton
+              variant="secondary"
+              icon="share-outline"
+              label="Share"
+              onPress={() => {
+                onClose();
+                void Share.share({ message: artifactText(artifact) });
+              }}
+            />
+          )}
         </View>
       ) : null}
     </Sheet>

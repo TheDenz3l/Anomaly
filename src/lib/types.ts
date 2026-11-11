@@ -163,6 +163,21 @@ export type Model = {
   profile: CapabilityProfile;
   /** USD per token, when the provider publishes it. */
   pricing?: { prompt: number; completion: number };
+  /** Whether the model is up, from the latest status check or real reply. */
+  health?: ModelHealth;
+};
+
+export type HealthStatus = "normal" | "degraded" | "down";
+
+export type ModelHealth = {
+  status: HealthStatus;
+  /** Why it isn't normal: "Rate-limited", "Not served by this provider". */
+  detail?: string;
+  /** Milliseconds to the first streamed event, from recent checks and replies. */
+  latencyMs?: number;
+  /** Milliseconds to the first answer text, from recent checks and replies. */
+  textMs?: number;
+  checkedAt: number;
 };
 
 export type ProviderStatus = "connected" | "error" | "checking";

@@ -81,6 +81,16 @@ type State = {
   toast: Toast | null;
   /** Text and photos of a send the server refused, handed back to the composer. */
   composerRestore: { id: string; text: string; attachments: Attachment[] } | null;
+  /** How many of the open chat's latest messages are loaded; "Show earlier messages" raises it. */
+  messageLimit: number;
+  /** The reply waiting for a model to be picked to answer it again. */
+  regenerateWith: string | null;
+  /** One of your messages being rewritten in the composer; sending it replaces what came after. */
+  editing: { id: string; messageId: string; text: string } | null;
+  /** What another app shared through the share sheet, waiting for the composer to take it. */
+  composerInbox: { id: string; text: string; attachments: Attachment[] } | null;
+  /** Providers whose models' status is being checked right now. */
+  healthChecks: string[];
 };
 
 export type ProviderResult = { ok: boolean; saved: boolean; error?: string };
@@ -105,6 +115,17 @@ type Actions = {
   emitUiEvent(threadId: string, event: Omit<UiEventPart, "id" | "type">): void;
   stop(): void;
   regenerate(messageId: string): void;
+  /** Opens the model list to answer this reply again with another model; null closes it. */
+  pickRegenerateModel(messageId: string | null): void;
+  /** Loads another page of the open chat's older messages. */
+  showEarlier(): void;
+  /** Adds a chat the list doesn't hold (an old one found by search), so it can be opened. */
+  adoptThread(thread: Thread): void;
+  /** Puts one of your messages in the composer to rewrite it. */
+  startEdit(messageId: string): void;
+  cancelEdit(): void;
+  /** Rewrites one of your messages and answers it again, replacing everything after it. */
+  editMessage(messageId: string, text: string): void;
   toggleSaved(messageId: string): void;
   togglePin(artifactId: string): void;
   markViewed(artifactId: string): void;
@@ -144,11 +165,18 @@ type Actions = {
   removeProvider(providerId: string): void;
   overrideProfile(ref: string, patch: Partial<CapabilityProfile>): void;
   runProbes(ref: string): Promise<string[]>;
+  /** Checks whether a provider's models are up; `force` rechecks ones checked a moment ago. */
+  checkModelHealth(providerId: string, force?: boolean): Promise<{ ok: boolean; error?: string }>;
+  /** Checks and times the models of every provider at once; `force` rechecks fresh ones too. */
+  checkAllHealth(force?: boolean): Promise<{ ok: boolean; error?: string }>;
   /** Checks an unverified model's reasoning controls once, in the background. */
   ensureProfile(ref: string): void;
   pinThread(id: string, pinned: boolean): void;
   showToast(text: string, tone?: Toast["tone"]): void;
   clearComposerRestore(): void;
+  /** Starts a new chat with what another app shared in the composer, ready for a question. */
+  shareToComposer(text: string, attachments: Attachment[]): void;
+  clearComposerInbox(): void;
   /* sync — called by <ConvexSync /> only */
   hydrate(
     patch: Partial<
@@ -203,6 +231,15 @@ const SETTINGS_KEYS = [
   "researchModelRef",
   "thinkingLevel",
 ] as const;
+
+/** In `healthChecks` while every provider is being checked at once. */
+export const ALL_PROVIDERS = "*";
+
+/** Messages loaded per page of a chat: the latest ones first, older ones on request. */
+export const MESSAGE_PAGE = 60;
+
+/** Chats older than the list reaches, opened from search; they stay until deleted. */
+const adopted = new Set<string>();
 
 const fullThreads = new Set<string>();
 
@@ -489,6 +526,11 @@ export const useApp = create<AppStore>()((set, get) => {
     artifactViews: {},
     toast: null,
     composerRestore: null,
+    messageLimit: MESSAGE_PAGE,
+    regenerateWith: null,
+    editing: null,
+    composerInbox: null,
+    healthChecks: [],
 
     newChat() {
       const s = get();
@@ -496,6 +538,9 @@ export const useApp = create<AppStore>()((set, get) => {
       set({
         activeThreadId: null,
         streaming: null,
+        editing: null,
+        regenerateWith: null,
+        messageLimit: MESSAGE_PAGE,
         draft: {
           modelRef: s.settings.defaultModelRef,
           reasoningLevel: s.settings.thinkingLevel,
@@ -508,11 +553,18 @@ export const useApp = create<AppStore>()((set, get) => {
     openThread(id) {
       leaveIncognito(get().activeThreadId, id);
       const list = get().messages[id] ?? [];
-      set({ activeThreadId: id, streaming: streamingIn(id, list) });
+      set({
+        activeThreadId: id,
+        streaming: streamingIn(id, list),
+        editing: null,
+        regenerateWith: null,
+        messageLimit: MESSAGE_PAGE,
+      });
     },
 
     deleteThread(id) {
       const s = get();
+      adopted.delete(id);
       // Not on the server yet: it goes as soon as send returns its id.
       if (isPending(id)) discardOnArrival.add(id);
       const { [id]: _t, ...threads } = s.threads;
@@ -522,6 +574,7 @@ export const useApp = create<AppStore>()((set, get) => {
         messages,
         activeThreadId: s.activeThreadId === id ? null : s.activeThreadId,
         streaming: s.streaming?.threadId === id ? null : s.streaming,
+        editing: s.activeThreadId === id ? null : s.editing,
       });
       if (!isPending(id))
         convex.mutation(api.threads.remove, { threadId: id as Id<"threads"> }).catch(toastError);
@@ -628,7 +681,12 @@ export const useApp = create<AppStore>()((set, get) => {
         set({ threads: { ...s.threads, [threadKey]: thread }, activeThreadId: threadKey });
       }
       patchMessages(threadKey, (list) => [...list, userMsg, reply]);
-      set({ streaming: { threadId: threadKey, messageId: replyId }, researchArmed: false });
+      set({
+        streaming: { threadId: threadKey, messageId: replyId },
+        researchArmed: false,
+        // The loaded window grows with the chat, so its first message doesn't drop off the top.
+        messageLimit: s.messageLimit + 2,
+      });
 
       void (async () => {
         try {
@@ -774,6 +832,83 @@ export const useApp = create<AppStore>()((set, get) => {
         .catch((e) => {
           patchMessages(threadId, (list) => list.map((m) => (m.id === messageId ? previous : m)));
           if (get().streaming?.messageId === messageId) set({ streaming: null });
+          toastError(e);
+        });
+    },
+
+    pickRegenerateModel(messageId) {
+      set({ regenerateWith: messageId });
+    },
+
+    showEarlier() {
+      set((s) => ({ messageLimit: s.messageLimit + MESSAGE_PAGE }));
+    },
+
+    adoptThread(thread) {
+      adopted.add(thread.id);
+      set((s) => ({ threads: { ...s.threads, [thread.id]: thread } }));
+    },
+
+    startEdit(messageId) {
+      const s = get();
+      const list = s.activeThreadId ? s.messages[s.activeThreadId] : undefined;
+      const part = list?.find((m) => m.id === messageId)?.parts.find((p) => p.type === "text");
+      if (!part || part.type !== "text" || isTemp(messageId)) return;
+      set({ editing: { id: tempId("edit"), messageId, text: part.text } });
+    },
+
+    cancelEdit() {
+      set({ editing: null });
+    },
+
+    editMessage(messageId, text) {
+      const trimmed = text.trim();
+      const s = get();
+      const threadId = s.activeThreadId;
+      if (!trimmed || s.streaming || !threadId || isPending(threadId) || isTemp(messageId)) return;
+      const before = s.messages[threadId] ?? [];
+      const at = before.findIndex((m) => m.id === messageId);
+      if (at < 0 || before[at].role !== "user") return;
+      const target = before[at];
+      const edited: Message = {
+        ...target,
+        parts: [
+          ...target.parts.filter((p) => p.type !== "text"),
+          { id: tempId("txt"), type: "text", text: trimmed },
+        ],
+      };
+      const replyId = tempId("msg");
+      const reply: Message = {
+        id: replyId,
+        threadId,
+        role: "assistant",
+        parts: [],
+        createdAt: Date.now(),
+        status: "streaming",
+        meta: {
+          modelRef: s.threads[threadId]?.modelRef ?? "",
+          levelRequested: s.settings.thinkingLevel,
+          levelSent: "",
+          reasoningTokens: 0,
+        },
+      };
+      patchMessages(threadId, () => [...before.slice(0, at), edited, reply]);
+      set({ streaming: { threadId, messageId: replyId }, editing: null });
+      convex
+        .mutation(api.messages.edit, { messageId: messageId as Id<"messages">, text: trimmed })
+        .then(() => {
+          if (stopOnArrival.delete(replyId))
+            convex
+              .mutation(api.messages.stop, { threadId: threadId as Id<"threads"> })
+              .catch(toastError);
+        })
+        .catch((e) => {
+          stopOnArrival.delete(replyId);
+          // Nothing changed on the server: the chat goes back to how it was.
+          if (get().messages[threadId]?.some((m) => m.id === replyId))
+            patchMessages(threadId, () => before);
+          if (get().streaming?.messageId === replyId) set({ streaming: null });
+          set({ editing: { id: tempId("edit"), messageId, text: trimmed } });
           toastError(e);
         });
     },
@@ -980,6 +1115,32 @@ export const useApp = create<AppStore>()((set, get) => {
       }
     },
 
+    async checkModelHealth(providerId, force) {
+      if (get().healthChecks.includes(providerId)) return { ok: true };
+      set((s) => ({ healthChecks: [...s.healthChecks, providerId] }));
+      try {
+        await within(convex.action(api.health.check, { providerId, force }), 180_000);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: errorText(err) };
+      } finally {
+        set((s) => ({ healthChecks: s.healthChecks.filter((id) => id !== providerId) }));
+      }
+    },
+
+    async checkAllHealth(force) {
+      if (get().healthChecks.includes(ALL_PROVIDERS)) return { ok: true };
+      set((s) => ({ healthChecks: [...s.healthChecks, ALL_PROVIDERS] }));
+      try {
+        await within(convex.action(api.health.checkAll, { force }), 300_000);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: errorText(err) };
+      } finally {
+        set((s) => ({ healthChecks: s.healthChecks.filter((id) => id !== ALL_PROVIDERS) }));
+      }
+    },
+
     showToast(text, tone = "default") {
       const id = tempId("toast");
       set({ toast: { id, text, tone } });
@@ -990,6 +1151,15 @@ export const useApp = create<AppStore>()((set, get) => {
 
     clearComposerRestore() {
       set({ composerRestore: null });
+    },
+
+    shareToComposer(text, attachments) {
+      if (get().activeThreadId) get().newChat();
+      set({ composerInbox: { id: tempId("share"), text, attachments } });
+    },
+
+    clearComposerInbox() {
+      set({ composerInbox: null });
     },
 
     hydrate(patch) {
@@ -1013,8 +1183,9 @@ export const useApp = create<AppStore>()((set, get) => {
         const key = s.threads[t.id]?.key;
         threads[t.id] = key ? { ...t, key } : t;
       }
-      // Keep an optimistic chat until the server knows about it.
-      for (const [id, t] of Object.entries(s.threads)) if (isPending(id)) threads[id] = t;
+      // Keep an optimistic chat until the server knows about it, and old chats opened from search.
+      for (const [id, t] of Object.entries(s.threads))
+        if (isPending(id) || (adopted.has(id) && !threads[id])) threads[id] = t;
       // The server never lists incognito chats; the open one stays here until it is left.
       const open = s.activeThreadId ? s.threads[s.activeThreadId] : undefined;
       if (s.activeThreadId && open?.incognito) threads[s.activeThreadId] = open;

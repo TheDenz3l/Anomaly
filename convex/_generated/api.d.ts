@@ -45,15 +45,18 @@ import type * as engine_research from "../engine/research.js";
 import type * as engine_speed from "../engine/speed.js";
 import type * as engine_tools from "../engine/tools.js";
 import type * as engine_turn from "../engine/turn.js";
+import type * as engine_video from "../engine/video.js";
 import type * as engine_vision from "../engine/vision.js";
 import type * as engine_writer from "../engine/writer.js";
 import type * as entities from "../entities.js";
 import type * as evals from "../evals.js";
 import type * as files from "../files.js";
+import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_endpoint from "../lib/endpoint.js";
+import type * as lib_health from "../lib/health.js";
 import type * as lib_messages from "../lib/messages.js";
 import type * as lib_profileModel from "../lib/profileModel.js";
 import type * as lib_settings from "../lib/settings.js";
@@ -85,6 +88,7 @@ import type * as web_providers from "../web/providers.js";
 import type * as web_read from "../web/read.js";
 import type * as web_relevance from "../web/relevance.js";
 import type * as web_sources from "../web/sources.js";
+import type * as web_youtube from "../web/youtube.js";
 import type * as webCache from "../webCache.js";
 
 import type {
@@ -131,15 +135,18 @@ declare const fullApi: ApiFromModules<{
   "engine/speed": typeof engine_speed;
   "engine/tools": typeof engine_tools;
   "engine/turn": typeof engine_turn;
+  "engine/video": typeof engine_video;
   "engine/vision": typeof engine_vision;
   "engine/writer": typeof engine_writer;
   entities: typeof entities;
   evals: typeof evals;
   files: typeof files;
+  health: typeof health;
   http: typeof http;
   "lib/auth": typeof lib_auth;
   "lib/crypto": typeof lib_crypto;
   "lib/endpoint": typeof lib_endpoint;
+  "lib/health": typeof lib_health;
   "lib/messages": typeof lib_messages;
   "lib/profileModel": typeof lib_profileModel;
   "lib/settings": typeof lib_settings;
@@ -171,6 +178,7 @@ declare const fullApi: ApiFromModules<{
   "web/read": typeof web_read;
   "web/relevance": typeof web_relevance;
   "web/sources": typeof web_sources;
+  "web/youtube": typeof web_youtube;
   webCache: typeof webCache;
 }>;
 

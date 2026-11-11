@@ -21,7 +21,10 @@ export function isEntity(seg: string): boolean {
 
 export function parseEntity(seg: string): EntityRef | null {
   if (!ONLY.test(seg)) return null;
-  const [name, kind = "", hint = ""] = seg.slice(2, -2).split("|").map((s) => s.trim());
+  const [name, kind = "", hint = ""] = seg
+    .slice(2, -2)
+    .split("|")
+    .map((s) => s.trim());
   if (!name) return null;
   const k = kind.toLowerCase() as EntityKind;
   return { name, kind: KINDS.includes(k) ? k : "thing", hint };

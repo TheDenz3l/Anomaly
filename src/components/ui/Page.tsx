@@ -18,6 +18,11 @@ import { Display, Text } from "./Text";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 
 const BAR = 56;
+/**
+ * Room above the large title inside the rounded window. With less, the window's top-left curve
+ * (LIST_RADIUS) cut into the first letter, the top of the S in Settings.
+ */
+const TITLE_TOP = 16;
 
 /**
  * Page opened from the side menu. Sections rise in one after another on open; as you scroll,
@@ -71,7 +76,7 @@ export function Page({
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           bottomOffset={48}
-          contentContainerStyle={{ paddingTop: 4, paddingBottom: insets.bottom + 32 }}
+          contentContainerStyle={{ paddingTop: TITLE_TOP, paddingBottom: insets.bottom + 32 }}
         >
           <Animated.View entering={enterUp(0)}>
             <Animated.View

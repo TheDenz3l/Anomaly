@@ -1,6 +1,7 @@
+import { useQuery } from "convex/react";
 import { useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, TextInput, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { Glass } from "@/components/ui/Glass";
@@ -14,6 +15,7 @@ import {
   type ThreadMenuTarget,
 } from "@/components/navigation/ThreadMenu";
 import { stripCitations } from "@/lib/citations";
+import { api, convex, errorText, type Id } from "@/lib/convex";
 import { stripEntities } from "@/lib/entities";
 import { fadeIn, fadeOut, reflow } from "@/lib/motion";
 import { goBack } from "@/lib/nav";
@@ -55,11 +57,27 @@ export default function HistoryScreen() {
   const models = useApp((s) => s.models);
   const activeId = useApp((s) => s.activeThreadId);
   const openThread = useApp((s) => s.openThread);
+  const adoptThread = useApp((s) => s.adoptThread);
+  const showToast = useApp((s) => s.showToast);
   const newChat = useApp((s) => s.newChat);
   const { search } = useLocalSearchParams<{ search?: string }>();
   const [query, setQuery] = useState("");
   const rows = useRef(new Map<string, View>());
   const [menu, setMenu] = useState<ThreadMenuTarget | null>(null);
+
+  // Titles and previews match as you type; the server then adds chats whose messages match
+  // anywhere in the conversation, once typing pauses.
+  const [settled, setSettled] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(query.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+  const found = useQuery(api.threads.search, settled.length > 1 ? { query: settled } : "skip");
+  const snippets = useMemo(() => {
+    const out = new Map<string, string>();
+    if (query.trim()) for (const h of found ?? []) out.set(h.threadId, h.snippet.trim());
+    return out;
+  }, [found, query]);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -69,7 +87,8 @@ export default function HistoryScreen() {
         (t) =>
           !q ||
           t.title.toLowerCase().includes(q) ||
-          (preview(messages[t.id]) || t.preview || "").toLowerCase().includes(q)
+          (preview(messages[t.id]) || t.preview || "").toLowerCase().includes(q) ||
+          snippets.has(t.id)
       )
       .sort((a, b) => b.updatedAt - a.updatedAt);
     const out: { label: string; items: Thread[] }[] = [];
@@ -80,7 +99,23 @@ export default function HistoryScreen() {
       else out.push({ label, items: [t] });
     }
     return out;
-  }, [threads, messages, query]);
+  }, [threads, messages, query, snippets]);
+
+  // Chats whose messages match but that are older than the loaded list reaches.
+  const older = useMemo(
+    () => (query.trim() ? (found ?? []).filter((h) => !threads[h.threadId]) : []),
+    [found, query, threads]
+  );
+  const openOlder = async (id: string) => {
+    try {
+      const t = await convex.query(api.threads.get, { threadId: id as Id<"threads"> });
+      if (!t) return showToast("That chat is gone.", "danger");
+      adoptThread(t as unknown as Thread);
+      open(id);
+    } catch (e) {
+      showToast(errorText(e), "danger");
+    }
+  };
 
   const open = (id: string) => {
     openThread(id);
@@ -151,7 +186,7 @@ export default function HistoryScreen() {
           ) : null}
         </View>
 
-        {groups.length === 0 ? (
+        {groups.length === 0 && older.length === 0 ? (
           <View className="items-center gap-2 py-16">
             <Icon name="chatbubbles-outline" size={28} color={colors.textFaint} />
             <Text muted className="text-center text-[15px]">
@@ -172,7 +207,7 @@ export default function HistoryScreen() {
                     : "chatbubble-outline";
               const look: RowLook = {
                 kind: "history",
-                detail: preview(messages[t.id]) || t.preview || model.name,
+                detail: snippets.get(t.id) || preview(messages[t.id]) || t.preview || model.name,
                 time: when(t.updatedAt),
                 active: t.id === activeId,
                 first: i === 0,
@@ -227,6 +262,34 @@ export default function HistoryScreen() {
             })}
           </Group>
         ))}
+        {older.length > 0 ? (
+          <Group label="Earlier chats">
+            {older.map((h, i) => (
+              <Tap
+                key={h.threadId}
+                accessibilityRole="button"
+                accessibilityLabel={h.title}
+                onPress={() => void openOlder(h.threadId)}
+                className={`flex-row items-center gap-3 px-4 py-3.5 ${i < older.length - 1 ? "border-b border-hairline" : ""}`}
+              >
+                <Icon name="chatbubble-outline" size={18} color={colors.textMuted} />
+                <View className="flex-1">
+                  <View className="flex-row items-baseline gap-2">
+                    <Text weight="bold" className="flex-1 text-base" numberOfLines={1}>
+                      {h.title}
+                    </Text>
+                    <Text className="text-xs text-ink-faint">{when(h.updatedAt)}</Text>
+                  </View>
+                  {h.snippet.trim() ? (
+                    <Text muted className="mt-0.5 text-sm leading-5" numberOfLines={1}>
+                      {h.snippet.trim()}
+                    </Text>
+                  ) : null}
+                </View>
+              </Tap>
+            ))}
+          </Group>
+        ) : null}
       </Page>
       <ThreadMenu target={menu} onClose={() => setMenu(null)} />
     </View>

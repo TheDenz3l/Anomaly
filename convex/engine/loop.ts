@@ -69,6 +69,8 @@ export type LoopOptions = {
   webRoundsDone?: number;
   /** Level for a first step that's expected to pick a search, not write the answer. */
   routeLevel?: string;
+  /** Request fields every step sends, e.g. OpenRouter routing for a video the model watches. */
+  bodyExtra?: Record<string, unknown>;
 };
 
 export type StepTiming = {
@@ -80,6 +82,8 @@ export type StepTiming = {
   /** Tools this step called, and how long they took together. */
   tools: number;
   toolsMs?: number;
+  /** Why the provider ended the step: "stop", "tool_calls", "length", "content_filter"… */
+  finish?: string;
 };
 
 export type LoopResult = {
@@ -100,6 +104,8 @@ export type LoopResult = {
   timings: StepTiming[];
   /** When the first answer text arrived. */
   firstTextAt?: number;
+  /** Why the provider ended the last step. */
+  finishReason?: string;
 };
 
 const TOOL_RESULT_MAX = 12_000;
@@ -204,6 +210,27 @@ const PARAM_ALIASES: [RegExp, string][] = [
   [/\btools?\b|function.?call/i, "tools"],
 ];
 
+function hasVideo(messages: unknown): boolean {
+  return (
+    Array.isArray(messages) &&
+    messages.some(
+      (m: ChatMessage) =>
+        m.role === "user" &&
+        Array.isArray(m.content) &&
+        m.content.some((c) => c.type === "video_url")
+    )
+  );
+}
+
+/** The conversation without video parts. */
+export function stripVideos(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) =>
+    m.role === "user" && Array.isArray(m.content)
+      ? { ...m, content: m.content.filter((c) => c.type !== "video_url") }
+      : m
+  );
+}
+
 function stripImages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((m) => {
     if (m.role !== "user" || typeof m.content === "string") return m;
@@ -271,6 +298,33 @@ function trimForOverflow(messages: ChatMessage[]): ChatMessage[] | null {
 const LAST_ROUND_NOTE =
   "That was the last search for this reply. Write the complete answer now from everything found so far. Where the results lack a detail, give what they do say and name the gap in a few words; never answer with a plan to search or check more.";
 
+/** Sent when a final step asked for a tool instead of answering. */
+const ANSWER_NOW =
+  "[No more tools are available for this reply.] Write your answer to my last message now, in text, from what you already have. If something is still uncertain, say so briefly instead of searching again.";
+
+/**
+ * The conversation with tool calls and results written as plain text, for a model that keeps
+ * calling tools when it sees earlier calls but is offered none.
+ */
+export function flattenTools(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  const add = (role: "user" | "assistant", text: string) => {
+    const prev = out[out.length - 1];
+    if (prev?.role === role && typeof prev.content === "string") prev.content += `\n\n${text}`;
+    else out.push({ role, content: text });
+  };
+  for (const m of messages) {
+    if (m.role === "tool") add("user", `[Tool result]\n${m.content ?? ""}`);
+    else if (m.role === "assistant" && m.tool_calls?.length) {
+      const calls = m.tool_calls.map(
+        (c) => `[Called ${c.function.name}(${c.function.arguments || "{}"})]`
+      );
+      add("assistant", [m.content ?? "", ...calls].filter(Boolean).join("\n"));
+    } else out.push(m);
+  }
+  return out;
+}
+
 export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
   const { engine, sink, sources } = o;
   const signal = o.signal ?? new AbortController();
@@ -295,6 +349,11 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
   };
   let webDone = o.webRoundsDone ?? 0;
   let finalNext = false;
+  /** Steps this reply may take; a final step that only tried to call tools earns a retry. */
+  let budget = maxSteps;
+  let strayRetries = 0;
+  /** Cleared when the endpoint refuses the video, so later steps don't send it again. */
+  let videoOk = true;
   let nativeSearch = Boolean(o.nativeSearch);
   /** Cards whose photos are still being found; the reply waits for them before it's saved. */
   const photosPending: Promise<void>[] = [];
@@ -309,9 +368,9 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
     }
   };
 
-  for (let step = 0; step < maxSteps; step++) {
+  for (let step = 0; step < budget; step++) {
     result.steps = step + 1;
-    const lastStep = finalNext || step === maxSteps - 1;
+    const lastStep = finalNext || step === budget - 1;
     // Once the web rounds are spent, app tools leave the list so the model answers from what it
     // found instead of paying another round trip. Data tools go too: denied a search, models reach
     // for whatever is left (a location request or a weather card on a news question).
@@ -325,7 +384,7 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
       o.routeLevel !== undefined &&
       webDone === 0 &&
       offered.some((t) => WEB_TOOLS.has(t.def.function.name));
-    const extra: Record<string, unknown> = {};
+    const extra: Record<string, unknown> = { ...(videoOk ? o.bodyExtra : undefined) };
     if (nativeSearch && step === 0) {
       if (engine.profile.params?.nativeSearch === "openrouter")
         extra.plugins = [{ id: "web", max_results: 5 }];
@@ -465,6 +524,8 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
               result.costUsd = (result.costUsd ?? 0) + ev.usage.costUsd;
             break;
           case "finish":
+            timing.finish = ev.reason;
+            result.finishReason = ev.reason;
             break;
         }
         if (await sink.tick()) {
@@ -497,6 +558,16 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
           { status: e.status, body: e.body.slice(0, 300) },
           await engine.dp.errorKind(e.status, e.body, e.kind)
         );
+        // A video the endpoint can't take (not routed, or not a provider that watches links) goes;
+        // its transcript and frames are still in the message.
+        if (kind !== "auth" && kind !== "rate_limit" && hasVideo(built.body.messages)) {
+          built.body.messages = stripVideos(built.body.messages as ChatMessage[]);
+          messages.splice(0, messages.length, ...stripVideos(messages));
+          for (const k of Object.keys(o.bodyExtra ?? {})) delete built.body[k];
+          videoOk = false;
+          console.warn(`[video] dropped the video after: ${(e.body || e.message).slice(0, 200)}`);
+          continue;
+        }
         if (kind === "bad_param") {
           const fixed = repairBody(built.body, e.body || e.message, built.reasoningKeys, engine);
           if (fixed === "plugins" || fixed === "web_search_options") nativeSearch = false;
@@ -530,6 +601,19 @@ export async function runModelLoop(o: LoopOptions): Promise<LoopResult> {
       content: stepText || null,
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
     });
+    // Tools weren't offered (the final step), yet the model only asked for one: models like Gemini
+    // do this after a search instead of writing the answer, which left the reply empty. Ask again
+    // for the answer, then with the tool exchanges written out as text, before giving up.
+    if (toolCalls.length && defs.length === 0 && !stepText.trim() && strayRetries < 2) {
+      timing.finish = `stray_tool_calls(${toolCalls.map((c) => c.function.name).join(",")})`;
+      messages.pop();
+      if (strayRetries === 1) messages.splice(0, messages.length, ...flattenTools(messages));
+      messages.push({ role: "user", content: ANSWER_NOW });
+      strayRetries++;
+      finalNext = true;
+      budget = Math.max(budget, step + 2);
+      continue;
+    }
     // Tools weren't offered this step (final step): ignore stray calls instead of looping.
     if (!toolCalls.length || defs.length === 0) break;
 

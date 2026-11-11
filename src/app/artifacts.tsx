@@ -18,10 +18,12 @@ import { colors } from "@/lib/theme";
 type Filter = "all" | ArtifactGroup;
 
 const emptyCopy: Record<Filter, string> = {
-  all: "Charts, tables, guides and research reports Anomaly makes in your chats collect here.",
+  all: "Charts, tables, guides, files and research reports Anomaly makes in your chats collect here.",
   apps: "Calculators, checklists, guides and maps you can use again will show up here.",
   reports: "Deep Research reports land here. Turn on Research in the composer to start one.",
   data: "Tables, comparisons and timelines from your chats will show up here.",
+  files:
+    "Documents and files Anomaly writes for you, like a PRD.md or a CSV, show up here to download.",
 };
 
 function Grid({
@@ -68,7 +70,13 @@ export default function ArtifactsScreen() {
   const [menuFor, setMenuFor] = useState<Artifact | null>(null);
 
   const counts = useMemo(() => {
-    const c: Record<Filter, number> = { all: artifacts.length, apps: 0, reports: 0, data: 0 };
+    const c: Record<Filter, number> = {
+      all: artifacts.length,
+      apps: 0,
+      reports: 0,
+      data: 0,
+      files: 0,
+    };
     for (const a of artifacts) c[a.group] += 1;
     return c;
   }, [artifacts]);
@@ -88,7 +96,7 @@ export default function ArtifactsScreen() {
     router.push({ pathname: "/artifact/[id]", params: { id: a.id } });
   };
 
-  const filters: Filter[] = ["all", "apps", "reports", "data"];
+  const filters: Filter[] = ["all", "apps", "reports", "data", "files"];
 
   return (
     <View className="flex-1">

@@ -45,6 +45,14 @@ import {
 } from "./tools";
 import { imageTool, wantsImage } from "./image";
 import { describeImages } from "./vision";
+import {
+  NATIVE_VIDEO_ROUTING,
+  prepareVideos,
+  videoNote,
+  videoSight,
+  type VideoBlock,
+} from "./video";
+import { watchUrl, withoutVideoLinks, youtubeIds } from "../web/youtube";
 import { PartWriter } from "./writer";
 import { followUpQuery, profileBrief, profileCard, profileNote, profileQuery } from "./profile";
 import { type ChatMessage } from "../ai/openai";
@@ -244,6 +252,20 @@ export async function runTurn(
           console.warn("vision stand-in failed", (err as Error).message);
           return null;
         });
+    // Videos the user linked are read (and their frames fetched) alongside the router too.
+    const maxChars = Math.max(16_000, Math.floor(engine.contextWindow * 2.5));
+    const videosRun = prepareVideos(ctx, history, {
+      sight: videoSight({
+        baseUrl: engine.endpoint.baseUrl,
+        modelId: engine.modelId,
+        vision: profile.features.vision,
+      }),
+      maxChars,
+      signal: signal.signal,
+    }).catch((err): Map<string, VideoBlock> => {
+      console.warn("video read failed", (err as Error).message);
+      return new Map();
+    });
     const canTools = profile.features.tools;
     const nativeAvailable = profile.features.webSearch && settings.webMode !== "app";
     const photos = Boolean(text) && !input.event && wantsPhotos(text);
@@ -398,8 +420,8 @@ export async function runTurn(
         (settings.webMode === "auto" && canTools)) &&
       it !== "memory";
     const appWeb = appWebAllowed && !skipWeb && !bare;
-    // "Don't search" isn't "don't open the link I gave you".
-    const readLink = !appWeb && appWebAllowed && /https?:\/\/\S/i.test(text);
+    // "Don't search" isn't "don't open the link I gave you". A YouTube link is read already.
+    const readLink = !appWeb && appWebAllowed && /https?:\/\/\S/i.test(withoutVideoLinks(text));
     const useNative = nativeAvailable && searchMode !== "none";
 
     // Sub-agent decision → delegation.
@@ -509,10 +531,24 @@ export async function runTurn(
         "You can't take images, so a vision model described the user's photos for you (in <photo_description>). Answer from those descriptions as if you had seen the photos, and don't say you can't see images."
       );
     }
+    const videos = await videosRun;
+    if (videos.size) {
+      extra.push(videoNote(videos));
+      for (const id of youtubeIds(text)) {
+        const info = videos.get(id)?.info;
+        if (info) {
+          sources.add(
+            makeSource(watchUrl(id), info.title, info.description || info.channel, "app")
+          );
+        }
+      }
+    }
     const hist = await toChatMessages(ctx, history, {
       vision: profile.features.vision,
-      maxChars: Math.max(16_000, Math.floor(engine.contextWindow * 2.5)),
+      maxChars,
+      videos,
     });
+    const watching = [...videos.values()].some((v) => v.parts.some((p) => p.type === "video_url"));
     // Shown under the reply (not written into it) when the photos went unread.
     if (hist.droppedImages && input.images && !meta.visionModelRef) meta.visionSkipped = true;
 
@@ -566,6 +602,7 @@ export async function runTurn(
       maxSteps: 8,
       showThinking: thread.reasoningLevel !== "off",
       nativeSearch: useNative,
+      bodyExtra: watching ? NATIVE_VIDEO_ROUTING : undefined,
       sources,
       signal,
       webRounds,
@@ -588,7 +625,10 @@ export async function runTurn(
       .map(
         (s) =>
           `${s.level}:${s.textMs !== undefined ? `text@${s.textMs}` : `first@${s.firstMs ?? "-"}`}ms` +
-          (s.tools ? `+${s.tools}tool/${s.toolsMs}ms` : "")
+          (s.tools ? `+${s.tools}tool/${s.toolsMs}ms` : "") +
+          (s.finish && s.finish !== "stop" && s.finish !== "tool_calls"
+            ? ` finish=${s.finish}`
+            : "")
       )
       .join(" | ");
     console.log(

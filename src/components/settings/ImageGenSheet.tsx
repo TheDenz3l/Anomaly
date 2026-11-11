@@ -255,12 +255,17 @@ export function ImageGenSheet({ open, onClose }: { open: boolean; onClose: () =>
       onClose={close}
       title="Image generation"
       leading={{ label: "Cancel", icon: "close", onPress: close }}
-      confirm={{
-        label: "Save",
-        icon: "checkmark",
-        disabled: busy || probing || !ready || !changed,
-        onPress: () => void submit(),
-      }}
+      confirm={
+        // A saved setup shows Save only once something changed.
+        current && !changed && !busy
+          ? undefined
+          : {
+              label: "Save",
+              icon: "checkmark",
+              disabled: busy || probing || !ready || !changed,
+              onPress: () => void submit(),
+            }
+      }
       onShown={() => {
         // An existing setup is checked again as the sheet opens, with its stored key.
         if (current?.hasKey) void find(current.baseUrl, "");

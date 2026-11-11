@@ -26,7 +26,7 @@ const hoverable = Platform.OS === "web";
  * Your message, with a copy button underneath. On web it appears while the pointer is over the
  * message (its row keeps its space, so nothing shifts); on touch screens a tap on the bubble shows it.
  */
-function UserBubble({ text }: { text: string }) {
+function UserBubble({ text, onEdit }: { text: string; onEdit?: () => void }) {
   const showToast = useApp((s) => s.showToast);
   const [hover, setHover] = useState(false);
   const [open, setOpen] = useState(false);
@@ -55,6 +55,23 @@ function UserBubble({ text }: { text: string }) {
       </View>
       {hoverable || shown ? (
         <View className="h-8 flex-row items-center justify-end" style={{ opacity: shown ? 1 : 0 }}>
+          {onEdit ? (
+            <Tap
+              accessibilityRole="button"
+              accessibilityLabel="Edit message"
+              accessibilityHint="Rewrites this message and answers it again"
+              onPress={() => {
+                setOpen(false);
+                onEdit();
+              }}
+              onFocus={() => setHover(true)}
+              onBlur={() => setHover(false)}
+              hitSlop={4}
+              className="h-8 w-[30px] items-center justify-center rounded-full"
+            >
+              <Icon name="create-outline" size={17} color={colors.textMuted} />
+            </Tap>
+          ) : null}
           <Tap
             accessibilityRole="button"
             accessibilityLabel={copied ? "Copied" : "Copy message"}
@@ -77,6 +94,10 @@ function UserBubble({ text }: { text: string }) {
 }
 
 function UserMessageRow({ message }: { message: Message }) {
+  // Only a message of the open chat that the server already holds can be rewritten.
+  const editable =
+    useApp((s) => s.activeThreadId === message.threadId) && !message.id.includes("_tmp");
+  const startEdit = useApp((s) => s.startEdit);
   const event = message.parts.find((p) => p.type === "ui_event");
   if (event && event.type === "ui_event") {
     // Auto-saves are the system acting, not the user — the memory card already shows it.
@@ -152,7 +173,9 @@ function UserMessageRow({ message }: { message: Message }) {
           )}
         </View>
       ) : null}
-      {text && text.type === "text" ? <UserBubble text={text.text} /> : null}
+      {text && text.type === "text" ? (
+        <UserBubble text={text.text} onEdit={editable ? () => startEdit(message.id) : undefined} />
+      ) : null}
     </View>
   );
 }
@@ -220,7 +243,7 @@ function AssistantMessageRow({
         })}
         {tail && status ? <TailGlobe phase={status.phase} /> : null}
         {!streaming ? (
-          <SourcesBar message={message} sources={sources} onRegenerate={onRegenerate} />
+          <SourcesBar message={message} sources={sources} last={last} onRegenerate={onRegenerate} />
         ) : null}
         {last ? null : <View className="h-1" />}
       </View>

@@ -94,6 +94,35 @@ export async function stopStreaming(
   return n;
 }
 
+/** Deletes one message with everything stored against it: sources, attachments, saves, decisions. */
+export async function deleteMessage(ctx: MutationCtx, m: Doc<"messages">): Promise<void> {
+  const srcs = await ctx.db
+    .query("sources")
+    .withIndex("by_message", (q) => q.eq("messageId", m._id))
+    .collect();
+  for (const s of srcs) await ctx.db.delete(s._id);
+  const atts = await ctx.db
+    .query("attachments")
+    .withIndex("by_message", (q) => q.eq("messageId", m._id))
+    .collect();
+  for (const a of atts) {
+    await ctx.storage.delete(a.storageId).catch(() => {});
+    if (a.textStorageId) await ctx.storage.delete(a.textStorageId).catch(() => {});
+    await ctx.db.delete(a._id);
+  }
+  const saved = await ctx.db
+    .query("saved")
+    .withIndex("by_user_ref", (q) => q.eq("userId", m.userId).eq("refId", m._id))
+    .collect();
+  for (const s of saved) await ctx.db.delete(s._id);
+  const logged = await ctx.db
+    .query("decisions")
+    .withIndex("by_ref", (q) => q.eq("refId", m._id))
+    .collect();
+  for (const d of logged) await ctx.db.delete(d._id);
+  await ctx.db.delete(m._id);
+}
+
 export async function findComponent(
   ctx: QueryCtx,
   threadId: Id<"threads">,

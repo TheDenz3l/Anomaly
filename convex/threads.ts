@@ -3,7 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { optionalUser, ownThread, requireUser } from "./lib/auth";
-import { stopStreaming } from "./lib/messages";
+import { deleteMessage, stopStreaming } from "./lib/messages";
 import { loadSettings } from "./lib/settings";
 import { vThreadMode } from "./lib/validators";
 
@@ -175,33 +175,7 @@ export const purge = internalMutation({
       .query("messages")
       .withIndex("by_thread", (q) => q.eq("threadId", threadId))
       .take(BATCH);
-    for (const m of messages) {
-      const srcs = await ctx.db
-        .query("sources")
-        .withIndex("by_message", (q) => q.eq("messageId", m._id))
-        .collect();
-      for (const s of srcs) await ctx.db.delete(s._id);
-      const atts = await ctx.db
-        .query("attachments")
-        .withIndex("by_message", (q) => q.eq("messageId", m._id))
-        .collect();
-      for (const a of atts) {
-        await ctx.storage.delete(a.storageId).catch(() => {});
-        if (a.textStorageId) await ctx.storage.delete(a.textStorageId).catch(() => {});
-        await ctx.db.delete(a._id);
-      }
-      const saved = await ctx.db
-        .query("saved")
-        .withIndex("by_user_ref", (q) => q.eq("userId", userId).eq("refId", m._id))
-        .collect();
-      for (const s of saved) await ctx.db.delete(s._id);
-      const logged = await ctx.db
-        .query("decisions")
-        .withIndex("by_ref", (q) => q.eq("refId", m._id))
-        .collect();
-      for (const d of logged) await ctx.db.delete(d._id);
-      await ctx.db.delete(m._id);
-    }
+    for (const m of messages) await deleteMessage(ctx, m);
     if (messages.length === BATCH) {
       await ctx.scheduler.runAfter(0, internal.threads.purge, { threadId, userId });
       return;

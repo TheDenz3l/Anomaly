@@ -6,6 +6,7 @@ import { textOf } from "../lib/messages";
 import { errorMessage, uid } from "../lib/util";
 import type { ReplyMeta } from "../lib/validators";
 import type { SourceCollector } from "../web/sources";
+import { recordReply } from "../health";
 import { estimateCost, flushRecords, learn, type Engine } from "./context";
 import type { LoopResult } from "./loop";
 import type { PartWriter } from "./writer";
@@ -28,11 +29,7 @@ export async function finishTurn(
   const hasContent = sink.parts.some(
     (p) => (p.type === "text" && p.text.trim()) || p.type === "component"
   );
-  if (!hasContent && !sink.stopped) {
-    sink.text(
-      "I couldn't put together an answer this time. Try rephrasing, or pick a different model."
-    );
-  }
+  if (!hasContent && !sink.stopped) sink.text(emptyReply(o.result?.finishReason));
   if (list.length) sink.add({ id: uid("src"), type: "sources", sources: list });
 
   const r = o.result;
@@ -88,7 +85,28 @@ export async function finishTurn(
           costUsd: meta.costUsd,
         })
       : null,
+    r && !sink.stopped
+      ? recordReply(
+          engine.ctx,
+          engine.userId,
+          engine.providerId,
+          engine.modelId,
+          undefined,
+          o.result?.timings[0]
+        )
+      : null,
   ]);
+}
+
+/** Finish reasons that mean the provider's safety filter cut the reply off. */
+const FILTERED = /content_filter|safety|refusal|prohibited|blocklist|spii|recitation/i;
+
+/** What a reply that came back empty says instead. */
+export function emptyReply(finishReason?: string): string {
+  if (finishReason && FILTERED.test(finishReason)) {
+    return "The model's safety filter stopped this reply. Many models won't say who a person in a photo is. Ask something else about the photo, or pick a different model.";
+  }
+  return "I couldn't put together an answer this time. Try rephrasing, or pick a different model.";
 }
 
 export function friendlyError(e: unknown, engine: Engine | null): string {
@@ -128,5 +146,9 @@ export async function failTurn(
   console.error("turn failed", errorMessage(e));
   sink.text(`${sink.parts.some((p) => p.type === "text") ? "\n\n" : ""}${msg}`);
   await sink.finish({ status: sink.stopped ? "stopped" : "error", error: msg, meta });
-  if (engine) await flushRecords(engine).catch(() => {});
+  if (engine) {
+    await flushRecords(engine).catch(() => {});
+    if (!sink.stopped)
+      await recordReply(engine.ctx, engine.userId, engine.providerId, engine.modelId, e);
+  }
 }

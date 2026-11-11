@@ -3,10 +3,10 @@ import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
 import { ActionButton, Pill } from "@/genui/kit";
-import { modelRef } from "@/lib/models";
-import { useApp } from "@/lib/store";
+import { modelRef, speedLabel, speedMs } from "@/lib/models";
+import { ALL_PROVIDERS, useApp } from "@/lib/store";
 import { colors, fonts, LIST_RADIUS } from "@/lib/theme";
-import type { CapabilityProfile, Model, Provider } from "@/lib/types";
+import type { CapabilityProfile, HealthStatus, Model, ModelHealth, Provider } from "@/lib/types";
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState, ReactNode, RefObject } from "react";
 import {
@@ -744,10 +744,59 @@ function ProviderBalance({ provider, active }: { provider: Provider; active: boo
 }
 
 /** A provider's models: refresh, search, and each model's capability profile. */
+const HEALTH: Record<HealthStatus, { label: string; color: string }> = {
+  normal: { label: "Normal", color: colors.success },
+  degraded: { label: "Degraded", color: colors.warning },
+  down: { label: "Down", color: colors.danger },
+};
+
+/** Readings older than this get checked again when the provider opens. */
+const HEALTH_STALE_MS = 15 * 60_000;
+
+/** A dot and a word. Problems take the status colour; normal stays quiet. */
+function HealthBadge({ health, checking }: { health?: ModelHealth; checking: boolean }) {
+  if (!health) return checking ? <ActivityIndicator size="small" color={colors.textFaint} /> : null;
+  const s = HEALTH[health.status];
+  // A working model shows how fast it starts answering instead of the word "Normal".
+  const ms = health.status === "normal" ? speedMs({ health }) : undefined;
+  return (
+    <View className="flex-row items-center gap-1.5">
+      <View style={[styles.dot, { backgroundColor: s.color }]} />
+      <Text
+        weight="medium"
+        className="text-[13px]"
+        style={{ color: health.status === "normal" ? colors.textMuted : s.color }}
+      >
+        {ms ? speedLabel(ms) : s.label}
+      </Text>
+    </View>
+  );
+}
+
+/** "36 normal, 1 down. Updated 3 min ago." */
+function healthSummary(models: Model[]): string | null {
+  const read = models.flatMap((m) => (m.health ? [m.health] : []));
+  if (!read.length) return null;
+  const counts = (Object.keys(HEALTH) as HealthStatus[])
+    .map((s) => [s, read.filter((h) => h.status === s).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([s, n]) => `${n} ${s}`);
+  const latest = Math.max(...read.map((h) => h.checkedAt));
+  return `${counts.join(", ")}. Updated ${timeAgo(latest)}.`;
+}
+
+/** A provider's models: refresh, search, each model's status and capability profile. */
 function ProviderModels({ providerId }: { providerId: string }) {
   const models = useApp((s) => s.models);
+  const connected = useApp(
+    (s) => s.providers.find((p) => p.providerId === providerId)?.status === "connected"
+  );
   const refresh = useApp((s) => s.refreshProvider);
+  const checkHealth = useApp((s) => s.checkModelHealth);
   const [busy, setBusy] = useState(false);
+  const checking = useApp(
+    (s) => s.healthChecks.includes(providerId) || s.healthChecks.includes(ALL_PROVIDERS)
+  );
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -755,13 +804,28 @@ function ProviderModels({ providerId }: { providerId: string }) {
   const q = filter.trim().toLowerCase();
   const matching = q ? all.filter((m) => `${m.name} ${m.id}`.toLowerCase().includes(q)) : all;
   const list = matching.slice(0, 60);
+  const summary = healthSummary(all);
+
+  // Opening the provider checks its models when any reading is missing or old.
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    if (!connected || autoChecked.current) return;
+    const now = Date.now();
+    const mine = models.filter((m) => m.providerId === providerId);
+    const stale = mine.some((m) => !m.health || now - m.health.checkedAt > HEALTH_STALE_MS);
+    if (!stale) return;
+    autoChecked.current = true;
+    void checkHealth(providerId, false);
+  }, [connected, models, providerId, checkHealth]);
 
   const run = async () => {
     setBusy(true);
     setError(null);
     const res = await refresh(providerId);
     setBusy(false);
-    if (!res.ok) setError(res.error ?? "Couldn't fetch models.");
+    if (!res.ok) return setError(res.error ?? "Couldn't fetch models.");
+    const checked = await checkHealth(providerId, true);
+    if (!checked.ok) setError(checked.error ?? "Couldn't check the models' status.");
   };
 
   return (
@@ -772,19 +836,19 @@ function ProviderModels({ providerId }: { providerId: string }) {
         </Text>
         <Tap
           accessibilityRole="button"
-          accessibilityLabel="Refresh models"
-          disabled={busy}
+          accessibilityLabel="Refresh models and status"
+          disabled={busy || checking}
           hitSlop={8}
           onPress={() => void run()}
           className="flex-row items-center gap-1.5"
         >
-          {busy ? (
+          {busy || checking ? (
             <ActivityIndicator size="small" color={colors.primaryStrong} />
           ) : (
             <Icon name="refresh" size={14} color={colors.primaryStrong} />
           )}
           <Text weight="medium" className="text-[13px] text-primary-strong">
-            Refresh
+            {checking ? "Checking" : "Refresh"}
           </Text>
         </Tap>
       </View>
@@ -821,6 +885,9 @@ function ProviderModels({ providerId }: { providerId: string }) {
               <View key={ref} className="px-4 py-3">
                 <Tap
                   accessibilityRole="button"
+                  accessibilityLabel={
+                    m.health ? `${m.name}, ${HEALTH[m.health.status].label}` : m.name
+                  }
                   accessibilityState={{ expanded: isOpen }}
                   onPress={() => setExpanded(isOpen ? null : ref)}
                   className="flex-row items-center gap-2"
@@ -829,7 +896,7 @@ function ProviderModels({ providerId }: { providerId: string }) {
                     {m.name}
                   </Text>
                   {m.profile.source === "manual" ? <Pill label="Manual" tone="primary" /> : null}
-                  {m.profile.confidence < 0.8 ? <Pill label="Unverified" tone="warning" /> : null}
+                  <HealthBadge health={m.health} checking={checking} />
                   <Icon
                     name={isOpen ? "chevron-up" : "chevron-down"}
                     size={15}
@@ -843,6 +910,13 @@ function ProviderModels({ providerId }: { providerId: string }) {
           })}
         </View>
       )}
+      {checking || summary ? (
+        <View className="mt-2 px-4">
+          <Footnote>
+            {checking ? "Checking each model with a tiny request." : (summary as string)}
+          </Footnote>
+        </View>
+      ) : null}
       {matching.length > list.length ? (
         <View className="mt-2 px-4">
           <Footnote>{`Showing ${list.length} of ${matching.length}. Search to find the rest.`}</Footnote>
@@ -885,6 +959,14 @@ function ModelProfile({ model }: { model: Model }) {
 
   return (
     <View className="gap-3 pb-1 pt-2">
+      {model.health ? (
+        <View className="gap-1.5">
+          <Text muted className="text-xs">
+            Status
+          </Text>
+          <Text className="text-sm">{statusLine(model.health)}</Text>
+        </View>
+      ) : null}
       <View className="gap-1.5">
         <Text muted className="text-xs">
           Reasoning
@@ -1591,7 +1673,12 @@ export function ProviderSheet({
       : mode === "chatgpt"
         ? "chatgpt"
         : `${mode}:${preset?.id ?? "other"}`;
-  const nothingToSave = mode === "pick" || mode === "chatgpt" || Boolean(existing?.subscription);
+  // A saved provider shows Save only once something changed.
+  const nothingToSave =
+    mode === "pick" ||
+    mode === "chatgpt" ||
+    Boolean(existing?.subscription) ||
+    (mode === "edit" && !dirty && !saving);
   const entering =
     motion === "forward"
       ? SlideInRight.duration(260)
@@ -1731,3 +1818,14 @@ const styles = StyleSheet.create({
     backgroundColor: GROUP_BG,
   },
 });
+/** "Normal, started replying in 1.2s. Updated 3 min ago." or "Degraded: Rate-limited. …" */
+function statusLine(h: ModelHealth): string {
+  const when = `Updated ${timeAgo(h.checkedAt)}.`;
+  if (h.status === "normal") {
+    if (h.textMs && h.latencyMs && h.textMs - h.latencyMs > 300)
+      return `Normal, responded in ${speedLabel(h.latencyMs)}, first words in ${speedLabel(h.textMs)}. ${when}`;
+    const ms = h.textMs ?? h.latencyMs;
+    return ms ? `Normal, started replying in ${speedLabel(ms)}. ${when}` : `Normal. ${when}`;
+  }
+  return `${HEALTH[h.status].label}${h.detail ? `: ${h.detail}` : ""}. ${when}`;
+}

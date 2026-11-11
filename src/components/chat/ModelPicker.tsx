@@ -1,6 +1,7 @@
 import { router } from "expo-router";
 import { useMemo, useState, type ReactNode, useRef } from "react";
 import {
+  ActivityIndicator,
   Keyboard,
   ScrollView,
   StyleSheet,
@@ -21,11 +22,11 @@ import { FormSheet, GROUP_BG, floatingSheetBox, TOOLBAR_H } from "@/components/u
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
-import { modelRef } from "@/lib/models";
-import { findModel, useApp } from "@/lib/store";
+import { bySpeed, modelRef, speedLabel, speedMs } from "@/lib/models";
+import { ALL_PROVIDERS, findModel, useApp } from "@/lib/store";
 import { colors, fonts, LIST_RADIUS } from "@/lib/theme";
 
-import type { Model } from "@/lib/types";
+import type { HealthStatus, Model } from "@/lib/types";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { scheduleOnRN } from "react-native-worklets";
 import { clampedOut } from "@/lib/motion";
@@ -99,6 +100,29 @@ function ProviderChip({
   );
 }
 
+/** How old a timing may be before sorting by speed takes new ones. */
+const SPEED_STALE_MS = 15 * 60_000;
+
+/** Sorts the full list by how fast each model starts answering. */
+function FastestChip({ on, onPress }: { on: boolean; onPress: () => void }) {
+  return (
+    <Tap
+      haptic
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+      accessibilityLabel="Fastest first"
+      accessibilityHint="Sorts models by how quickly they start answering"
+      onPress={onPress}
+      style={[styles.chip, on ? styles.chipOn : null]}
+    >
+      <Icon name="flash" size={13} color={on ? "#000" : colors.text} />
+      <Text weight="medium" className="text-[14px]" style={{ color: on ? "#000" : colors.text }}>
+        Fastest
+      </Text>
+    </Tap>
+  );
+}
+
 /**
  * A row of the full list. One line, so more of the list fits above the keyboard while searching;
  * the part of the name that matches the search is set in bold.
@@ -106,6 +130,7 @@ function ProviderChip({
 function ModelRow({
   name,
   meta,
+  status,
   query,
   selected,
   first,
@@ -114,6 +139,8 @@ function ModelRow({
 }: {
   name: string;
   meta: string;
+  /** Marked only when something is wrong; a normal model stays plain. */
+  status?: HealthStatus;
   query: string;
   selected: boolean;
   first: boolean;
@@ -121,12 +148,13 @@ function ModelRow({
   onPress: () => void;
 }) {
   const at = query ? name.toLowerCase().indexOf(query) : -1;
+  const flagged = status === "degraded" || status === "down";
   return (
     <Tap
       haptic
       accessibilityRole="radio"
       accessibilityState={{ selected }}
-      accessibilityLabel={`${name}, ${meta}`}
+      accessibilityLabel={`${name}, ${flagged ? `${status}, ` : ""}${meta}`}
       onPress={onPress}
       style={[styles.slim, first && styles.slimFirst, last && styles.slimLast]}
     >
@@ -143,6 +171,14 @@ function ModelRow({
           </>
         )}
       </Text>
+      {flagged ? (
+        <View
+          style={[
+            styles.status,
+            { backgroundColor: status === "down" ? colors.danger : colors.warning },
+          ]}
+        />
+      ) : null}
       <Text muted className="text-[15px]" numberOfLines={1}>
         {meta}
       </Text>
@@ -255,6 +291,11 @@ export function ModelPicker({
   const models = useApp((s) => s.models);
   const threads = useApp((s) => s.threads);
   const settings = useApp((s) => s.settings);
+  const checkAllHealth = useApp((s) => s.checkAllHealth);
+  const timing = useApp((s) => s.healthChecks.includes(ALL_PROVIDERS));
+  const showToast = useApp((s) => s.showToast);
+  /** The full list sorted by how fast each model starts answering. */
+  const [fastest, setFastest] = useState(false);
   const insets = useSafeAreaInsets();
   const screen = useWindowDimensions();
   const box = floatingSheetBox(screen, insets.top);
@@ -323,7 +364,10 @@ export function ModelPicker({
     onClose();
   };
   const providerLabel = (id: string) => providers.find((p) => p.providerId === id)?.label ?? id;
-  const describe = (m: Model) => `${providerLabel(m.providerId)}, ${contextLabel(m.contextWindow)}`;
+  const describe = (m: Model) => {
+    const ms = speedMs(m);
+    return `${providerLabel(m.providerId)}, ${contextLabel(m.contextWindow)}${ms ? `, ${speedLabel(ms)}` : ""}`;
+  };
   // An unset choice falls back to a model; mark that one, as the composer shows it.
   const resolved = findModel(models, requested);
   const value = resolved.providerId ? modelRef(resolved) : requested;
@@ -365,6 +409,7 @@ export function ModelPicker({
     setQuery("");
     setLeaving(false);
     setProvider(null);
+    setFastest(false);
     slide.set(0);
     mainScroll.current?.scrollTo({ y: 0, animated: false });
     allList.current?.scrollToOffset({ offset: 0, animated: false });
@@ -490,15 +535,28 @@ export function ModelPicker({
     for (const m of models) out.set(m.providerId, (out.get(m.providerId) ?? 0) + 1);
     return out;
   }, [models]);
-  const results = useMemo(
-    () =>
-      models.filter(
-        (m) =>
-          (!scope || m.providerId === scope) &&
-          (!q || `${m.name} ${m.id}`.toLowerCase().includes(q))
-      ),
-    [models, scope, q]
-  );
+  const results = useMemo(() => {
+    const list = models.filter(
+      (m) =>
+        (!scope || m.providerId === scope) && (!q || `${m.name} ${m.id}`.toLowerCase().includes(q))
+    );
+    return fastest ? bySpeed(list) : list;
+  }, [models, scope, q, fastest]);
+  const timeModels = async (force: boolean) => {
+    const res = await checkAllHealth(force);
+    if (!res.ok) showToast(res.error ?? "Couldn't time the models.", "danger");
+  };
+  const toggleFastest = () => {
+    const on = !fastest;
+    setFastest(on);
+    allList.current?.scrollToOffset({ offset: 0, animated: false });
+    if (!on) return;
+    // Timings come from a tiny request to each model; missing or old ones are taken now.
+    const now = Date.now();
+    if (models.some((m) => !m.health || now - m.health.checkedAt > SPEED_STALE_MS))
+      void timeModels(false);
+  };
+  const timed = fastest ? results.filter((m) => speedMs(m) !== undefined).length : 0;
   const inScope = scope ? (counts.get(scope) ?? 0) : models.length;
   const toTop = () => allList.current?.scrollToOffset({ offset: 0, animated: false });
   const search = (text: string) => {
@@ -537,6 +595,7 @@ export function ModelPicker({
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.chips}
         >
+          <FastestChip on={fastest} onPress={toggleFastest} />
           {multi ? (
             <ProviderChip
               label="All"
@@ -563,11 +622,19 @@ export function ModelPicker({
         renderItem={({ item, index }) => (
           <ModelRow
             name={item.name}
-            meta={
-              multi && !scope
-                ? `${providerLabel(item.providerId)}, ${contextShort(item.contextWindow)}`
-                : contextShort(item.contextWindow)
-            }
+            meta={[
+              multi && !scope ? providerLabel(item.providerId) : null,
+              fastest
+                ? speedMs(item) !== undefined
+                  ? speedLabel(speedMs(item)!)
+                  : item.health?.status === "down"
+                    ? "Down"
+                    : "Not timed"
+                : contextShort(item.contextWindow),
+            ]
+              .filter(Boolean)
+              .join(", ")}
+            status={item.health?.status}
             query={q}
             selected={modelRef(item) === value}
             first={index === 0}
@@ -575,6 +642,35 @@ export function ModelPicker({
             onPress={() => pick(modelRef(item))}
           />
         )}
+        ListHeaderComponent={
+          fastest ? (
+            <View style={styles.speedNote} accessibilityLiveRegion="polite">
+              <Text muted className="flex-1 text-[13px] leading-[18px]">
+                {timing
+                  ? `Timing each model with a tiny request. ${timed} of ${results.length} timed so far.`
+                  : "Time to the first words of a reply, from quick checks and your own chats."}
+              </Text>
+              {timing ? (
+                <ActivityIndicator size="small" color={colors.textFaint} />
+              ) : (
+                <Tap
+                  accessibilityRole="button"
+                  accessibilityHint="Sends a tiny request to every model to time it again"
+                  hitSlop={8}
+                  onPress={() => void timeModels(true)}
+                >
+                  <Text
+                    weight="medium"
+                    className="text-[13px]"
+                    style={{ color: colors.primaryStrong }}
+                  >
+                    Test again
+                  </Text>
+                </Tap>
+              )}
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text muted className="text-center text-[15px] leading-[21px]">
@@ -738,6 +834,14 @@ const styles = StyleSheet.create({
   slimFirst: { borderTopLeftRadius: LIST_RADIUS, borderTopRightRadius: LIST_RADIUS },
   slimLast: { borderBottomLeftRadius: LIST_RADIUS, borderBottomRightRadius: LIST_RADIUS },
   check: { width: 20, alignItems: "flex-end" },
+  status: { width: 7, height: 7, borderRadius: 3.5 },
+  speedNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 6,
+    paddingBottom: 10,
+  },
   empty: { paddingTop: 36, paddingHorizontal: 24, alignItems: "center", gap: 14 },
   input: {
     flex: 1,

@@ -10,6 +10,7 @@ import { reportText, type Artifact } from "@/lib/artifacts";
 import { stripCitations } from "@/lib/citations";
 import { useComponentEvents } from "@/lib/store";
 import { colors } from "@/lib/theme";
+import { fileIcon } from "@/lib/files";
 
 const registry = catalogComponents as Record<CatalogName, ComponentType<GenProps<CatalogName>>>;
 
@@ -31,6 +32,29 @@ function ReportPage({ artifact }: { artifact: Extract<Artifact, { type: "report"
         {artifact.title}
       </Text>
       <Markdown text={body} />
+    </View>
+  );
+}
+
+function FilePage({ artifact }: { artifact: Extract<Artifact, { type: "file" }> }) {
+  const { file } = artifact;
+  const md = /^mdx?$/.test(file.ext);
+  const body = file.body.split("\n").slice(0, 40).join("\n");
+  return (
+    <View className="rounded-3xl bg-card px-5 pb-5 pt-5">
+      <View className="mb-3 flex-row items-center gap-2">
+        <Icon name={fileIcon(file.name, file.mime)} size={18} color={colors.primaryStrong} />
+        <Text muted weight="medium" className="text-[14px]">
+          {file.name}
+        </Text>
+      </View>
+      {md ? (
+        <Markdown text={body} />
+      ) : (
+        <Text className="text-[13px] leading-5" style={{ fontFamily: "Menlo" }}>
+          {body}
+        </Text>
+      )}
     </View>
   );
 }
@@ -69,6 +93,8 @@ export function ArtifactPreview({ artifact, height }: { artifact: Artifact; heig
         <View style={{ width: RENDER_W, transform: [{ scale }], transformOrigin: "left top" }}>
           {artifact.type === "report" ? (
             <ReportPage artifact={artifact} />
+          ) : artifact.type === "file" ? (
+            <FilePage artifact={artifact} />
           ) : (
             <ComponentPage artifact={artifact} />
           )}

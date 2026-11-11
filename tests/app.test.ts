@@ -248,6 +248,45 @@ describe("store.regenerate", () => {
   });
 });
 
+describe("store.editMessage", () => {
+  const seed = () => {
+    const asked = msg("u1", "t1", {
+      role: "user",
+      parts: [{ id: "p", type: "text", text: "old" }],
+    });
+    const list = [asked, msg("r1", "t1"), msg("u2", "t1", { role: "user" }), msg("r2", "t1")];
+    useApp.setState({
+      threads: { t1: thread("t1") },
+      messages: { t1: list },
+      activeThreadId: "t1",
+    });
+    return list;
+  };
+
+  it("replaces what came after the message with a new reply", async () => {
+    seed();
+    mutation.mockResolvedValue({ threadId: "t1", messageId: "r9" });
+    useApp.getState().startEdit("u1");
+    expect(useApp.getState().editing?.text).toBe("old");
+    useApp.getState().editMessage("u1", " new ");
+    const list = useApp.getState().messages.t1;
+    expect(list).toHaveLength(2);
+    expect(list[0].parts).toMatchObject([{ type: "text", text: "new" }]);
+    expect(list[1].status).toBe("streaming");
+    expect(useApp.getState().editing).toBeNull();
+    expect(calls("messages.edit")[0][1]).toEqual({ messageId: "u1", text: "new" });
+  });
+
+  it("puts the chat back and reopens the edit when the server refuses", async () => {
+    const list = seed();
+    mutation.mockRejectedValue(new Error("Stop the research first, then edit the message."));
+    useApp.getState().editMessage("u1", "new");
+    await vi.waitFor(() => expect(useApp.getState().messages.t1).toBe(list));
+    expect(useApp.getState().streaming).toBeNull();
+    expect(useApp.getState().editing).toMatchObject({ messageId: "u1", text: "new" });
+  });
+});
+
 describe("artifacts in chats that were left", () => {
   it("updates a fully loaded chat once its subscription has ended", () => {
     const store = useApp.getState();

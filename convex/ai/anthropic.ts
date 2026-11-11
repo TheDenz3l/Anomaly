@@ -109,7 +109,10 @@ function userBlocks(content: string | ContentPart[]): Block[] {
       ? p.text
         ? [{ type: "text", text: p.text }]
         : []
-      : [imageBlock(p.image_url.url)]
+      : p.type === "image_url"
+        ? [imageBlock(p.image_url.url)]
+        : // Claude takes no video; the transcript beside it stands in.
+          []
   );
 }
 

@@ -11,7 +11,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.bmar.anomaly",
+      "appleTeamId": "XDT233YHBK",
       "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Anomaly connects to its server on your local network.",
         "NSLocationWhenInUseUsageDescription": "Anomaly uses your location to find theatres, places and weather near you.",
         "NSMicrophoneUsageDescription": "Anomaly uses the microphone for hold-to-talk voice input.",
         "NSSpeechRecognitionUsageDescription": "Anomaly transcribes your voice on device.",
@@ -54,7 +56,24 @@
       "expo-image",
       "expo-secure-store",
       "expo-speech-recognition",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-share-intent",
+        {
+          "iosShareExtensionName": "Anomaly Share",
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsWebPageWithMaxCount": 1,
+            "NSExtensionActivationSupportsImageWithMaxCount": 6,
+            "NSExtensionActivationSupportsFileWithMaxCount": 6
+          },
+          "androidIntentFilters": ["text/*", "image/*", "*/*"],
+          "androidMultiIntentFilters": ["image/*", "*/*"]
+        }
+      ],
+      "./plugins/withSceneLifecycle",
+      ["./plugins/withShareExtensionName", { "folder": "AnomalyShare", "displayName": "Anomaly" }]
     ],
     "experiments": {
       "typedRoutes": true,

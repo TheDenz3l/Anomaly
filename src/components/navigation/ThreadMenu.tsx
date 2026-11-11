@@ -1,4 +1,5 @@
 import { BlurView } from "expo-blur";
+import * as Clipboard from "expo-clipboard";
 import { useEffect, useState } from "react";
 import {
   Animated,
@@ -6,6 +7,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   TextInput,
   useWindowDimensions,
@@ -23,9 +25,11 @@ import { Glass } from "@/components/ui/Glass";
 import { Icon, type IconName } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { Text } from "@/components/ui/Text";
+import { chatMarkdown } from "@/components/chat/SourcesBar";
+import { api, convex, errorText, type Id } from "@/lib/convex";
 import { useApp } from "@/lib/store";
 import { colors, fonts } from "@/lib/theme";
-import type { Thread } from "@/lib/types";
+import type { Message, Thread } from "@/lib/types";
 
 /** Window-space frame of the row that was long-pressed. */
 export type Anchor = { x: number; y: number; width: number; height: number };
@@ -176,6 +180,28 @@ export function ThreadMenu({
       }).start();
   };
 
+  /** The whole conversation as Markdown, handed to the share sheet (copied where there is none). */
+  const shareChat = async (t: Thread) => {
+    try {
+      // The menu is a modal; the share sheet can only open once it has gone.
+      const [list] = await Promise.all([
+        convex.query(api.messages.list, { threadId: t.id as Id<"threads"> }) as unknown as Promise<
+          Message[]
+        >,
+        new Promise((done) => setTimeout(done, 350)),
+      ]);
+      const text = chatMarkdown(t.title, list);
+      try {
+        await Share.share({ message: text, title: t.title });
+      } catch {
+        await Clipboard.setStringAsync(text);
+        showToast("Chat copied as Markdown");
+      }
+    } catch (e) {
+      showToast(errorText(e), "danger");
+    }
+  };
+
   const commitRename = () => {
     if (!nextTitle || nextTitle === thread.title) return;
     renameThread(thread.id, nextTitle);
@@ -209,7 +235,22 @@ export function ThreadMenu({
             },
           },
         ],
-        [{ key: "rename", label: "Rename", icon: "pencil-outline", onPress: startRename }],
+        [
+          { key: "rename", label: "Rename", icon: "pencil-outline", onPress: startRename },
+          ...(thread.id.startsWith("pending_")
+            ? []
+            : [
+                {
+                  key: "share",
+                  label: "Share chat",
+                  icon: "share-outline" as const,
+                  onPress: () => {
+                    void shareChat(thread);
+                    onClose();
+                  },
+                },
+              ]),
+        ],
         [
           {
             key: "delete",

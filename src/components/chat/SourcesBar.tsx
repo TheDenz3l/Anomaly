@@ -31,22 +31,57 @@ export function plainText(message: Message): string {
     .join("\n\n");
 }
 
+/** A whole chat as Markdown: its title, then each message under who wrote it. */
+export function chatMarkdown(title: string, messages: Message[]): string {
+  const turns = messages.flatMap((m) => {
+    if (m.role === "user") {
+      const said = m.parts
+        .map((p) =>
+          p.type === "text"
+            ? p.text
+            : p.type === "file"
+              ? `[File: ${p.name}]`
+              : p.type === "image"
+                ? "[Photo]"
+                : p.type === "ui_event"
+                  ? p.action === "auto_saved"
+                    ? ""
+                    : `_${p.label}_`
+                  : ""
+        )
+        .filter(Boolean)
+        .join("\n\n");
+      return said ? [`**You**\n\n${said}`] : [];
+    }
+    const said = plainText(m).trim();
+    return said ? [`**Assistant**\n\n${said}`] : [];
+  });
+  return [`# ${title}`, ...turns].join("\n\n");
+}
+
 function ActionIcon({
   icon,
   label,
   onPress,
+  onLongPress,
+  hint,
   active,
 }: {
   icon: IconName;
   label: string;
   onPress: () => void;
+  onLongPress?: () => void;
+  hint?: string;
   active?: boolean;
 }) {
   return (
     <Tap
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={hint}
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={380}
       hitSlop={4}
       className="h-8 w-[30px] items-center justify-center rounded-full"
     >
@@ -63,10 +98,13 @@ function tokens(n: number) {
 export function SourcesBar({
   message,
   sources,
+  last = true,
   onRegenerate,
 }: {
   message: Message;
   sources: Source[];
+  /** Only the latest reply of a chat can be regenerated. */
+  last?: boolean;
   /** For a reply outside the open chat (a profile sheet's): regenerates it, and hides Save. */
   onRegenerate?: (messageId: string) => void;
 }) {
@@ -75,6 +113,7 @@ export function SourcesBar({
   const saved = useApp((s) => s.savedMessageIds.includes(message.id));
   const toggleSaved = useApp((s) => s.toggleSaved);
   const regenerate = useApp((s) => s.regenerate);
+  const pickModel = useApp((s) => s.pickRegenerateModel);
   const showToast = useApp((s) => s.showToast);
   const models = useApp((s) => s.models);
   const busy = useApp((s) => s.streaming !== null);
@@ -103,7 +142,9 @@ export function SourcesBar({
       return;
     }
     setSpeaking(true);
-    Speech.speak(plainText(message), {
+    // Speech queues: whatever another reply is still reading stops first.
+    void Speech.stop();
+    Speech.speak(plainText(message).slice(0, Speech.maxSpeechInputLength), {
       onDone: () => setSpeaking(false),
       onStopped: () => setSpeaking(false),
       onError: () => setSpeaking(false),
@@ -118,6 +159,9 @@ export function SourcesBar({
   };
 
   const level = message.meta && message.meta.levelSent !== "off" ? message.meta.levelSent : null;
+  // Reports and sub-agent results hold work a plain re-run would wipe; the server refuses them too.
+  const kind = message.meta?.kind;
+  const canRegenerate = last && kind !== "report" && kind !== "subagents";
 
   return (
     <Animated.View entering={fadeIn} className="gap-1.5">
@@ -164,13 +208,18 @@ export function SourcesBar({
             active={saved}
           />
         )}
-        <ActionIcon
-          icon="refresh"
-          label="Regenerate"
-          onPress={() =>
-            onRegenerate ? onRegenerate(message.id) : !busy && regenerate(message.id)
-          }
-        />
+        {canRegenerate ? (
+          <ActionIcon
+            icon="refresh"
+            label="Regenerate"
+            onPress={() =>
+              onRegenerate ? onRegenerate(message.id) : !busy && regenerate(message.id)
+            }
+            // In the open chat a long press picks another model to answer with.
+            onLongPress={onRegenerate || busy ? undefined : () => pickModel(message.id)}
+            hint={onRegenerate ? undefined : "Long press to answer again with another model"}
+          />
+        ) : null}
         <ActionIcon icon="copy-outline" label="Copy" onPress={copy} />
       </View>
       {message.meta ? (

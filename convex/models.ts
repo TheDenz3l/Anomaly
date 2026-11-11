@@ -52,9 +52,15 @@ export const list = query({
         .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", p.providerId))
         .collect();
       const byId = new Map(profiles.map((x) => [x.modelId, x]));
+      const health = await ctx.db
+        .query("modelHealth")
+        .withIndex("by_user_provider", (q) => q.eq("userId", userId).eq("providerId", p.providerId))
+        .collect();
+      const healthOf = new Map(health.map((h) => [h.modelId, h]));
       for (const m of p.models) {
         if (!includeAll && m.kind !== "chat") continue;
         const prof = byId.get(m.id);
+        const h = healthOf.get(m.id);
         out.push({
           id: m.id,
           name: m.name,
@@ -65,6 +71,15 @@ export const list = query({
           contextWindow: m.contextWindow,
           pricing: m.pricing,
           profile: prof ? toProfile(prof) : registryProfile(p.baseUrl, m.id),
+          health: h
+            ? {
+                status: h.status,
+                detail: h.detail,
+                latencyMs: h.latencyMs,
+                textMs: h.textMs,
+                checkedAt: h.checkedAt,
+              }
+            : undefined,
         });
       }
     }

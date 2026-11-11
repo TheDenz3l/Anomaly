@@ -11,12 +11,12 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { Glass } from "@/components/ui/Glass";
 import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
-import { Display, Text } from "@/components/ui/Text";
+import { Text } from "@/components/ui/Text";
 import { MenuGlyph } from "@/components/navigation/MenuGlyph";
 import { useDrawer } from "@/components/navigation/SideDrawer";
 import { incognitoToggled } from "@/lib/haptics";
 import { fadeIn } from "@/lib/motion";
-import { findModel, useApp } from "@/lib/store";
+import { useApp } from "@/lib/store";
 import { colors } from "@/lib/theme";
 
 /** Incognito presses in and lights up; a little give, so it lands like a physical switch. */
@@ -104,7 +104,6 @@ export function ChatHeader() {
   const insets = useSafeAreaInsets();
   const thread = useApp((s) => (s.activeThreadId ? s.threads[s.activeThreadId] : undefined));
   const draftIncognito = useApp((s) => s.draft.incognito);
-  const models = useApp((s) => s.models);
   const newChat = useApp((s) => s.newChat);
   const setIncognito = useApp((s) => s.setIncognito);
   const drawer = useDrawer();
@@ -136,45 +135,22 @@ export function ChatHeader() {
             </View>
           </Glass>
         </Tap>
-        {/* Just the chat's name; renaming and deleting live on its row in the menu. */}
-        <View
-          accessible
-          accessibilityRole="header"
-          accessibilityLabel={
-            thread
-              ? `${thread.title}, ${incognito ? "incognito" : findModel(models, thread.modelRef).name}`
-              : incognito
-                ? "Incognito chat"
-                : "New chat"
-          }
-          className="flex-1 items-center"
-        >
-          <Animated.View
-            key={thread?.key ?? thread?.id ?? (incognito ? "incognito" : "new")}
-            entering={fadeIn}
-            className="w-full items-center"
-          >
-            {thread ? (
-              <Display className="text-[15px] leading-5" numberOfLines={1}>
-                {thread.title}
-              </Display>
-            ) : null}
-            <View className="mt-0.5 flex-row items-center gap-1">
-              {incognito ? (
-                <Icon name="eye-off-outline" size={12} color={colors.textMuted} />
-              ) : null}
-              {thread?.mode === "research" ? (
-                <Icon name="telescope-outline" size={12} color={colors.textMuted} />
-              ) : null}
-              <Text muted className="text-xs" numberOfLines={1}>
-                {incognito
-                  ? "Incognito"
-                  : thread
-                    ? findModel(models, thread.modelRef).name
-                    : "New chat"}
+        {/* No title or model here; the chat's name lives on its row in the menu. Incognito still
+              shows, since once the chat starts the corner button no longer does. */}
+        <View pointerEvents="none" className="flex-1 items-center">
+          {incognito ? (
+            <Animated.View
+              entering={fadeIn}
+              accessible
+              accessibilityLabel="Incognito chat"
+              className="flex-row items-center gap-1"
+            >
+              <Icon name="eye-off-outline" size={12} color={colors.textMuted} />
+              <Text muted className="text-xs">
+                Incognito
               </Text>
-            </View>
-          </Animated.View>
+            </Animated.View>
+          ) : null}
         </View>
         <CornerButton
           started={Boolean(thread)}

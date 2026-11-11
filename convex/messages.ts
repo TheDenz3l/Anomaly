@@ -4,7 +4,14 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { heuristicDecisions } from "./ai/decisions";
 import { optionalUser, ownMessage, ownThread, requireUser } from "./lib/auth";
-import { clientMessage, findComponent, stopStreaming, threadMessages } from "./lib/messages";
+import {
+  activeResearchMessage,
+  clientMessage,
+  deleteMessage,
+  findComponent,
+  stopStreaming,
+  threadMessages,
+} from "./lib/messages";
 import { loadSettings } from "./lib/settings";
 import { sanitizeValue, uid } from "./lib/util";
 import { scheduleAutoProbe } from "./probes";
@@ -434,6 +441,61 @@ export const stop = mutation({
         await ctx.db.patch(r._id, { status: "cancelled", finishedAt: Date.now() });
     }
     return { stopped };
+  },
+});
+
+/** How many later messages an edit may replace in one go. */
+const EDIT_TAIL_MAX = 200;
+
+/**
+ * Rewrites one of your messages and answers it again: everything after it in the chat is replaced
+ * by the new reply. Photos and files sent with the message stay with it.
+ */
+export const edit = mutation({
+  args: { messageId: v.id("messages"), text: v.string() },
+  handler: async (ctx, { messageId, text: raw }) => {
+    const userId = await requireUser(ctx);
+    const message = await ownMessage(ctx, messageId, userId);
+    const text = raw.trim();
+    if (message.role !== "user" || message.parts.some((p) => p.type === "ui_event"))
+      throw new ConvexError("Only your own messages can be edited.");
+    if (!text) throw new ConvexError("Type a message.");
+    if (text.length > 32_000)
+      throw new ConvexError("That message is too long (32,000 characters max).");
+    let thread = await ownThread(ctx, message.threadId, userId);
+    if (await activeResearchMessage(ctx, thread._id))
+      throw new ConvexError("Stop the research first, then edit the message.");
+    const tail = await ctx.db
+      .query("messages")
+      .withIndex("by_thread", (q) =>
+        q.eq("threadId", thread._id).gt("_creationTime", message._creationTime)
+      )
+      .take(EDIT_TAIL_MAX + 1);
+    if (tail.length > EDIT_TAIL_MAX)
+      throw new ConvexError("Too much of the chat comes after this message to edit it.");
+    await stopStreaming(ctx, thread._id);
+    const runs = await ctx.db
+      .query("agentRuns")
+      .withIndex("by_thread", (q) => q.eq("threadId", thread._id))
+      .collect();
+    for (const r of runs) {
+      if (["queued", "running"].includes(r.status))
+        await ctx.db.patch(r._id, { status: "cancelled", finishedAt: Date.now() });
+    }
+    for (const m of tail) await deleteMessage(ctx, m);
+    // The edited message is answered as a normal chat turn, like any reply after a report.
+    if (thread.mode === "research") {
+      await ctx.db.patch(thread._id, { mode: "chat" });
+      thread = { ...thread, mode: "chat" };
+    }
+    const kept = message.parts.filter((p) => p.type !== "text");
+    await ctx.db.patch(messageId, {
+      parts: [...kept, { id: uid("txt"), type: "text", text }],
+      searchText: thread.incognito ? undefined : text,
+    });
+    await ctx.db.patch(thread._id, { preview: text.slice(0, 160) });
+    const replyId = await startReply(ctx, thread, userId);
+    return { threadId: thread._id, messageId: replyId };
   },
 });
 

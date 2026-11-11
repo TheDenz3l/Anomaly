@@ -99,7 +99,10 @@ export function ConvexSync() {
   const active = useApp((s) => s.activeThreadId);
   const threadId =
     isAuthenticated && active && !active.startsWith("pending_") ? (active as Id<"threads">) : null;
-  const messages = useQuery(api.messages.list, threadId ? { threadId } : "skip");
+  // Only the latest messages are subscribed to, so a long chat doesn't resend itself on every
+  // streamed update; "Show earlier messages" raises the limit.
+  const limit = useApp((s) => s.messageLimit);
+  const messages = useQuery(api.messages.list, threadId ? { threadId, limit } : "skip");
 
   const store = useApp.getState;
   useEffect(() => {

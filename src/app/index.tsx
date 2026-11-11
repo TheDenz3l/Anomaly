@@ -11,6 +11,7 @@ import { Icon } from "@/components/ui/Icon";
 import { Tap } from "@/components/ui/Tap";
 import { bubbleIn, popIn, popOut, replyIn, threadIn, sheetMotion } from "@/lib/motion";
 import { useApp } from "@/lib/store";
+import { Text } from "@/components/ui/Text";
 import {
   KeyboardChatScrollView,
   KeyboardStickyView,
@@ -37,6 +38,14 @@ export default function ChatScreen() {
   const threadId = useApp((s) => s.activeThreadId);
   const replying = useApp((s) => s.streaming !== null);
   const messages = useApp((s) => (s.activeThreadId ? s.messages[s.activeThreadId] : undefined));
+  // The chat loads its latest messages; a full page means older ones may be waiting.
+  const hasEarlier = useApp((s) => {
+    const list = s.activeThreadId ? s.messages[s.activeThreadId] : undefined;
+    return Boolean(list && list.length >= s.messageLimit);
+  });
+  const showEarlier = useApp((s) => s.showEarlier);
+  /** Older messages were asked for: the content height and count before they arrive. */
+  const prepending = useRef<{ h: number; count: number } | null>(null);
   const [composerH, setComposerH] = useState(110);
   const [away, setAway] = useState(false);
   const scroller = useRef<Animated.ScrollView>(null);
@@ -268,8 +277,18 @@ export default function ChatScreen() {
             }}
             scrollEventThrottle={32}
             onContentSizeChange={(_, h) => {
+              const grown = prepending.current;
               contentH.current = h;
               syncBlank();
+              // Older messages landed above: stay on the message that was being read.
+              if (grown && count > grown.count) {
+                prepending.current = null;
+                scroller.current?.scrollTo({
+                  y: offsetY.current + Math.max(0, h - grown.h),
+                  animated: false,
+                });
+                return;
+              }
               // Content that shrank or emptied (a new chat, a regenerated reply) can leave the end in view.
               if (away && (count === 0 || distanceToEnd() <= FOLLOW_SLACK * 2)) setAway(false);
               // Follow new content while a thread settles in. A parked send stays put while the
@@ -298,14 +317,35 @@ export default function ChatScreen() {
             }}
           >
             <Animated.View key={generation} entering={threadIn} style={{ flexGrow: 1, gap: 22 }}>
+              {hasEarlier ? (
+                <Tap
+                  accessibilityRole="button"
+                  accessibilityLabel="Show earlier messages"
+                  onPress={() => {
+                    prepending.current = { h: contentH.current, count };
+                    stick.current = false;
+                    showEarlier();
+                  }}
+                  className="-mb-1 h-9 items-center justify-center self-center rounded-full bg-raised px-4"
+                >
+                  <Text weight="medium" muted className="text-[13px]">
+                    Show earlier messages
+                  </Text>
+                </Tap>
+              ) : null}
               {messages && messages.length > 0 ? (
                 messages.map((m, i) => {
                   const key = m.key ?? m.id;
                   return (
                     <Animated.View
                       key={key}
+                      // Only what arrives at the end animates in; older pages loaded above don't.
                       entering={
-                        existing.has(key) ? undefined : m.role === "user" ? bubbleIn : replyIn
+                        existing.has(key) || i < messages.length - 2
+                          ? undefined
+                          : m.role === "user"
+                            ? bubbleIn
+                            : replyIn
                       }
                       onLayout={
                         m.role === "user"

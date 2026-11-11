@@ -330,3 +330,64 @@ describe("research runs end", () => {
     expect((await t.run((ctx) => ctx.db.get(taken)))?.status).toBe("streaming");
   });
 });
+
+describe("editing a sent message", () => {
+  it("rewrites it, drops what came after and starts a new reply", async () => {
+    const { t, userId, as } = await signedIn();
+    const threadId = await thread(t, userId);
+    const at = Date.now();
+    const step = (n: number) => vi.setSystemTime(at + n * 1000);
+    const first = await message(t, userId, threadId, {
+      role: "user",
+      status: "done",
+      meta: undefined,
+      parts: text("first"),
+    });
+    step(1);
+    const kept = await message(t, userId, threadId, { status: "done", parts: text("a1") });
+    step(2);
+    const asked = await message(t, userId, threadId, {
+      role: "user",
+      status: "done",
+      meta: undefined,
+      parts: [{ id: "i1", type: "image" as const, uri: "https://x/y.png" }, ...text("old")],
+    });
+    step(3);
+    const gone = await message(t, userId, threadId, { status: "done", parts: text("a2") });
+    await t.run((ctx) => ctx.db.insert("saved", { userId, kind: "message", refId: gone, ts: 1 }));
+    step(4);
+    const res = await as.mutation(api.messages.edit, { messageId: asked, text: "  new  " });
+
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query("messages")
+        .withIndex("by_thread", (q) => q.eq("threadId", threadId))
+        .collect()
+    );
+    expect(rows.map((m) => m._id)).toEqual([first, kept, asked, res.messageId]);
+    expect(rows[2].parts.map((p) => (p.type === "text" ? p.text : p.type))).toEqual([
+      "image",
+      "new",
+    ]);
+    expect(rows[3].status).toBe("streaming");
+    expect(await t.run((ctx) => ctx.db.get(gone))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query("saved").collect())).toHaveLength(0);
+  });
+
+  it("refuses replies and other people's messages", async () => {
+    const { t, userId, as } = await signedIn();
+    const threadId = await thread(t, userId);
+    const reply = await message(t, userId, threadId, { status: "done", parts: text("a") });
+    await expect(as.mutation(api.messages.edit, { messageId: reply, text: "x" })).rejects.toThrow();
+    const other = await t.run((ctx) => ctx.db.insert("users", {}));
+    const theirs = await message(t, other, await thread(t, other), {
+      role: "user",
+      status: "done",
+      meta: undefined,
+      parts: text("theirs"),
+    });
+    await expect(
+      as.mutation(api.messages.edit, { messageId: theirs, text: "x" })
+    ).rejects.toThrow();
+  });
+});

@@ -6,10 +6,8 @@ import { buildRequest } from "../ai/reasoning";
 import type { Part } from "../lib/validators";
 import { rankVisionModels } from "../lib/vision";
 import { estimateCost, modelEngine, type Engine } from "./context";
-import { imageUrl } from "./history";
+import { imageUrl, recentImageIds } from "./history";
 
-/** User turns whose photos get described: the same window replies send images for. */
-const IMAGE_TURNS = 2;
 /** Stand-ins tried before giving up on the photos. */
 const MAX_TRIES = 3;
 const DESCRIBE_TIMEOUT_MS = 60_000;
@@ -40,7 +38,9 @@ export async function describeImages(
   question: string,
   signal?: AbortSignal
 ): Promise<string | null> {
-  const users = history.filter((m) => m.role === "user").slice(-IMAGE_TURNS);
+  // The same photos a reply would show a model that can see.
+  const inView = recentImageIds(history);
+  const users = history.filter((m) => m.role === "user");
   const latest = users[users.length - 1];
   const readBy = () =>
     latest?.parts.find((p): p is ImagePart => p.type === "image" && Boolean(p.describedBy))
@@ -48,7 +48,8 @@ export async function describeImages(
   let todo: Job[] = users.flatMap((m) =>
     m.parts
       .filter(
-        (p): p is ImagePart => p.type === "image" && (!p.description || BLIND.test(p.description))
+        (p): p is ImagePart =>
+          p.type === "image" && inView.has(p.id) && (!p.description || BLIND.test(p.description))
       )
       .map((p) => ({ m, p }))
   );

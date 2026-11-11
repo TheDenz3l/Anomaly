@@ -23,6 +23,11 @@ import {
 import { ENTITY, isEntity, parseEntity, settleEntity, type EntityRef } from "@/lib/entities";
 import { domainOf, openLink, trimUrl } from "@/lib/links";
 import { useEntityOpener } from "./entityContext";
+import { CodeBlock } from "./CodeBlock";
+import { readFence } from "@/lib/docFiles";
+
+/** A document's Markdown, previewed inside its file card. */
+const previewMarkdown = (text: string) => <Markdown text={text} />;
 
 /** Drops a trailing unmatched `**` so half-streamed bold doesn't flash raw asterisks. */
 function balance(text: string): string {
@@ -254,12 +259,11 @@ function RichText({
 type BlockKind =
   "heading" | "para" | "list" | "quote" | "table" | "code" | "rule" | "gap" | "images" | "video";
 /** `raw` keeps the block's source lines so memoized views skip blocks that stopped changing. */
-type Block = { kind: BlockKind; raw: string };
+type Block = { kind: BlockKind; raw: string; info?: string };
 
 const HEADING = /^\s*(#{1,6})\s+(.*)$/;
 const ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
-const FENCE = /^\s*```/;
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
 function cells(row: string): string[] {
@@ -282,10 +286,10 @@ function blocks(text: string): Block[] {
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (FENCE.test(line)) {
-      const body: string[] = [];
-      for (i++; i < lines.length && !FENCE.test(lines[i]); i++) body.push(lines[i]);
-      out.push({ kind: "code", raw: body.join("\n") });
+    const fence = readFence(lines, i);
+    if (fence) {
+      out.push({ kind: "code", raw: fence.body, info: fence.info });
+      i = fence.next - 1;
       continue;
     }
     if (!line.trim()) {
@@ -426,12 +430,15 @@ const NO_TRUSTED_IMAGES: ReadonlySet<string> = new Set();
 const BlockView = memo(function BlockView({
   kind,
   raw,
+  info = "",
   index,
   live,
   trustedImages,
 }: {
   kind: BlockKind;
   raw: string;
+  /** A code fence's info string: its language, and the file name when it's a document. */
+  info?: string;
   index: number;
   /** The block still being written, at the end of a reply that is streaming. */
   live: boolean;
@@ -471,13 +478,7 @@ const BlockView = memo(function BlockView({
     );
   }
   if (kind === "code") {
-    return (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View className="rounded-xl bg-card px-3 py-2.5">
-          <Text className="text-[13px] leading-5">{raw}</Text>
-        </View>
-      </ScrollView>
-    );
+    return <CodeBlock info={info} body={raw} live={live} renderMarkdown={previewMarkdown} />;
   }
   if (kind === "table") return <TableView raw={raw} index={index} live={live} />;
   if (kind === "quote") {
@@ -563,6 +564,7 @@ export function Markdown({
           key={bi}
           kind={b.kind}
           raw={b.raw}
+          info={b.info}
           index={bi}
           live={growing && bi === list.length - 1}
           trustedImages={trustedImages}
@@ -582,6 +584,10 @@ const styles = StyleSheet.create({
     textDecorationColor: "#000",
   },
   maskArrow: { fontSize: 13, color: "transparent", textDecorationLine: "none" },
-  maskEntity: { color: "transparent", textDecorationLine: "underline", textDecorationColor: "#000" },
+  maskEntity: {
+    color: "transparent",
+    textDecorationLine: "underline",
+    textDecorationColor: "#000",
+  },
   maskCopy: { position: "absolute", top: 0, left: 0, right: 0 },
 });

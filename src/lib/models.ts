@@ -4,6 +4,28 @@ export function modelRef(model: Pick<Model, "providerId" | "id">): string {
   return `${model.providerId}/${model.id}`;
 }
 
+/**
+ * How long a model takes to start answering, in milliseconds: to its first words when that was
+ * timed, else to its first streamed event. Nothing for a model that is down or was never timed.
+ */
+export function speedMs(model: Pick<Model, "health">): number | undefined {
+  const h = model.health;
+  if (!h || h.status === "down") return undefined;
+  return h.textMs ?? h.latencyMs;
+}
+
+export function speedLabel(ms: number): string {
+  return `${(ms / 1000).toFixed(ms < 9950 ? 1 : 0)}s`;
+}
+
+/** Quickest to answer first; models never timed, or down, go last in their given order. */
+export function bySpeed<T extends Pick<Model, "health">>(models: T[]): T[] {
+  return models
+    .map((m, i) => ({ m, i, ms: speedMs(m) ?? Infinity }))
+    .sort((a, b) => a.ms - b.ms || a.i - b.i)
+    .map((x) => x.m);
+}
+
 const EMPTY_PROFILE: CapabilityProfile = {
   reasoning: { style: "none", levels: [], defaultLevel: "off" },
   features: {

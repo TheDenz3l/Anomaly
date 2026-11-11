@@ -111,6 +111,9 @@ export const vMessageStatus = v.union(
   v.literal("error")
 );
 
+/** Model status (lib/health.ts). */
+export const vHealthStatus = v.union(v.literal("normal"), v.literal("degraded"), v.literal("down"));
+
 export const vReplyMeta = v.object({
   modelRef: v.string(),
   levelRequested: v.string(),

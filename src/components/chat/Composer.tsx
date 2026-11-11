@@ -21,7 +21,14 @@ import { useApp, useComposerTarget, useVisionStandIn, type Attachment } from "@/
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import { modelRef } from "@/lib/models";
 import { colors } from "@/lib/theme";
-import { fileIcon, humanSize, MAX_ATTACHMENTS, MAX_FILE_BYTES, typeLabel } from "@/lib/files";
+import {
+  fileIcon,
+  humanSize,
+  MAX_ATTACHMENTS,
+  MAX_FILE_BYTES,
+  typeLabel,
+  fileAttachment,
+} from "@/lib/files";
 import { ActionMenu, type MenuAnchor, type MenuItem } from "@/components/ui/ActionMenu";
 import { LinkInput } from "./LinkInput";
 import { levelLabel, ModelPicker } from "./ModelPicker";
@@ -61,6 +68,11 @@ function Chip({
     </Tap>
   );
 }
+
+/** The draft key of a chat that hasn't been sent yet. */
+const NEW_CHAT = "new";
+/** What was typed and attached in each chat that was left, for this session. */
+const drafts = new Map<string, { text: string; attachments: Attachment[] }>();
 
 const QUIET = 0.15;
 
@@ -152,6 +164,15 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
   const ensureProfile = useApp((s) => s.ensureProfile);
   const restore = useApp((s) => s.composerRestore);
   const clearRestore = useApp((s) => s.clearComposerRestore);
+  const editing = useApp((s) => s.editing);
+  const cancelEdit = useApp((s) => s.cancelEdit);
+  const editMessage = useApp((s) => s.editMessage);
+  const regenerate = useApp((s) => s.regenerate);
+  const regenerateWith = useApp((s) => s.regenerateWith);
+  const pickRegenerateModel = useApp((s) => s.pickRegenerateModel);
+  const threadKey = useApp((s) => s.activeThreadId) ?? NEW_CHAT;
+  const inbox = useApp((s) => s.composerInbox);
+  const clearInbox = useApp((s) => s.clearComposerInbox);
 
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -159,7 +180,7 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
   const voice = useVoice(setText, (message) => showToast(message, "danger"));
   const input = useRef<TextInput>(null);
 
-  const canSend = (text.trim().length > 0 || attachments.length > 0) && !streaming;
+  const canSend = (text.trim().length > 0 || (!editing && attachments.length > 0)) && !streaming;
   const thinkingSupported = model.profile.reasoning.style !== "none";
   const standIn = useVisionStandIn(model);
   const visionNote = attachments.some((a) => a.kind !== "file") && !model.profile.features.vision;
@@ -173,6 +194,32 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
     if (ref && unverified) ensureProfile(ref);
   }, [ref, unverified, ensureProfile]);
 
+  // Each chat keeps what was typed and attached in it: leaving sets it aside, coming back
+  // restores it. A new chat's first send (pending, then its real id) is the same chat throughout.
+  const [draftKey, setDraftKey] = useState(threadKey);
+  /** The id of the edit the input currently holds, and what it held before that edit. */
+  const [edited, setEdited] = useState<string | null>(null);
+  const [aside, setAside] = useState("");
+  let liveText = text;
+  let liveAttachments = attachments;
+  let swapped = false;
+  if (draftKey !== threadKey) {
+    setDraftKey(threadKey);
+    if (!draftKey.startsWith("pending_")) {
+      swapped = true;
+      // Mid-edit the input holds the message being rewritten; the draft is what it set aside.
+      const mine = edited ? aside : text;
+      if (mine.trim() || attachments.length) drafts.set(draftKey, { text: mine, attachments });
+      else drafts.delete(draftKey);
+      const next = drafts.get(threadKey);
+      drafts.delete(threadKey);
+      liveText = next?.text ?? "";
+      liveAttachments = next?.attachments ?? [];
+      setText(liveText);
+      setAttachments(liveAttachments);
+    }
+  }
+
   // A send the server refused hands its text and photos back, unless something new is here already.
   const [restored, setRestored] = useState<string | null>(null);
   if (restore && restore.id !== restored) {
@@ -184,10 +231,51 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
     if (restore) clearRestore();
   }, [restore, clearRestore]);
 
+  // Photos, files and text shared from another app join whatever is here, ready for a question.
+  const [received, setReceived] = useState<string | null>(null);
+  const [overflow, setOverflow] = useState(0);
+  if (inbox && inbox.id !== received) {
+    setReceived(inbox.id);
+    const merged = [...liveAttachments, ...inbox.attachments];
+    setOverflow(Math.max(0, merged.length - MAX_ATTACHMENTS));
+    setAttachments(merged.slice(0, MAX_ATTACHMENTS));
+    if (inbox.text) setText(liveText.trim() ? `${liveText.trimEnd()}\n${inbox.text}` : inbox.text);
+  }
+  useEffect(() => {
+    if (!inbox) return;
+    clearInbox();
+    if (overflow) {
+      showToast(
+        `Up to ${MAX_ATTACHMENTS} attachments per message, so ${overflow} ${overflow === 1 ? "was" : "were"} left out.`
+      );
+    }
+    input.current?.focus();
+  }, [inbox, clearInbox, overflow, showToast]);
+
+  // A message being rewritten takes the input; what was typed there comes back afterwards
+  // (unless the chat was left, which already swapped the input for the next chat's draft).
+  if ((editing?.id ?? null) !== edited) {
+    setEdited(editing?.id ?? null);
+    if (editing) {
+      if (!edited) setAside(text);
+      setText(editing.text);
+    } else {
+      if (!swapped) setText(aside);
+      setAside("");
+    }
+  }
+  useEffect(() => {
+    if (edited) input.current?.focus();
+  }, [edited]);
+
   const submit = () => {
     if (!canSend) return;
     // The keyboard goes away so the sent message and the reply below it get the screen.
     Keyboard.dismiss();
+    if (editing) {
+      editMessage(editing.messageId, text);
+      return;
+    }
     send(text, attachments);
     setText("");
     setAttachments([]);
@@ -222,15 +310,9 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
     add(
       picked
         .filter((f) => f.size <= MAX_FILE_BYTES)
-        .map((f): Attachment => {
-          const mime = f.type || undefined;
-          // A photo saved in Files still goes in as a photo the model can look at.
-          const photo =
-            /^image\/(png|jpe?g|webp|gif|heic|heif)$/.test(mime ?? "") && f.size <= 8 * 1024 * 1024;
-          return photo
-            ? { uri: f.uri, mime }
-            : { uri: f.uri, kind: "file", name: f.name, mime, size: f.size };
-        })
+        .map((f) =>
+          fileAttachment({ uri: f.uri, name: f.name, mime: f.type || undefined, size: f.size })
+        )
     );
   };
 
@@ -286,6 +368,27 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
     <View onLayout={onLayout} className="px-3">
       <Glass radius={28} interactive>
         <View className="px-2 pb-2 pt-1.5">
+          {editing ? (
+            <Animated.View
+              entering={fadeIn}
+              exiting={fadeOut}
+              className="mx-1.5 mb-1 mt-1 flex-row items-center gap-2 rounded-2xl bg-raised py-1.5 pl-3 pr-1.5"
+            >
+              <Icon name="create-outline" size={14} color={colors.textMuted} />
+              <Text muted className="flex-1 text-[13px] leading-[18px]">
+                Editing your message. Sending replaces the replies after it.
+              </Text>
+              <Tap
+                accessibilityRole="button"
+                accessibilityLabel="Cancel edit"
+                onPress={cancelEdit}
+                hitSlop={6}
+                className="h-7 w-7 items-center justify-center rounded-full"
+              >
+                <Icon name="close" size={15} color={colors.textMuted} />
+              </Tap>
+            </Animated.View>
+          ) : null}
           {attachments.length > 0 ? (
             <ScrollView
               horizontal
@@ -522,10 +625,18 @@ export function Composer({ onLayout }: { onLayout?: (e: LayoutChangeEvent) => vo
         label="Add to message"
       />
       <ModelPicker
-        open={picker}
-        onClose={() => setPicker(false)}
+        open={picker || regenerateWith !== null}
+        onClose={() => {
+          setPicker(false);
+          pickRegenerateModel(null);
+        }}
         value={target.modelRef}
-        onSelect={setModel}
+        title={regenerateWith ? "Answer again with" : undefined}
+        // Picked from a reply's Regenerate: the chat moves to that model and answers again.
+        onSelect={(ref) => {
+          setModel(ref);
+          if (regenerateWith) regenerate(regenerateWith);
+        }}
         level={target.reasoningLevel}
         onLevel={setReasoningLevel}
       />

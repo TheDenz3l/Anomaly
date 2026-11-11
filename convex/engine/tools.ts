@@ -27,6 +27,8 @@ import type { LoopTool, ToolOutcome } from "./loop";
 import { wrapUntrusted } from "./prompt";
 import type { Sink } from "./writer";
 import { focusPage } from "../web/relevance";
+import { videoText, watchUrl, youtubeId } from "../web/youtube";
+import { loadVideo } from "./video";
 
 /** App-side tools (PRD §3.8 fallback + free data sources). Results are plain text for the model. */
 
@@ -366,11 +368,50 @@ function pageImages(markdown: string, max = 6): string[] {
   return out;
 }
 
+/** A YouTube link read as its details and timed transcript; a watch page has no text to read. */
+async function readVideo(
+  env: ToolEnv,
+  id: string,
+  focus: string,
+  searchId: string | null | undefined
+): Promise<ToolOutcome> {
+  const done = () => {
+    if (searchId)
+      env.sink.update(searchId, (p) => ({
+        ...(p as Extract<Part, { type: "search" }>),
+        phase: "done",
+      }));
+  };
+  try {
+    const info = await loadVideo(env.engine.ctx, id);
+    const url = watchUrl(id);
+    const n = env.sources.add(
+      makeSource(url, info.title, info.description || info.channel, env.origin)
+    );
+    done();
+    const full = videoText(info, 150_000);
+    const view = focusPage(full, focus.trim() || readFocus(env), 11_000);
+    const note = view.trimmed
+      ? `\n(Long video: showing its details and the parts of the transcript about "${truncate(focus || readFocus(env), 80)}". Call read_url again with a different focus for other parts.)`
+      : "";
+    return {
+      content: `[${n}] ${info.title} — ${url}${note}\n${wrapUntrusted(url, view.text)}`,
+      web: info.transcript ? "results" : "empty",
+    };
+  } catch (e) {
+    done();
+    return {
+      content: `Couldn't read the video ${watchUrl(id)}: ${(e as Error).message}`,
+      web: "empty",
+    };
+  }
+}
+
 export function readUrlTool(env: ToolEnv): LoopTool {
   return {
     def: fn(
       "read_url",
-      "Fetch a web page and return its main text. Use on search results or URLs the user gave. Long pages are cut to the opening plus the passages about `focus`.",
+      "Fetch a web page and return its main text. Use on search results or URLs the user gave. A YouTube link returns the video's details and timed transcript. Long pages are cut to the opening plus the passages about `focus`.",
       {
         url: { type: "string", description: "http(s) URL" },
         focus: {
@@ -393,6 +434,8 @@ export function readUrlTool(env: ToolEnv): LoopTool {
           ...(p as Extract<Part, { type: "search" }>),
           phase: "reading",
         }));
+      const video = youtubeId(url);
+      if (video) return await readVideo(env, video, String(args.focus ?? ""), searchId);
       try {
         const read = readPage(env.engine.ctx, env.engine.search, url);
         const page =
